@@ -48,8 +48,8 @@ class User(Base):
         String(255), nullable=False
     )  # bcrypt hash
     api_key_prefix: Mapped[str] = mapped_column(
-        String(10), nullable=False
-    )  # First 8 chars for identification
+        String(20), nullable=False
+    )  # cems_ak_ + 8 random chars
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now
     )
@@ -334,7 +334,7 @@ class ApiKey(Base):
     )
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     key_hash: Mapped[str] = mapped_column(String(255), nullable=False)
-    key_prefix: Mapped[str] = mapped_column(String(10), nullable=False)
+    key_prefix: Mapped[str] = mapped_column(String(20), nullable=False)
     permissions: Mapped[list[str]] = mapped_column(
         JSON, default=lambda: ["read", "write"]
     )

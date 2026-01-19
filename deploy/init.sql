@@ -11,7 +11,7 @@ CREATE TABLE IF NOT EXISTS users (
     username VARCHAR(255) UNIQUE NOT NULL,
     email VARCHAR(255) UNIQUE,
     api_key_hash VARCHAR(255) NOT NULL,  -- bcrypt hash of API key
-    api_key_prefix VARCHAR(10) NOT NULL, -- First 8 chars for identification
+    api_key_prefix VARCHAR(20) NOT NULL, -- cems_ak_ + 8 random chars
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     last_active TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     is_active BOOLEAN DEFAULT true,
@@ -157,7 +157,7 @@ CREATE TABLE IF NOT EXISTS api_keys (
     team_id UUID REFERENCES teams(id) ON DELETE CASCADE,
     name VARCHAR(255) NOT NULL,
     key_hash VARCHAR(255) NOT NULL, -- bcrypt hashed API key
-    key_prefix VARCHAR(10) NOT NULL, -- first 8 chars for identification
+    key_prefix VARCHAR(20) NOT NULL, -- cems_ak_ + 8 random chars
     permissions JSONB DEFAULT '["read", "write"]'::jsonb,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     created_by UUID REFERENCES users(id),
