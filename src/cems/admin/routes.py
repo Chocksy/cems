@@ -538,6 +538,30 @@ async def admin_info(request: Request) -> JSONResponse:
     )
 
 
+async def debug_config(request: Request) -> JSONResponse:
+    """Debug endpoint to check configuration (admin only)."""
+    if err := require_admin_auth(request):
+        return err
+
+    import os
+
+    # Check which LLM-related env vars are set (values masked for security)
+    env_check = {
+        "OPENAI_API_KEY": "set" if os.environ.get("OPENAI_API_KEY") else "not set",
+        "OPENROUTER_API_KEY": "set" if os.environ.get("OPENROUTER_API_KEY") else "not set",
+        "ANTHROPIC_API_KEY": "set" if os.environ.get("ANTHROPIC_API_KEY") else "not set",
+        "MEM0_API_KEY": "set" if os.environ.get("MEM0_API_KEY") else "not set",
+        "OPENAI_BASE_URL": os.environ.get("OPENAI_BASE_URL", "not set"),
+        "CEMS_MEM0_LLM_PROVIDER": os.environ.get("CEMS_MEM0_LLM_PROVIDER", "not set"),
+        "CEMS_MEM0_MODEL": os.environ.get("CEMS_MEM0_MODEL", "not set"),
+        "CEMS_LLM_PROVIDER": os.environ.get("CEMS_LLM_PROVIDER", "not set"),
+        "CEMS_LLM_MODEL": os.environ.get("CEMS_LLM_MODEL", "not set"),
+        "CEMS_QDRANT_URL": os.environ.get("CEMS_QDRANT_URL", "not set"),
+    }
+
+    return JSONResponse({"config": env_check})
+
+
 # =============================================================================
 # Route Definitions
 # =============================================================================
@@ -545,6 +569,7 @@ async def admin_info(request: Request) -> JSONResponse:
 admin_routes = [
     # Admin info
     Route("/admin", admin_info, methods=["GET"]),
+    Route("/admin/debug", debug_config, methods=["GET"]),
     # Users
     Route("/admin/users", list_users, methods=["GET"]),
     Route("/admin/users", create_user, methods=["POST"]),
