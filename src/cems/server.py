@@ -572,6 +572,14 @@ def create_http_app():
     # Get the base MCP app
     app = mcp.streamable_http_app()
 
+    # Remove FastMCP's restrictive TrustedHostMiddleware (allows only localhost)
+    # We'll add our own with wildcard hosts since auth is handled by Bearer token
+    from starlette.middleware.trustedhost import TrustedHostMiddleware
+    app.user_middleware = [
+        m for m in app.user_middleware
+        if not (hasattr(m, 'cls') and getattr(m.cls, '__name__', '') == 'TrustedHostMiddleware')
+    ]
+
     # Add health check route
     app.routes.insert(0, Route("/health", health_check, methods=["GET"]))
 
@@ -582,13 +590,9 @@ def create_http_app():
             app.routes.insert(0, route)
         logger.info("Admin API routes enabled (/admin/*)")
 
-    # Add our middleware
-    app.add_middleware(UserContextMiddleware)
-
-    # Allow any host (auth is handled by Bearer token)
-    # Note: FastMCP may add TrustedHostMiddleware, but our middleware runs first
-    from starlette.middleware.trustedhost import TrustedHostMiddleware
+    # Add our middlewares (order: last added = first executed)
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=["*"])
+    app.add_middleware(UserContextMiddleware)
 
     return app
 
