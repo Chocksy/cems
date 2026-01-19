@@ -125,31 +125,35 @@ async def create_user(request: Request) -> JSONResponse:
     settings = data.get("settings", {})
 
     db = get_database()
-    with db.session() as session:
-        service = UserService(session)
-        try:
-            result = service.create_user(
-                username=username,
-                email=email,
-                is_admin=is_admin,
-                settings=settings,
-            )
-            return JSONResponse(
-                {
-                    "user": {
-                        "id": str(result.user.id),
-                        "username": result.user.username,
-                        "email": result.user.email,
-                        "is_admin": result.user.is_admin,
-                        "api_key_prefix": result.user.api_key_prefix,
+    try:
+        with db.session() as session:
+            service = UserService(session)
+            try:
+                result = service.create_user(
+                    username=username,
+                    email=email,
+                    is_admin=is_admin,
+                    settings=settings,
+                )
+                return JSONResponse(
+                    {
+                        "user": {
+                            "id": str(result.user.id),
+                            "username": result.user.username,
+                            "email": result.user.email,
+                            "is_admin": result.user.is_admin,
+                            "api_key_prefix": result.user.api_key_prefix,
+                        },
+                        "api_key": result.api_key,  # Show only once!
+                        "message": "User created. Save the API key - it will not be shown again.",
                     },
-                    "api_key": result.api_key,  # Show only once!
-                    "message": "User created. Save the API key - it will not be shown again.",
-                },
-                status_code=201,
-            )
-        except ValueError as e:
-            return JSONResponse({"error": str(e)}, status_code=400)
+                    status_code=201,
+                )
+            except ValueError as e:
+                return JSONResponse({"error": str(e)}, status_code=400)
+    except Exception as e:
+        logger.exception("Failed to create user")
+        return JSONResponse({"error": f"Database error: {e}"}, status_code=500)
 
 
 async def get_user(request: Request) -> JSONResponse:
