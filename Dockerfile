@@ -20,8 +20,10 @@ RUN uv pip install --system -e .
 # Copy deploy files
 COPY deploy/ deploy/
 
-# Create non-root user
-RUN useradd -m -u 1000 cems && chown -R cems:cems /app
+# Create non-root user and storage directory
+RUN useradd -m -u 1000 cems \
+    && mkdir -p /home/cems/.cems \
+    && chown -R cems:cems /app /home/cems/.cems
 USER cems
 
 # Expose MCP server port

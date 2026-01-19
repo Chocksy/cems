@@ -1,5 +1,7 @@
 """CEMS Memory wrapper around Mem0 with namespace isolation."""
 
+from __future__ import annotations
+
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -33,17 +35,29 @@ class CEMSMemory:
             config: CEMS configuration. If None, loads from environment.
         """
         self.config = config or CEMSConfig()
-        self.config.ensure_dirs()
 
         # Initialize Mem0 with local Qdrant
         mem0_config = self._build_mem0_config()
         self._memory = Memory.from_config(mem0_config)
 
-        # Initialize metadata store
-        self._metadata = MetadataStore(self.config.metadata_db_path)
+        # Initialize metadata store (PostgreSQL if configured, else SQLite)
+        if self.config.database_url:
+            from cems.db.database import is_database_initialized
+            from cems.db.metadata_store import PostgresMetadataStore
+
+            if is_database_initialized():
+                self._metadata = PostgresMetadataStore()
+            else:
+                # Fallback to SQLite if DB not initialized yet
+                self.config.ensure_dirs()
+                self._metadata = MetadataStore(self.config.metadata_db_path)
+        else:
+            # Local mode: use SQLite
+            self.config.ensure_dirs()
+            self._metadata = MetadataStore(self.config.metadata_db_path)
 
         # Initialize graph store (optional)
-        self._graph: "KuzuGraphStore | None" = None
+        self._graph: KuzuGraphStore | None = None
         if self.config.enable_graph and self.config.graph_store == "kuzu":
             try:
                 from cems.graph import KuzuGraphStore
@@ -536,7 +550,7 @@ class CEMSMemory:
     # =========================================================================
 
     @property
-    def graph_store(self) -> "KuzuGraphStore | None":
+    def graph_store(self) -> KuzuGraphStore | None:
         """Access the graph store directly for graph queries.
 
         Returns:

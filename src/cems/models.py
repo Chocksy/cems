@@ -97,6 +97,8 @@ class MetadataStore:
 
     def _init_db(self) -> None:
         """Initialize the database schema."""
+        # Ensure parent directory exists
+        self.db_path.parent.mkdir(parents=True, exist_ok=True)
         conn = sqlite3.connect(self.db_path)
         try:
             conn.executescript("""
