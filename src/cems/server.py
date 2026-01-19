@@ -443,19 +443,21 @@ def create_http_app():
 
     Returns a Starlette app that:
     1. Provides /health endpoint for Docker health checks
-    2. Validates Authorization: Bearer <token> header if CEMS_API_KEY is configured
-    3. Extracts X-User-ID and X-Team-ID from headers for /mcp routes
+    2. Validates Authorization: Bearer <token> header
+    3. Extracts user context from headers or API key lookup
     4. Sets them in contextvars for the request
     5. Routes to the MCP server
+    6. Provides /admin/* endpoints for user management (if DATABASE_URL set)
     """
     from starlette.middleware.base import BaseHTTPMiddleware
     from starlette.requests import Request
     from starlette.responses import JSONResponse
     from starlette.routing import Route
 
-    # Get expected API key from config
+    # Get config
     config = get_base_config()
     expected_api_key = config.api_key
+    use_database = config.database_url is not None
 
     class UserContextMiddleware(BaseHTTPMiddleware):
         """Middleware to extract user context and validate API key from headers."""
@@ -465,31 +467,78 @@ def create_http_app():
             if request.url.path == "/health":
                 return await call_next(request)
 
-            # Validate Bearer token if configured
-            if expected_api_key:
-                auth_header = request.headers.get("authorization", "")
+            # Skip middleware for admin routes (they handle their own auth)
+            if request.url.path.startswith("/admin"):
+                return await call_next(request)
+
+            # Get authorization header
+            auth_header = request.headers.get("authorization", "")
+
+            if use_database:
+                # Database mode: Validate user API key from database
                 if not auth_header.startswith("Bearer "):
                     return JSONResponse(
-                        {"error": "Authorization: Bearer <token> header required"},
+                        {"error": "Authorization: Bearer <api_key> header required"},
                         status_code=401,
                     )
-                provided_token = auth_header[7:]  # Strip "Bearer " prefix
-                if provided_token != expected_api_key:
+                provided_key = auth_header[7:]
+
+                # Look up user by API key
+                from cems.admin.services import UserService
+                from cems.db.database import get_database, is_database_initialized
+
+                if not is_database_initialized():
                     return JSONResponse(
-                        {"error": "Invalid bearer token"},
-                        status_code=401,
+                        {"error": "Database not initialized"},
+                        status_code=503,
                     )
 
-            # Extract user context from headers
-            user_id = request.headers.get("x-user-id")
-            team_id = request.headers.get("x-team-id")
+                db = get_database()
+                with db.session() as session:
+                    service = UserService(session)
+                    user = service.get_user_by_api_key(provided_key)
 
-            if not user_id:
-                # Require user identification for HTTP mode
-                return JSONResponse(
-                    {"error": "X-User-ID header required"},
-                    status_code=400,
-                )
+                    if not user:
+                        return JSONResponse(
+                            {"error": "Invalid API key"},
+                            status_code=401,
+                        )
+
+                    if not user.is_active:
+                        return JSONResponse(
+                            {"error": "User account is deactivated"},
+                            status_code=403,
+                        )
+
+                    # Set user context from database
+                    user_id = user.username
+                    # Get team from header or user's first team
+                    team_id = request.headers.get("x-team-id")
+
+            else:
+                # Simple mode: Validate against static API key
+                if expected_api_key:
+                    if not auth_header.startswith("Bearer "):
+                        return JSONResponse(
+                            {"error": "Authorization: Bearer <token> header required"},
+                            status_code=401,
+                        )
+                    provided_token = auth_header[7:]
+                    if provided_token != expected_api_key:
+                        return JSONResponse(
+                            {"error": "Invalid bearer token"},
+                            status_code=401,
+                        )
+
+                # Extract user context from headers
+                user_id = request.headers.get("x-user-id")
+                team_id = request.headers.get("x-team-id")
+
+                if not user_id:
+                    return JSONResponse(
+                        {"error": "X-User-ID header required"},
+                        status_code=400,
+                    )
 
             # Set context variables
             user_token = _request_user_id.set(user_id)
@@ -505,13 +554,19 @@ def create_http_app():
 
     async def health_check(request: Request):
         """Health check endpoint for Docker/Kubernetes."""
-        auth_status = "bearer" if expected_api_key else "none"
+        from cems.db.database import get_database, is_database_initialized
+
+        db_status = "not_configured"
+        if is_database_initialized():
+            db = get_database()
+            db_status = "healthy" if db.health_check() else "unhealthy"
+
         return JSONResponse({
             "status": "healthy",
             "service": "cems-mcp-server",
             "mode": "http",
-            "auth": auth_status,
-            "auth_type": "bearer" if expected_api_key else "none",
+            "auth": "database" if use_database else ("bearer" if expected_api_key else "none"),
+            "database": db_status,
         })
 
     # Get the base MCP app
@@ -519,6 +574,13 @@ def create_http_app():
 
     # Add health check route
     app.routes.insert(0, Route("/health", health_check, methods=["GET"]))
+
+    # Add admin routes if database is configured
+    if use_database:
+        from cems.admin.routes import admin_routes
+        for route in admin_routes:
+            app.routes.insert(0, route)
+        logger.info("Admin API routes enabled (/admin/*)")
 
     # Add our middleware
     app.add_middleware(UserContextMiddleware)
@@ -589,6 +651,16 @@ def run_http_server(host: str = "0.0.0.0", port: int = 8765) -> None:
     logger.info(f"Vector store: {config.vector_store}")
     logger.info(f"Qdrant URL: {config.qdrant_url}")
     logger.info(f"API key auth: {'enabled' if config.api_key else 'disabled'}")
+
+    # Initialize PostgreSQL database if configured
+    if config.database_url:
+        from cems.db.database import init_database
+
+        logger.info("Initializing PostgreSQL database...")
+        db = init_database(config.database_url)
+        db.create_tables()
+        logger.info("PostgreSQL database initialized")
+        logger.info(f"Admin API: {'enabled' if config.admin_key else 'WARNING: CEMS_ADMIN_KEY not set'}")
 
     # Wait for Qdrant if URL is configured
     if config.qdrant_url:

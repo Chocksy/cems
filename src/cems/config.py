@@ -162,7 +162,19 @@ class CEMSConfig(BaseSettings):
     server_port: int = Field(default=8765, description="MCP server port")
     api_key: str | None = Field(
         default=None,
-        description="API key for HTTP mode authentication. If set, requests must include X-API-Key header.",
+        description="API key for HTTP mode authentication. If set, requests must include Bearer token.",
+    )
+
+    # =========================================================================
+    # PostgreSQL Settings (for multi-user/enterprise deployment)
+    # =========================================================================
+    database_url: str | None = Field(
+        default=None,
+        description="PostgreSQL connection URL. If set, uses PostgreSQL for user/team management.",
+    )
+    admin_key: str | None = Field(
+        default=None,
+        description="Admin API key for user management. Required for /admin/* endpoints.",
     )
 
     # =========================================================================
@@ -203,7 +215,9 @@ class CEMSConfig(BaseSettings):
     def ensure_dirs(self) -> None:
         """Ensure all required directories exist."""
         self.storage_dir.mkdir(parents=True, exist_ok=True)
-        self.qdrant_storage_path.mkdir(parents=True, exist_ok=True)
+        # Only create local Qdrant storage if not using remote URL
+        if not self.qdrant_url:
+            self.qdrant_storage_path.mkdir(parents=True, exist_ok=True)
         # Note: Don't create kuzu_storage_path - Kuzu creates its own database directory
 
     def get_mem0_provider(self) -> str:

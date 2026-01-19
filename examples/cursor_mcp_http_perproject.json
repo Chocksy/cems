@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "cems": {
+      "url": "https://cems.chocksy.com/mcp/v1",
+      "headers": {
+        "Authorization": "Bearer cems-prod-0d078c31bYOUR_ADMIN_KEY",
+        "X-User-ID": "razvan-cems",
+        "X-Team-ID": "cems-project"
+      }
+    }
+  }
+}
