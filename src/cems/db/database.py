@@ -27,6 +27,10 @@ class Database:
                 Sync: postgresql://user:pass@host:port/db
                 Async: postgresql+asyncpg://user:pass@host:port/db
         """
+        # Normalize URL: postgres:// -> postgresql:// (SQLAlchemy requires full name)
+        if database_url.startswith("postgres://"):
+            database_url = database_url.replace("postgres://", "postgresql://", 1)
+
         self.database_url = database_url
 
         # Create sync engine (for CLI operations)
