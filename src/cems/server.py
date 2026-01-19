@@ -23,6 +23,7 @@ from contextvars import ContextVar
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
 
 from cems.config import CEMSConfig
 from cems.memory import CEMSMemory
@@ -35,7 +36,12 @@ _request_user_id: ContextVar[str | None] = ContextVar("request_user_id", default
 _request_team_id: ContextVar[str | None] = ContextVar("request_team_id", default=None)
 
 # Initialize FastMCP server
-mcp = FastMCP("CEMS Memory Server")
+# Disable DNS rebinding protection for production deployment (auth handled by Bearer token)
+mcp = FastMCP(
+    "CEMS Memory Server",
+    host="0.0.0.0",  # Bind to all interfaces
+    transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False),
+)
 
 # Global memory instances per user (for HTTP mode)
 _memory_cache: dict[str, CEMSMemory] = {}
