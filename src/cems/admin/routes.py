@@ -562,6 +562,75 @@ async def debug_config(request: Request) -> JSONResponse:
     return JSONResponse({"config": env_check})
 
 
+async def debug_llm_test(request: Request) -> JSONResponse:
+    """Test LLM connectivity (admin only)."""
+    if err := require_admin_auth(request):
+        return err
+
+    import os
+    from openai import OpenAI
+
+    results = {}
+
+    # Test OpenRouter
+    openrouter_key = os.environ.get("OPENROUTER_API_KEY")
+    if openrouter_key:
+        try:
+            client = OpenAI(
+                base_url="https://openrouter.ai/api/v1",
+                api_key=openrouter_key,
+            )
+            response = client.chat.completions.create(
+                model="openai/gpt-4o-mini",
+                messages=[{"role": "user", "content": "Say 'OpenRouter OK' in 3 words"}],
+                max_tokens=20,
+            )
+            results["openrouter"] = {
+                "status": "ok",
+                "response": response.choices[0].message.content,
+            }
+        except Exception as e:
+            results["openrouter"] = {"status": "error", "error": str(e)}
+    else:
+        results["openrouter"] = {"status": "not configured"}
+
+    # Test OpenAI
+    openai_key = os.environ.get("OPENAI_API_KEY")
+    if openai_key:
+        try:
+            client = OpenAI(api_key=openai_key)
+            response = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[{"role": "user", "content": "Say 'OpenAI OK' in 3 words"}],
+                max_tokens=20,
+            )
+            results["openai"] = {
+                "status": "ok",
+                "response": response.choices[0].message.content,
+            }
+        except Exception as e:
+            results["openai"] = {"status": "error", "error": str(e)}
+    else:
+        results["openai"] = {"status": "not configured"}
+
+    # Test embeddings
+    if openai_key:
+        try:
+            client = OpenAI(api_key=openai_key)
+            response = client.embeddings.create(
+                model="text-embedding-3-small",
+                input="test embedding",
+            )
+            results["embeddings"] = {
+                "status": "ok",
+                "dimensions": len(response.data[0].embedding),
+            }
+        except Exception as e:
+            results["embeddings"] = {"status": "error", "error": str(e)}
+
+    return JSONResponse({"llm_tests": results})
+
+
 # =============================================================================
 # Route Definitions
 # =============================================================================
@@ -570,6 +639,7 @@ admin_routes = [
     # Admin info
     Route("/admin", admin_info, methods=["GET"]),
     Route("/admin/debug", debug_config, methods=["GET"]),
+    Route("/admin/debug/llm", debug_llm_test, methods=["GET"]),
     # Users
     Route("/admin/users", list_users, methods=["GET"]),
     Route("/admin/users", create_user, methods=["POST"]),
