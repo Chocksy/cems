@@ -4,7 +4,7 @@ These models mirror the schema in deploy/init.sql for multi-user deployment.
 """
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import (
@@ -31,7 +31,7 @@ class Base(DeclarativeBase):
 
 def utc_now() -> datetime:
     """Return current UTC time."""
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 class User(Base):

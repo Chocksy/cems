@@ -1,12 +1,11 @@
 """Authentication utilities for CEMS admin API."""
 
 import secrets
-from typing import Tuple
 
 import bcrypt
 
 
-def generate_api_key(prefix: str = "cems_ak") -> Tuple[str, str, str]:
+def generate_api_key(prefix: str = "cems_ak") -> tuple[str, str, str]:
     """Generate a new API key.
 
     Args:

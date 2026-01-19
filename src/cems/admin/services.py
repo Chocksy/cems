@@ -3,8 +3,7 @@
 import logging
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timezone
-from typing import Optional
+from datetime import UTC, datetime
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -41,9 +40,9 @@ class UserService:
     def create_user(
         self,
         username: str,
-        email: Optional[str] = None,
+        email: str | None = None,
         is_admin: bool = False,
-        settings: Optional[dict] = None,
+        settings: dict | None = None,
     ) -> UserCreateResult:
         """Create a new user with API key.
 
@@ -95,19 +94,19 @@ class UserService:
         logger.info(f"Created user: {username} (admin={is_admin})")
         return UserCreateResult(user=user, api_key=api_key)
 
-    def get_user_by_id(self, user_id: uuid.UUID) -> Optional[User]:
+    def get_user_by_id(self, user_id: uuid.UUID) -> User | None:
         """Get user by ID."""
         return self.session.execute(
             select(User).where(User.id == user_id)
         ).scalar_one_or_none()
 
-    def get_user_by_username(self, username: str) -> Optional[User]:
+    def get_user_by_username(self, username: str) -> User | None:
         """Get user by username."""
         return self.session.execute(
             select(User).where(User.username == username)
         ).scalar_one_or_none()
 
-    def get_user_by_api_key(self, api_key: str) -> Optional[User]:
+    def get_user_by_api_key(self, api_key: str) -> User | None:
         """Get user by API key (validates the key).
 
         Args:
@@ -122,14 +121,14 @@ class UserService:
         # Find users with matching prefix (should be unique but check anyway)
         users = self.session.execute(
             select(User).where(
-                User.api_key_prefix == key_prefix, User.is_active == True
+                User.api_key_prefix == key_prefix, User.is_active == True  # noqa: E712
             )
         ).scalars().all()
 
         for user in users:
             if verify_api_key(api_key, user.api_key_hash):
                 # Update last active
-                user.last_active = datetime.now(timezone.utc)
+                user.last_active = datetime.now(UTC)
                 return user
 
         return None
@@ -149,18 +148,18 @@ class UserService:
         """
         query = select(User)
         if not include_inactive:
-            query = query.where(User.is_active == True)
+            query = query.where(User.is_active == True)  # noqa: E712
         query = query.order_by(User.created_at.desc()).limit(limit).offset(offset)
         return list(self.session.execute(query).scalars().all())
 
     def update_user(
         self,
         user_id: uuid.UUID,
-        email: Optional[str] = None,
-        is_active: Optional[bool] = None,
-        is_admin: Optional[bool] = None,
-        settings: Optional[dict] = None,
-    ) -> Optional[User]:
+        email: str | None = None,
+        is_active: bool | None = None,
+        is_admin: bool | None = None,
+        settings: dict | None = None,
+    ) -> User | None:
         """Update user fields.
 
         Args:
@@ -208,7 +207,7 @@ class UserService:
         logger.info(f"Deleted user: {username}")
         return True
 
-    def deactivate_user(self, user_id: uuid.UUID) -> Optional[User]:
+    def deactivate_user(self, user_id: uuid.UUID) -> User | None:
         """Deactivate a user (soft delete).
 
         Args:
@@ -219,7 +218,7 @@ class UserService:
         """
         return self.update_user(user_id, is_active=False)
 
-    def reset_api_key(self, user_id: uuid.UUID) -> Optional[ApiKeyResetResult]:
+    def reset_api_key(self, user_id: uuid.UUID) -> ApiKeyResetResult | None:
         """Generate a new API key for a user.
 
         Args:
@@ -247,7 +246,7 @@ class UserService:
         action: str,
         resource_type: str,
         resource_id: str,
-        details: Optional[dict] = None,
+        details: dict | None = None,
     ) -> None:
         """Record an audit log entry."""
         log = AuditLog(
@@ -270,7 +269,7 @@ class TeamService:
         self,
         name: str,
         company_id: str,
-        settings: Optional[dict] = None,
+        settings: dict | None = None,
     ) -> Team:
         """Create a new team.
 
@@ -304,13 +303,13 @@ class TeamService:
         logger.info(f"Created team: {name}")
         return team
 
-    def get_team_by_id(self, team_id: uuid.UUID) -> Optional[Team]:
+    def get_team_by_id(self, team_id: uuid.UUID) -> Team | None:
         """Get team by ID."""
         return self.session.execute(
             select(Team).where(Team.id == team_id)
         ).scalar_one_or_none()
 
-    def get_team_by_name(self, name: str) -> Optional[Team]:
+    def get_team_by_name(self, name: str) -> Team | None:
         """Get team by name."""
         return self.session.execute(
             select(Team).where(Team.name == name)
@@ -347,7 +346,7 @@ class TeamService:
         team_id: uuid.UUID,
         user_id: uuid.UUID,
         role: str = "member",
-    ) -> Optional[TeamMember]:
+    ) -> TeamMember | None:
         """Add a user to a team.
 
         Args:
@@ -418,7 +417,7 @@ class TeamService:
         team_id: uuid.UUID,
         user_id: uuid.UUID,
         role: str,
-    ) -> Optional[TeamMember]:
+    ) -> TeamMember | None:
         """Update a member's role.
 
         Args:
@@ -480,7 +479,7 @@ class TeamService:
         action: str,
         resource_type: str,
         resource_id: str,
-        details: Optional[dict] = None,
+        details: dict | None = None,
     ) -> None:
         """Record an audit log entry."""
         log = AuditLog(

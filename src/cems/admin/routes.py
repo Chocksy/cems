@@ -6,10 +6,7 @@ These routes require admin authentication via CEMS_ADMIN_KEY.
 import logging
 import os
 import uuid
-from dataclasses import asdict
-from typing import Any, Optional
 
-from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
@@ -20,12 +17,12 @@ from cems.db.database import get_database, is_database_initialized
 logger = logging.getLogger(__name__)
 
 
-def get_admin_key() -> Optional[str]:
+def get_admin_key() -> str | None:
     """Get the admin API key from environment."""
     return os.environ.get("CEMS_ADMIN_KEY")
 
 
-def require_admin_auth(request: Request) -> Optional[JSONResponse]:
+def require_admin_auth(request: Request) -> JSONResponse | None:
     """Check admin authentication.
 
     Returns None if authenticated, JSONResponse with error otherwise.
@@ -51,7 +48,7 @@ def require_admin_auth(request: Request) -> Optional[JSONResponse]:
     return None  # Authenticated
 
 
-def require_database(request: Request) -> Optional[JSONResponse]:
+def require_database(request: Request) -> JSONResponse | None:
     """Check if database is initialized.
 
     Returns None if initialized, JSONResponse with error otherwise.

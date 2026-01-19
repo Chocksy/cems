@@ -1,5 +1,6 @@
 -- CEMS PostgreSQL Schema for Server Deployment
 -- This schema supports multi-user, multi-team memory management
+-- NOTE: SQLAlchemy models auto-create tables, this file is for reference/manual setup
 
 -- Enable UUID extension
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
@@ -9,12 +10,17 @@ CREATE TABLE IF NOT EXISTS users (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     username VARCHAR(255) UNIQUE NOT NULL,
     email VARCHAR(255) UNIQUE,
-    api_key VARCHAR(255) UNIQUE NOT NULL,
+    api_key_hash VARCHAR(255) NOT NULL,  -- bcrypt hash of API key
+    api_key_prefix VARCHAR(10) NOT NULL, -- First 8 chars for identification
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     last_active TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
     is_active BOOLEAN DEFAULT true,
+    is_admin BOOLEAN DEFAULT false,
     settings JSONB DEFAULT '{}'::jsonb
 );
+
+CREATE INDEX IF NOT EXISTS idx_users_api_key_prefix ON users(api_key_prefix);
+CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);
 
 -- Teams table
 CREATE TABLE IF NOT EXISTS teams (
@@ -51,7 +57,7 @@ CREATE TABLE IF NOT EXISTS memory_metadata (
     tags TEXT[], -- PostgreSQL array for tags
     archived BOOLEAN DEFAULT false,
     priority REAL DEFAULT 1.0,
-    -- NEW: Pinned/permanent memory support
+    -- Pinned/permanent memory support
     pinned BOOLEAN DEFAULT false,
     pin_reason VARCHAR(500), -- Why it's pinned (e.g., 'rspec_convention', 'architecture')
     pin_category VARCHAR(100), -- 'guideline', 'convention', 'architecture', 'standard'
@@ -99,7 +105,7 @@ CREATE TABLE IF NOT EXISTS maintenance_log (
 -- Index jobs for repository scanning
 CREATE TABLE IF NOT EXISTS index_jobs (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    team_id UUID REFERENCES teams(id) ON DELETE CASCADE,
+    team_id UUID REFERENCES teams(id) ON DELETE CASCADE NOT NULL,
     repository_url VARCHAR(500) NOT NULL,
     repository_ref VARCHAR(255) DEFAULT 'main', -- branch/tag
     status VARCHAR(50) DEFAULT 'pending', -- 'pending', 'running', 'completed', 'failed'
@@ -150,14 +156,17 @@ CREATE TABLE IF NOT EXISTS api_keys (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     team_id UUID REFERENCES teams(id) ON DELETE CASCADE,
     name VARCHAR(255) NOT NULL,
-    key_hash VARCHAR(255) NOT NULL, -- hashed API key
+    key_hash VARCHAR(255) NOT NULL, -- bcrypt hashed API key
     key_prefix VARCHAR(10) NOT NULL, -- first 8 chars for identification
     permissions JSONB DEFAULT '["read", "write"]'::jsonb,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    created_by UUID REFERENCES users(id),
     last_used TIMESTAMP WITH TIME ZONE,
     expires_at TIMESTAMP WITH TIME ZONE,
     is_active BOOLEAN DEFAULT true
 );
+
+CREATE INDEX IF NOT EXISTS idx_api_keys_prefix ON api_keys(key_prefix);
 
 -- Audit log for compliance
 CREATE TABLE IF NOT EXISTS audit_log (
@@ -167,7 +176,7 @@ CREATE TABLE IF NOT EXISTS audit_log (
     resource_type VARCHAR(100) NOT NULL,
     resource_id VARCHAR(255),
     details JSONB,
-    ip_address INET,
+    ip_address VARCHAR(45), -- Changed from INET for SQLAlchemy compatibility
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -195,6 +204,6 @@ CREATE OR REPLACE VIEW pinned_memories AS
 SELECT * FROM memory_metadata
 WHERE pinned = true AND archived = false;
 
--- Grant permissions
-GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO cems;
-GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO cems;
+-- Grant permissions (for manual setup - Docker uses cems user directly)
+-- GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO cems;
+-- GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO cems;
