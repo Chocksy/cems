@@ -523,6 +523,17 @@ def create_http_app():
     # Add our middleware
     app.add_middleware(UserContextMiddleware)
 
+    # Remove FastMCP's restrictive TrustedHostMiddleware for production deployment
+    # FastMCP defaults to only allowing localhost, but we need external access
+    from starlette.middleware.trustedhost import TrustedHostMiddleware
+    app.middleware_stack = None  # Force rebuild
+    app.middleware = [
+        m for m in app.middleware
+        if not (hasattr(m, 'cls') and m.cls == TrustedHostMiddleware)
+    ]
+    # Add back with wildcard to allow any host (auth is handled by Bearer token)
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=["*"])
+
     return app
 
 

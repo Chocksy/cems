@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "cems": {
+      "type": "http",
+      "url": "https://cems.chocksy.com/mcp",
+      "headers": {
+        "Authorization": "Bearer test-key",
+        "X-User-ID": "razvan",
+        "X-Team-ID": "chocksy"
+      }
+    }
+  }
+}
