@@ -159,3 +159,50 @@ def get_database() -> Database:
 def is_database_initialized() -> bool:
     """Check if database is initialized."""
     return _database is not None
+
+
+def run_migrations() -> None:
+    """Run any pending database migrations.
+
+    This is called on server startup to ensure schema is up to date.
+    """
+    db = get_database()
+
+    migrations = [
+        # Fix api_key_prefix column size (10 -> 20 chars)
+        (
+            "api_key_prefix_size_v1",
+            """
+            DO $$
+            BEGIN
+                IF EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name = 'users'
+                    AND column_name = 'api_key_prefix'
+                    AND character_maximum_length = 10
+                ) THEN
+                    ALTER TABLE users ALTER COLUMN api_key_prefix TYPE VARCHAR(20);
+                    RAISE NOTICE 'Migrated users.api_key_prefix to VARCHAR(20)';
+                END IF;
+
+                IF EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name = 'api_keys'
+                    AND column_name = 'key_prefix'
+                    AND character_maximum_length = 10
+                ) THEN
+                    ALTER TABLE api_keys ALTER COLUMN key_prefix TYPE VARCHAR(20);
+                    RAISE NOTICE 'Migrated api_keys.key_prefix to VARCHAR(20)';
+                END IF;
+            END $$;
+            """,
+        ),
+    ]
+
+    with db.session() as session:
+        for migration_id, sql in migrations:
+            try:
+                session.execute(text(sql))
+                logger.info(f"Migration applied: {migration_id}")
+            except Exception as e:
+                logger.warning(f"Migration {migration_id} skipped or failed: {e}")

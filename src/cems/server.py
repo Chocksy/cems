@@ -648,11 +648,12 @@ def run_http_server(host: str = "0.0.0.0", port: int = 8765) -> None:
 
     # Initialize PostgreSQL database if configured
     if config.database_url:
-        from cems.db.database import init_database
+        from cems.db.database import init_database, run_migrations
 
         logger.info("Initializing PostgreSQL database...")
         db = init_database(config.database_url)
         db.create_tables()
+        run_migrations()
         logger.info("PostgreSQL database initialized")
         logger.info(f"Admin API: {'enabled' if config.admin_key else 'WARNING: CEMS_ADMIN_KEY not set'}")
 
