@@ -77,22 +77,42 @@ class CEMSMemory:
         Note:
             Mem0 requires direct provider access (OpenAI/Anthropic), not OpenRouter.
             The OPENAI_API_KEY or ANTHROPIC_API_KEY must be set for Mem0 to work.
+
+            IMPORTANT: Mem0's OpenAI LLM class checks for OPENROUTER_API_KEY and uses
+            OpenRouter if found. We explicitly set api_key and openai_base_url to
+            override this behavior and ensure we always use the configured provider.
         """
+        import os
+
         provider = self.config.get_mem0_provider()
         model = self.config.get_mem0_model()
+
+        # Build LLM config with explicit API key to prevent OpenRouter detection
+        llm_config: dict[str, Any] = {"model": model}
+        embedder_config: dict[str, Any] = {"model": self.config.embedding_model}
+
+        if provider == "openai":
+            # Explicitly set OpenAI config to prevent OPENROUTER_API_KEY detection
+            api_key = os.environ.get("OPENAI_API_KEY")
+            if api_key:
+                llm_config["api_key"] = api_key
+                llm_config["openai_base_url"] = "https://api.openai.com/v1"
+                embedder_config["api_key"] = api_key
+                embedder_config["openai_base_url"] = "https://api.openai.com/v1"
+        elif provider == "anthropic":
+            api_key = os.environ.get("ANTHROPIC_API_KEY")
+            if api_key:
+                llm_config["api_key"] = api_key
+                embedder_config["api_key"] = api_key
 
         return {
             "llm": {
                 "provider": provider,
-                "config": {
-                    "model": model,
-                },
+                "config": llm_config,
             },
             "embedder": {
                 "provider": provider,
-                "config": {
-                    "model": self.config.embedding_model,
-                },
+                "config": embedder_config,
             },
             "vector_store": {
                 "provider": self.config.vector_store,
