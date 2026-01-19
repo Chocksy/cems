@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "cems": {
+      "command": "cems-server",
+      "args": [],
+      "env": {
+        "CEMS_USER_ID": "${USER}",
+        "CEMS_TEAM_ID": "my-team",
+        "CEMS_STORAGE_DIR": "${HOME}/.cems",
+        "CEMS_ENABLE_SCHEDULER": "true"
+      }
+    }
+  }
+}

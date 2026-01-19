@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "cems": {
+      "type": "http",
+      "url": "http://localhost:8765/mcp",
+      "headers": {
+        "X-User-ID": "YOUR_USER_ID",
+        "X-Team-ID": "YOUR_TEAM_ID"
+      }
+    }
+  }
+}

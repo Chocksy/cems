@@ -1,0 +1,85 @@
+services:
+  # PostgreSQL for metadata and user management
+  postgres:
+    image: postgres:16-alpine
+    container_name: cems-postgres
+    environment:
+      POSTGRES_USER: cems
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-cems_secure_password}
+      POSTGRES_DB: cems
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./deploy/init.sql:/docker-entrypoint-initdb.d/init.sql
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cems"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # Qdrant vector database
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: cems-qdrant
+    volumes:
+      - qdrant_data:/qdrant/storage
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    environment:
+      QDRANT__SERVICE__GRPC_PORT: 6334
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/localhost/6333'"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # CEMS MCP Server
+  cems-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: cems-server
+    environment:
+      # Database
+      CEMS_DATABASE_URL: postgresql://cems:${POSTGRES_PASSWORD:-cems_secure_password}@postgres:5432/cems
+      # Vector store
+      CEMS_VECTOR_STORE: qdrant
+      CEMS_QDRANT_URL: http://qdrant:6333
+      # LLM settings
+      CEMS_LLM_PROVIDER: ${CEMS_LLM_PROVIDER:-openai}
+      CEMS_LLM_MODEL: ${CEMS_LLM_MODEL:-gpt-4o-mini}
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      # Or use Anthropic
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      # Server mode
+      CEMS_MODE: server
+      CEMS_SERVER_HOST: 0.0.0.0
+      CEMS_SERVER_PORT: 8765
+      # Company settings
+      CEMS_COMPANY_ID: ${CEMS_COMPANY_ID:-default}
+      # Authentication
+      CEMS_API_KEY: ${CEMS_API_KEY}
+      CEMS_ENABLE_AUTH: "true"
+    ports:
+      - "8765:8765"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8765/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+
+  # NOTE: Worker service removed - scheduler runs in cems-server background
+
+volumes:
+  postgres_data:
+  qdrant_data:

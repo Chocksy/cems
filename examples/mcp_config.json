@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "cems": {
+      "command": "cems-server",
+      "args": [],
+      "env": {
+        "CEMS_USER_ID": "${USER}",
+        "CEMS_STORAGE_DIR": "${HOME}/.cems"
+      }
+    }
+  }
+}

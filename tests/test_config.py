@@ -1,0 +1,112 @@
+"""Tests for CEMS configuration."""
+
+import os
+import tempfile
+from pathlib import Path
+
+import pytest
+
+from cems.config import CEMSConfig
+
+
+class TestCEMSConfig:
+    """Tests for CEMSConfig."""
+
+    def test_default_config(self):
+        """Test default configuration values."""
+        config = CEMSConfig()
+
+        assert config.user_id == "default"
+        assert config.team_id is None
+        assert config.memory_backend == "mem0"
+        assert config.vector_store == "qdrant"
+        assert config.enable_scheduler is True
+        assert config.stale_days == 90
+        assert config.archive_days == 180
+
+    def test_custom_user_id(self):
+        """Test setting custom user ID."""
+        config = CEMSConfig(user_id="test-user")
+        assert config.user_id == "test-user"
+        assert config.personal_collection == "personal_test-user"
+
+    def test_team_id(self):
+        """Test team ID configuration."""
+        config = CEMSConfig(user_id="user", team_id="my-team")
+
+        assert config.team_id == "my-team"
+        assert config.shared_collection == "shared_my-team"
+
+    def test_no_team_id(self):
+        """Test shared_collection is None without team ID."""
+        config = CEMSConfig(user_id="user")
+        assert config.shared_collection is None
+
+    def test_storage_paths(self):
+        """Test storage path generation."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config = CEMSConfig(storage_dir=Path(tmpdir))
+
+            assert config.qdrant_storage_path == Path(tmpdir) / "qdrant"
+            assert config.metadata_db_path == Path(tmpdir) / "metadata.db"
+
+    def test_custom_qdrant_path(self):
+        """Test custom Qdrant path."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            custom_path = Path(tmpdir) / "custom_qdrant"
+            config = CEMSConfig(qdrant_path=custom_path)
+
+            assert config.qdrant_storage_path == custom_path
+
+    def test_ensure_dirs(self):
+        """Test directory creation."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            storage_dir = Path(tmpdir) / "cems_test"
+            config = CEMSConfig(storage_dir=storage_dir)
+
+            config.ensure_dirs()
+
+            assert storage_dir.exists()
+            assert config.qdrant_storage_path.exists()
+
+    def test_scheduler_config(self):
+        """Test scheduler configuration."""
+        config = CEMSConfig(
+            nightly_hour=2,
+            weekly_day="mon",
+            weekly_hour=5,
+            monthly_day=15,
+            monthly_hour=6,
+        )
+
+        assert config.nightly_hour == 2
+        assert config.weekly_day == "mon"
+        assert config.weekly_hour == 5
+        assert config.monthly_day == 15
+        assert config.monthly_hour == 6
+
+    def test_decay_settings(self):
+        """Test decay settings."""
+        config = CEMSConfig(
+            stale_days=60,
+            archive_days=120,
+            hot_access_threshold=10,
+            duplicate_similarity_threshold=0.95,
+        )
+
+        assert config.stale_days == 60
+        assert config.archive_days == 120
+        assert config.hot_access_threshold == 10
+        assert config.duplicate_similarity_threshold == 0.95
+
+    def test_llm_settings(self):
+        """Test LLM configuration."""
+        config = CEMSConfig(
+            llm_provider="anthropic",
+            llm_model="claude-3-haiku",
+            embedding_model="text-embedding-3-large",
+        )
+
+        assert config.llm_provider == "anthropic"
+        assert config.llm_model == "claude-3-haiku"
+        assert config.embedding_model == "text-embedding-3-large"
