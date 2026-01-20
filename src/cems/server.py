@@ -41,6 +41,7 @@ mcp = FastMCP(
     "CEMS Memory Server",
     host="0.0.0.0",  # Bind to all interfaces
     stateless_http=True,  # Close connection after each request (Cloudflare compatible)
+    json_response=True,  # Return plain JSON instead of SSE (fixes Cursor red status issue)
     transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False),
 )
 
