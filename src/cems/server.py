@@ -40,6 +40,7 @@ _request_team_id: ContextVar[str | None] = ContextVar("request_team_id", default
 mcp = FastMCP(
     "CEMS Memory Server",
     host="0.0.0.0",  # Bind to all interfaces
+    stateless_http=True,  # Close connection after each request (Cloudflare compatible)
     transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False),
 )
 
