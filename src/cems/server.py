@@ -19,6 +19,8 @@ And 3 resources:
 
 import logging
 import os
+import json
+import time
 from contextvars import ContextVar
 from typing import Any
 
@@ -30,6 +32,18 @@ from cems.memory import CEMSMemory
 from cems.scheduler import CEMSScheduler
 
 logger = logging.getLogger(__name__)
+
+# #region agent log
+_DEBUG_LOG_PATH = "/Users/razvan/Development/cems/.cursor/debug.log"
+def _debug_log(location: str, message: str, data: dict = None, hypothesis_id: str = ""):
+    try:
+        import os as _os
+        _os.makedirs(_os.path.dirname(_DEBUG_LOG_PATH), exist_ok=True)
+        entry = {"timestamp": int(time.time() * 1000), "location": location, "message": message, "data": data or {}, "hypothesisId": hypothesis_id, "sessionId": "debug-session"}
+        with open(_DEBUG_LOG_PATH, "a") as f:
+            f.write(json.dumps(entry) + "\n")
+    except: pass
+# #endregion
 
 # Context variables for per-request user identification (HTTP mode)
 _request_user_id: ContextVar[str | None] = ContextVar("request_user_id", default=None)
@@ -75,28 +89,40 @@ def get_memory() -> CEMSMemory:
         # HTTP mode: Create per-user memory instance
         cache_key = f"{user_id}:{team_id or 'none'}"
         if cache_key not in _memory_cache:
+            # #region agent log
+            _debug_log("server.py:get_memory", "Creating new memory instance", {"cache_key": cache_key, "total_cached": len(_memory_cache)}, "H3")
+            # #endregion
             # Create config with header values but inherit settings from base
             base = get_base_config()
             # Override user/team via environment for this instance
-            config = CEMSConfig(
-                user_id=user_id,
-                team_id=team_id,
-                # Inherit all other settings from base config
-                storage_dir=base.storage_dir,
-                memory_backend=base.memory_backend,
-                mem0_model=base.mem0_model,
-                embedding_model=base.embedding_model,
-                llm_model=base.llm_model,
-                vector_store=base.vector_store,
-                qdrant_url=base.qdrant_url,
-                enable_graph=base.enable_graph,
-                graph_store=base.graph_store,
-                enable_scheduler=False,  # Scheduler runs separately
-                enable_query_synthesis=base.enable_query_synthesis,
-                relevance_threshold=base.relevance_threshold,
-                default_max_tokens=base.default_max_tokens,
-            )
-            _memory_cache[cache_key] = CEMSMemory(config)
+            try:
+                config = CEMSConfig(
+                    user_id=user_id,
+                    team_id=team_id,
+                    # Inherit all other settings from base config
+                    storage_dir=base.storage_dir,
+                    memory_backend=base.memory_backend,
+                    mem0_model=base.mem0_model,
+                    embedding_model=base.embedding_model,
+                    llm_model=base.llm_model,
+                    vector_store=base.vector_store,
+                    qdrant_url=base.qdrant_url,
+                    enable_graph=base.enable_graph,
+                    graph_store=base.graph_store,
+                    enable_scheduler=False,  # Scheduler runs separately
+                    enable_query_synthesis=base.enable_query_synthesis,
+                    relevance_threshold=base.relevance_threshold,
+                    default_max_tokens=base.default_max_tokens,
+                )
+                _memory_cache[cache_key] = CEMSMemory(config)
+                # #region agent log
+                _debug_log("server.py:get_memory", "Memory instance created", {"cache_key": cache_key, "qdrant_url": base.qdrant_url}, "H5")
+                # #endregion
+            except Exception as e:
+                # #region agent log
+                _debug_log("server.py:get_memory", "Memory creation ERROR", {"cache_key": cache_key, "error": str(e)}, "H5")
+                # #endregion
+                raise
             logger.info(f"Created memory instance for user: {user_id}, team: {team_id}")
         return _memory_cache[cache_key]
     else:
@@ -199,6 +225,10 @@ def memory_search(
     Returns:
         Dict with results, token count, and formatted context
     """
+    # #region agent log
+    _debug_log("server.py:memory_search", "Tool called", {"query": query[:50], "scope": scope}, "H5")
+    # #endregion
+
     memory = get_memory()
 
     try:
@@ -211,12 +241,19 @@ def memory_search(
             enable_graph=True,
         )
 
+        # #region agent log
+        _debug_log("server.py:memory_search", "Search completed", {"result_count": len(result.get("results", []))}, "H5")
+        # #endregion
+
         return {
             "success": True,
             "query": query,
             **result,
         }
     except Exception as e:
+        # #region agent log
+        _debug_log("server.py:memory_search", "Search ERROR", {"error": str(e)}, "H5")
+        # #endregion
         logger.error(f"Failed to search memories: {e}")
         return {
             "success": False,
@@ -338,6 +375,113 @@ def memory_maintenance(
             "job_type": job_type,
             "message": str(e),
             "results": {},
+        }
+
+
+@mcp.tool()
+def session_analyze(
+    transcript: str,
+    session_id: str | None = None,
+    working_dir: str | None = None,
+) -> dict[str, Any]:
+    """Analyze a session transcript and extract learnings to remember.
+
+    Use this to extract and store significant learnings from a coding session.
+    The analysis identifies:
+    - Working solutions (code patterns that worked)
+    - Failed approaches (what didn't work and why)
+    - User preferences (stated preferences about tools/workflows)
+    - Error fixes (how errors were diagnosed and resolved)
+    - Decisions (architectural/design decisions made)
+
+    Args:
+        transcript: The session transcript (string or JSON array of messages)
+        session_id: Optional session identifier for reference
+        working_dir: Optional working directory for project context
+
+    Returns:
+        Dict with learnings_stored count and list of stored learnings
+    """
+    from cems.llm import extract_session_learnings
+
+    try:
+        # Parse transcript if it's a JSON string array
+        parsed_transcript = transcript
+        if transcript.strip().startswith("["):
+            try:
+                parsed_transcript = json.loads(transcript)
+            except json.JSONDecodeError:
+                pass  # Keep as string
+
+        # Run analysis
+        learnings = extract_session_learnings(
+            transcript=parsed_transcript,
+            working_dir=working_dir,
+        )
+
+        if not learnings:
+            return {
+                "success": True,
+                "learnings_stored": 0,
+                "learnings": [],
+                "message": "No significant learnings found in this session",
+            }
+
+        # Store each learning as a memory
+        memory = get_memory()
+        stored_learnings = []
+        sid = session_id or "unknown"
+
+        for learning in learnings:
+            try:
+                learning_type = learning.get("type", "GENERAL")
+                content = learning.get("content", "")
+                category = learning.get("category", "learnings")
+
+                # Format: [TYPE] Content (from session X)
+                formatted_content = f"[{learning_type}] {content}"
+                if sid != "unknown":
+                    formatted_content += f" (session: {sid[:8]})"
+
+                result = memory.add(
+                    content=formatted_content,
+                    scope="personal",
+                    category=category,
+                    tags=["session-learning", learning_type.lower()],
+                )
+
+                # Extract memory ID
+                memory_id = None
+                if result and "results" in result:
+                    for r in result["results"]:
+                        if r.get("id"):
+                            memory_id = r["id"]
+                            break
+
+                stored_learnings.append({
+                    "type": learning_type,
+                    "content": content,
+                    "memory_id": memory_id,
+                    "category": category,
+                })
+
+            except Exception as e:
+                logger.error(f"Failed to store learning: {e}")
+                continue
+
+        return {
+            "success": True,
+            "learnings_stored": len(stored_learnings),
+            "learnings": stored_learnings,
+        }
+
+    except Exception as e:
+        logger.error(f"Failed to analyze session: {e}")
+        return {
+            "success": False,
+            "learnings_stored": 0,
+            "learnings": [],
+            "error": str(e),
         }
 
 
@@ -469,6 +613,10 @@ def create_http_app():
         """Middleware to extract user context and validate API key from headers."""
 
         async def dispatch(self, request: Request, call_next):
+            # #region agent log
+            _debug_log("server.py:middleware", "Request received", {"path": str(request.url.path), "method": request.method}, "H2")
+            # #endregion
+
             # Skip auth for health check
             if request.url.path == "/health":
                 return await call_next(request)
@@ -482,6 +630,9 @@ def create_http_app():
 
             # Validate user API key from database
             if not auth_header.startswith("Bearer "):
+                # #region agent log
+                _debug_log("server.py:middleware", "Auth failed - no Bearer", {"path": str(request.url.path)}, "H4")
+                # #endregion
                 return JSONResponse(
                     {"error": "Authorization: Bearer <api_key> header required"},
                     status_code=401,
@@ -493,40 +644,70 @@ def create_http_app():
             from cems.db.database import get_database, is_database_initialized
 
             if not is_database_initialized():
+                # #region agent log
+                _debug_log("server.py:middleware", "DB not initialized", {}, "H4")
+                # #endregion
                 return JSONResponse(
                     {"error": "Database not initialized"},
                     status_code=503,
                 )
 
             db = get_database()
-            with db.session() as session:
-                service = UserService(session)
-                user = service.get_user_by_api_key(provided_key)
+            try:
+                with db.session() as session:
+                    service = UserService(session)
+                    user = service.get_user_by_api_key(provided_key)
 
-                if not user:
-                    return JSONResponse(
-                        {"error": "Invalid API key"},
-                        status_code=401,
-                    )
+                    if not user:
+                        # #region agent log
+                        _debug_log("server.py:middleware", "Invalid API key", {"key_prefix": provided_key[:10] + "..."}, "H4")
+                        # #endregion
+                        return JSONResponse(
+                            {"error": "Invalid API key"},
+                            status_code=401,
+                        )
 
-                if not user.is_active:
-                    return JSONResponse(
-                        {"error": "User account is deactivated"},
-                        status_code=403,
-                    )
+                    if not user.is_active:
+                        # #region agent log
+                        _debug_log("server.py:middleware", "User deactivated", {"user": user.username}, "H4")
+                        # #endregion
+                        return JSONResponse(
+                            {"error": "User account is deactivated"},
+                            status_code=403,
+                        )
 
-                # Set user context from database
-                user_id = user.username
-                # Get team from header (optional, to select team context)
-                team_id = request.headers.get("x-team-id")
+                    # Set user context from database
+                    user_id = user.username
+                    # Get team from header (optional, to select team context)
+                    team_id = request.headers.get("x-team-id")
+            except Exception as e:
+                # #region agent log
+                _debug_log("server.py:middleware", "DB session error", {"error": str(e)}, "H4")
+                # #endregion
+                return JSONResponse(
+                    {"error": f"Database error: {e}"},
+                    status_code=503,
+                )
 
             # Set context variables
             user_token = _request_user_id.set(user_id)
             team_token = _request_team_id.set(team_id)
 
+            # #region agent log
+            _debug_log("server.py:middleware", "Auth successful", {"user": user_id, "cache_size": len(_memory_cache)}, "H3")
+            # #endregion
+
             try:
                 response = await call_next(request)
+                # #region agent log
+                _debug_log("server.py:middleware", "Request completed", {"path": str(request.url.path), "status": response.status_code}, "H2")
+                # #endregion
                 return response
+            except Exception as e:
+                # #region agent log
+                _debug_log("server.py:middleware", "Request handler error", {"path": str(request.url.path), "error": str(e)}, "H2")
+                # #endregion
+                raise
             finally:
                 # Reset context variables
                 _request_user_id.reset(user_token)
@@ -536,10 +717,23 @@ def create_http_app():
         """Health check endpoint for Docker/Kubernetes."""
         from cems.db.database import get_database, is_database_initialized
 
+        # #region agent log
+        _debug_log("server.py:health_check", "Health check started", {"path": str(request.url.path)}, "H1")
+        # #endregion
+
         db_status = "not_configured"
-        if is_database_initialized():
-            db = get_database()
-            db_status = "healthy" if db.health_check() else "unhealthy"
+        try:
+            if is_database_initialized():
+                db = get_database()
+                db_status = "healthy" if db.health_check() else "unhealthy"
+            # #region agent log
+            _debug_log("server.py:health_check", "Health check DB result", {"db_status": db_status, "cache_size": len(_memory_cache)}, "H1")
+            # #endregion
+        except Exception as e:
+            # #region agent log
+            _debug_log("server.py:health_check", "Health check DB ERROR", {"error": str(e)}, "H1")
+            # #endregion
+            db_status = f"error: {e}"
 
         return JSONResponse({
             "status": "healthy",
@@ -606,6 +800,104 @@ def create_http_app():
             logger.error(f"API memory_search error: {e}")
             return JSONResponse({"error": str(e)}, status_code=500)
 
+    async def api_session_analyze(request: Request):
+        """REST API endpoint to analyze a session transcript and extract learnings.
+
+        POST /api/session/analyze
+        Body: {
+            "transcript": "..." | [...],  # String or array of messages
+            "session_id": "...",          # Session identifier
+            "working_dir": "...",         # Optional: project context
+            "tool_summary": {...}         # Optional: tools used, files changed
+        }
+
+        Response: {
+            "success": true,
+            "learnings_stored": 3,
+            "learnings": [...],
+            "skipped_reason": null
+        }
+        """
+        from cems.llm import extract_session_learnings
+
+        try:
+            body = await request.json()
+            transcript = body.get("transcript")
+            if not transcript:
+                return JSONResponse({"error": "transcript is required"}, status_code=400)
+
+            session_id = body.get("session_id", "unknown")
+            working_dir = body.get("working_dir")
+            tool_summary = body.get("tool_summary")
+
+            # Run analysis (synchronous since haiku is fast)
+            learnings = extract_session_learnings(
+                transcript=transcript,
+                working_dir=working_dir,
+                tool_summary=tool_summary,
+            )
+
+            if not learnings:
+                return JSONResponse({
+                    "success": True,
+                    "learnings_stored": 0,
+                    "learnings": [],
+                    "skipped_reason": "no_significant_learnings",
+                })
+
+            # Store each learning as a memory
+            memory = get_memory()
+            stored_learnings = []
+
+            for learning in learnings:
+                try:
+                    # Build content with type prefix for searchability
+                    learning_type = learning.get("type", "GENERAL")
+                    content = learning.get("content", "")
+                    category = learning.get("category", "learnings")
+
+                    # Format: [TYPE] Content (from session X)
+                    formatted_content = f"[{learning_type}] {content}"
+                    if session_id != "unknown":
+                        formatted_content += f" (session: {session_id[:8]})"
+
+                    result = memory.add(
+                        content=formatted_content,
+                        scope="personal",
+                        category=category,
+                        tags=["session-learning", learning_type.lower()],
+                    )
+
+                    # Extract memory ID
+                    memory_id = None
+                    if result and "results" in result:
+                        for r in result["results"]:
+                            if r.get("id"):
+                                memory_id = r["id"]
+                                break
+
+                    stored_learnings.append({
+                        "type": learning_type,
+                        "content": content,
+                        "memory_id": memory_id,
+                        "category": category,
+                    })
+
+                except Exception as e:
+                    logger.error(f"Failed to store learning: {e}")
+                    continue
+
+            return JSONResponse({
+                "success": True,
+                "learnings_stored": len(stored_learnings),
+                "learnings": stored_learnings,
+                "skipped_reason": None,
+            })
+
+        except Exception as e:
+            logger.error(f"API session_analyze error: {e}")
+            return JSONResponse({"error": str(e)}, status_code=500)
+
     # Get the base MCP app
     app = mcp.streamable_http_app()
 
@@ -623,7 +915,8 @@ def create_http_app():
     # Add REST API routes for hooks/CLI integration
     app.routes.insert(0, Route("/api/memory/add", api_memory_add, methods=["POST"]))
     app.routes.insert(0, Route("/api/memory/search", api_memory_search, methods=["POST"]))
-    logger.info("REST API routes enabled (/api/memory/*)")
+    app.routes.insert(0, Route("/api/session/analyze", api_session_analyze, methods=["POST"]))
+    logger.info("REST API routes enabled (/api/memory/*, /api/session/*)")
 
     # Add admin routes (always available in HTTP mode with database)
     from cems.admin.routes import admin_routes
