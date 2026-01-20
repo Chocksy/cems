@@ -549,6 +549,59 @@ def create_http_app():
             "database": db_status,
         })
 
+    async def api_memory_add(request: Request):
+        """REST API endpoint to add a memory.
+
+        POST /api/memory/add
+        Body: {"content": "...", "category": "...", "scope": "personal|shared"}
+        """
+        try:
+            body = await request.json()
+            content = body.get("content")
+            if not content:
+                return JSONResponse({"error": "content is required"}, status_code=400)
+
+            category = body.get("category", "general")
+            scope = body.get("scope", "personal")
+
+            memory = get_memory()
+            result = memory.add(content, scope=scope, category=category)
+
+            return JSONResponse({
+                "success": True,
+                "result": result,
+            })
+        except Exception as e:
+            logger.error(f"API memory_add error: {e}")
+            return JSONResponse({"error": str(e)}, status_code=500)
+
+    async def api_memory_search(request: Request):
+        """REST API endpoint to search memories.
+
+        POST /api/memory/search
+        Body: {"query": "...", "limit": 5, "scope": "personal|shared|both"}
+        """
+        try:
+            body = await request.json()
+            query = body.get("query")
+            if not query:
+                return JSONResponse({"error": "query is required"}, status_code=400)
+
+            limit = body.get("limit", 5)
+            scope = body.get("scope", "both")
+
+            memory = get_memory()
+            results = memory.search(query, scope=scope, limit=limit)
+
+            return JSONResponse({
+                "success": True,
+                "results": results.get("results", []) if isinstance(results, dict) else results,
+                "count": len(results.get("results", [])) if isinstance(results, dict) else len(results),
+            })
+        except Exception as e:
+            logger.error(f"API memory_search error: {e}")
+            return JSONResponse({"error": str(e)}, status_code=500)
+
     # Get the base MCP app
     app = mcp.streamable_http_app()
 
@@ -562,6 +615,11 @@ def create_http_app():
 
     # Add health check route
     app.routes.insert(0, Route("/health", health_check, methods=["GET"]))
+
+    # Add REST API routes for hooks/CLI integration
+    app.routes.insert(0, Route("/api/memory/add", api_memory_add, methods=["POST"]))
+    app.routes.insert(0, Route("/api/memory/search", api_memory_search, methods=["POST"]))
+    logger.info("REST API routes enabled (/api/memory/*)")
 
     # Add admin routes (always available in HTTP mode with database)
     from cems.admin.routes import admin_routes
