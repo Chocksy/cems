@@ -1,6 +1,6 @@
 #!/bin/bash
 # CEMS Installation Script
-# Installs CEMS and configures it for Claude Code
+# Installs CEMS and configures Claude Code integration
 
 set -e
 
@@ -9,152 +9,188 @@ echo "CEMS - Continuous Evolving Memory System"
 echo "========================================="
 echo
 
-# Check Python version
-PYTHON_VERSION=$(python3 --version 2>&1 | cut -d' ' -f2 | cut -d'.' -f1,2)
-REQUIRED_VERSION="3.11"
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m' # No Color
 
-if [ "$(printf '%s\n' "$REQUIRED_VERSION" "$PYTHON_VERSION" | sort -V | head -n1)" != "$REQUIRED_VERSION" ]; then
-    echo "Error: Python $REQUIRED_VERSION or higher is required (found: $PYTHON_VERSION)"
+# 1. Check prerequisites
+echo "Checking prerequisites..."
+
+if ! command -v uv >/dev/null 2>&1; then
+    echo -e "${RED}Error: uv is required but not installed.${NC}"
+    echo "Install uv: curl -LsSf https://astral.sh/uv/install.sh | sh"
     exit 1
 fi
+echo -e "${GREEN}  uv: OK${NC}"
 
-echo "Python version: $PYTHON_VERSION"
-
-# Check if we're in the right directory
-if [ ! -f "pyproject.toml" ]; then
-    echo "Error: Please run this script from the llm-memory directory"
-    exit 1
-fi
-
-# Install the package
-echo
-echo "Installing CEMS..."
-pip install -e .
-
-# Create storage directory
-CEMS_DIR="${CEMS_STORAGE_DIR:-$HOME/.cems}"
-echo
-echo "Creating storage directory: $CEMS_DIR"
-mkdir -p "$CEMS_DIR"
-
-# Get user info
-USER_ID="${CEMS_USER_ID:-$USER}"
-TEAM_ID="${CEMS_TEAM_ID:-}"
-
-# Configure for Claude Code
-CLAUDE_DIR="$HOME/.claude"
-MCP_CONFIG="$CLAUDE_DIR/mcp_config.json"
-
-echo
-echo "Configuring Claude Code integration..."
-
-# Create Claude directory if needed
-mkdir -p "$CLAUDE_DIR"
-
-# Check if mcp_config.json exists
-if [ -f "$MCP_CONFIG" ]; then
-    echo "Found existing mcp_config.json"
-    echo "Adding CEMS server configuration..."
-
-    # Check if CEMS is already configured
-    if grep -q '"cems"' "$MCP_CONFIG"; then
-        echo "CEMS is already configured in mcp_config.json"
-    else
-        # Add CEMS to existing config using Python
-        python3 << EOF
-import json
-
-with open("$MCP_CONFIG", "r") as f:
-    config = json.load(f)
-
-if "mcpServers" not in config:
-    config["mcpServers"] = {}
-
-config["mcpServers"]["cems"] = {
-    "command": "cems-server",
-    "args": [],
-    "env": {
-        "CEMS_USER_ID": "$USER_ID",
-        "CEMS_STORAGE_DIR": "$CEMS_DIR"
-    }
-}
-
-with open("$MCP_CONFIG", "w") as f:
-    json.dump(config, f, indent=2)
-
-print("Added CEMS to mcp_config.json")
-EOF
-    fi
+# uv manages Python versions automatically based on pyproject.toml (requires-python >= 3.11)
+# It will download the correct version if needed
+UV_PYTHON=$(uv python find 2>/dev/null || echo "")
+if [ -n "$UV_PYTHON" ] && [ -x "$UV_PYTHON" ]; then
+    PYTHON_VERSION=$("$UV_PYTHON" --version 2>/dev/null | cut -d' ' -f2 | cut -d'.' -f1,2)
+    echo -e "${GREEN}  python: $PYTHON_VERSION (via uv)${NC}"
 else
-    # Create new config
-    echo "Creating new mcp_config.json..."
-    cat > "$MCP_CONFIG" << EOF
+    echo -e "${YELLOW}  python: uv will download Python 3.11+ as needed${NC}"
+fi
+
+# Check we're in the right directory
+if [ ! -f "pyproject.toml" ]; then
+    echo -e "${RED}Error: Please run this script from the CEMS directory${NC}"
+    exit 1
+fi
+
+# 2. Install CEMS Python package
+echo
+echo "Installing CEMS package..."
+uv pip install -e . 2>&1 | grep -v "^Resolved\|^Prepared\|^Installed" || true
+echo -e "${GREEN}CEMS package installed${NC}"
+
+# 3. Check for existing ~/.claude
+echo
+CLAUDE_DIR="$HOME/.claude"
+
+if [ -d "$CLAUDE_DIR" ]; then
+    echo -e "${YELLOW}Existing ~/.claude folder detected!${NC}"
+    echo
+    echo "Options:"
+    echo "  1) Fresh install (backup existing to ~/.claude.backup)"
+    echo "  2) Merge (add CEMS hooks/skills to existing config)"
+    echo "  3) Cancel"
+    echo
+    read -p "Choose [1/2/3]: " choice
+
+    case $choice in
+        1)
+            echo
+            echo "Backing up existing config to ~/.claude.backup..."
+            if [ -d "$HOME/.claude.backup" ]; then
+                rm -rf "$HOME/.claude.backup"
+            fi
+            mv "$CLAUDE_DIR" "$HOME/.claude.backup"
+            echo "Installing fresh CEMS config..."
+            cp -r claude-setup "$CLAUDE_DIR"
+            echo -e "${GREEN}Fresh install complete${NC}"
+            ;;
+        2)
+            echo
+            echo "Merging CEMS into existing config..."
+
+            # Create directories if needed
+            mkdir -p "$CLAUDE_DIR/hooks"
+            mkdir -p "$CLAUDE_DIR/skills/cems"
+
+            # Copy hooks
+            cp claude-setup/hooks/cems_*.py "$CLAUDE_DIR/hooks/"
+            echo "  Copied CEMS hooks to ~/.claude/hooks/"
+
+            # Copy skills
+            cp -r claude-setup/skills/cems/* "$CLAUDE_DIR/skills/cems/"
+            echo "  Copied CEMS skills to ~/.claude/skills/cems/"
+
+            echo
+            echo -e "${YELLOW}IMPORTANT: You need to manually add hooks to ~/.claude/settings.json${NC}"
+            echo
+            echo "Add these entries to your settings.json 'hooks' section:"
+            echo
+            cat << 'HOOKS'
 {
-  "mcpServers": {
-    "cems": {
-      "command": "cems-server",
-      "args": [],
-      "env": {
-        "CEMS_USER_ID": "$USER_ID",
-        "CEMS_STORAGE_DIR": "$CEMS_DIR"
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "uv run ~/.claude/hooks/cems_user_prompts_submit.py"
+          }
+        ]
       }
-    }
+    ],
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "uv run ~/.claude/hooks/cems_stop.py"
+          }
+        ]
+      }
+    ]
   }
 }
-EOF
-fi
-
-# Add team ID if specified
-if [ -n "$TEAM_ID" ]; then
-    echo "Adding team configuration: $TEAM_ID"
-    python3 << EOF
-import json
-
-with open("$MCP_CONFIG", "r") as f:
-    config = json.load(f)
-
-config["mcpServers"]["cems"]["env"]["CEMS_TEAM_ID"] = "$TEAM_ID"
-
-with open("$MCP_CONFIG", "w") as f:
-    json.dump(config, f, indent=2)
-EOF
-fi
-
-# Copy skills to Claude Code skills directory
-SKILLS_DIR="$CLAUDE_DIR/skills/cems"
-echo
-echo "Installing skills to $SKILLS_DIR..."
-mkdir -p "$SKILLS_DIR"
-cp skills/*.md "$SKILLS_DIR/"
-
-# Verify installation
-echo
-echo "Verifying installation..."
-if command -v cems &> /dev/null; then
-    echo "CLI installed successfully"
-    cems status
+HOOKS
+            echo
+            echo -e "${GREEN}Merge complete${NC}"
+            ;;
+        3)
+            echo "Cancelled."
+            exit 0
+            ;;
+        *)
+            echo "Invalid choice. Exiting."
+            exit 1
+            ;;
+    esac
 else
-    echo "Warning: CLI not found in PATH"
-    echo "You may need to add pip's bin directory to your PATH"
+    echo "No existing ~/.claude config found."
+    echo "Installing fresh CEMS config..."
+    cp -r claude-setup "$CLAUDE_DIR"
+    echo -e "${GREEN}Fresh install complete${NC}"
 fi
 
+# 4. Environment setup
 echo
 echo "========================================="
-echo "Installation Complete!"
+echo "Environment Variables"
+echo "========================================="
+echo
+echo "CEMS requires these environment variables:"
+echo "  CEMS_API_URL - Your CEMS server URL"
+echo "  CEMS_API_KEY - Your CEMS API key"
+echo
+read -p "Add to shell profile now? [y/N]: " add_env
+
+if [[ "$add_env" =~ ^[Yy]$ ]]; then
+    echo
+    read -p "CEMS_API_URL (e.g., https://cems.example.com): " api_url
+    read -p "CEMS_API_KEY: " api_key
+
+    # Detect shell config file
+    if [ -n "$ZSH_VERSION" ] || [ -f "$HOME/.zshrc" ]; then
+        SHELL_RC="$HOME/.zshrc"
+    elif [ -f "$HOME/.bashrc" ]; then
+        SHELL_RC="$HOME/.bashrc"
+    else
+        SHELL_RC="$HOME/.profile"
+    fi
+
+    echo "" >> "$SHELL_RC"
+    echo "# CEMS Configuration" >> "$SHELL_RC"
+    echo "export CEMS_API_URL=\"$api_url\"" >> "$SHELL_RC"
+    echo "export CEMS_API_KEY=\"$api_key\"" >> "$SHELL_RC"
+
+    echo
+    echo -e "${GREEN}Added to $SHELL_RC${NC}"
+    echo "Run: source $SHELL_RC"
+fi
+
+# 5. Summary
+echo
+echo "========================================="
+echo -e "${GREEN}Installation Complete!${NC}"
 echo "========================================="
 echo
 echo "Next steps:"
-echo "1. Restart Claude Code to load the MCP server"
-echo "2. Try these commands in Claude Code:"
-echo "   /remember I prefer Python for backend work"
-echo "   /recall What do I prefer?"
+echo "  1. Restart your terminal (or source your shell rc)"
+echo "  2. Restart Claude Code"
+echo "  3. Test with: /remember I prefer TypeScript"
 echo
 echo "Configuration:"
-echo "  User ID: $USER_ID"
-echo "  Storage: $CEMS_DIR"
-echo "  MCP Config: $MCP_CONFIG"
-if [ -n "$TEAM_ID" ]; then
-    echo "  Team ID: $TEAM_ID"
-fi
+echo "  Claude config: $CLAUDE_DIR"
+echo "  CEMS skills:   $CLAUDE_DIR/skills/cems/"
+echo "  CEMS hooks:    $CLAUDE_DIR/hooks/cems_*.py"
 echo
-echo "For more options, run: cems --help"
+echo "For CLI usage, run: cems --help"
