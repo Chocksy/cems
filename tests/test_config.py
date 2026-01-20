@@ -102,11 +102,21 @@ class TestCEMSConfig:
     def test_llm_settings(self):
         """Test LLM configuration."""
         config = CEMSConfig(
-            llm_provider="anthropic",
-            llm_model="claude-3-haiku",
-            embedding_model="text-embedding-3-large",
+            llm_model="anthropic/claude-3-haiku",
+            mem0_model="openai/gpt-4o",
+            embedding_model="openai/text-embedding-3-large",
         )
 
-        assert config.llm_provider == "anthropic"
-        assert config.llm_model == "claude-3-haiku"
-        assert config.embedding_model == "text-embedding-3-large"
+        assert config.llm_model == "anthropic/claude-3-haiku"
+        assert config.mem0_model == "openai/gpt-4o"
+        assert config.embedding_model == "openai/text-embedding-3-large"
+
+    def test_relevance_threshold(self):
+        """Test relevance threshold default and custom values."""
+        # Test default value
+        config = CEMSConfig()
+        assert config.relevance_threshold == 0.5
+
+        # Test custom value
+        config = CEMSConfig(relevance_threshold=0.7)
+        assert config.relevance_threshold == 0.7

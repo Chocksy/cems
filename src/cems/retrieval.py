@@ -40,22 +40,23 @@ def synthesize_query(query: str, client: "OpenRouterClient") -> list[str]:
     Returns:
         List of expanded search terms (original not included)
     """
-    prompt = f"""Generate 3-5 search queries to find memories matching this user intent.
+    prompt = f"""Generate 2-3 search queries to find memories about the EXACT SAME TOPIC.
 
 User query: {query}
 
-Return one search term per line. Focus on:
-- Synonyms and related concepts
-- Specific vs general terms
-- Different phrasings
+CRITICAL RULES:
+- Stay within the SAME specific domain/topic
+- NO generalizing to broader categories
+- Prefer specific technical terms over generic words
+- Only add synonyms for the exact topic, not related areas
 
-No bullets, no numbering, just the search terms."""
+Return one search term per line. No bullets, no numbering."""
 
     try:
-        result = client.complete(prompt, max_tokens=150, temperature=0.3)
+        result = client.complete(prompt, max_tokens=100, temperature=0.3)
         terms = [q.strip() for q in result.strip().split("\n") if q.strip()]
-        # Filter out empty or very short terms
-        return [t for t in terms if len(t) > 2][:5]
+        # Filter out empty or very short terms, limit to 3 expansions
+        return [t for t in terms if len(t) > 2][:3]
     except Exception as e:
         logger.warning(f"Query synthesis failed: {e}")
         return []

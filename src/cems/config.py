@@ -124,7 +124,7 @@ class CEMSConfig(BaseSettings):
         description="Enable LLM query expansion (Stage 1 of retrieval pipeline)",
     )
     relevance_threshold: float = Field(
-        default=0.3,
+        default=0.5,
         description="Minimum similarity score to include in results (Stage 3)",
     )
     default_max_tokens: int = Field(

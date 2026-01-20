@@ -601,11 +601,11 @@ class KuzuGraphStore:
         """
         entities = []
 
-        # Extract programming languages/tools (simple patterns)
-        tools_pattern = r"\b(Python|JavaScript|TypeScript|Rust|Go|Java|Ruby|PHP|Swift|Kotlin|React|Vue|Angular|Node\.js|Django|FastAPI|Flask|Rails|Docker|Kubernetes|Git|PostgreSQL|MongoDB|Redis|AWS|GCP|Azure)\b"
+        # Extract programming languages/tools (expanded list)
+        tools_pattern = r"\b(Python|JavaScript|TypeScript|Rust|Go|Java|Ruby|PHP|Swift|Kotlin|C\+\+|C#|Scala|Elixir|Clojure|Haskell|Lua|Perl|R|Julia|Dart|React|Vue|Angular|Svelte|Next\.js|Nuxt|Remix|Astro|Node\.js|Deno|Bun|Django|FastAPI|Flask|Rails|Spring|Express|NestJS|Laravel|Phoenix|Docker|Kubernetes|Podman|Git|GitHub|GitLab|PostgreSQL|MongoDB|Redis|MySQL|SQLite|Qdrant|Pinecone|Weaviate|Supabase|Firebase|AWS|GCP|Azure|Vercel|Netlify|Cloudflare|Coolify|Hetzner|DigitalOcean|Heroku|Terraform|Ansible|Nginx|Caddy|Linux|MacOS|Windows|VSCode|Neovim|Vim|Cursor|Claude|OpenAI|Anthropic|LangChain|LlamaIndex|Mem0|Ollama|Hugging\s?Face|Tailwind|Bootstrap|Sass|SCSS|GraphQL|REST|gRPC|WebSocket|OAuth|JWT|SSL|TLS|HTTPS)\b"
         for match in re.finditer(tools_pattern, content, re.IGNORECASE):
             name = match.group(1)
-            entity_id = f"tool:{name.lower()}"
+            entity_id = f"tool:{name.lower().replace(' ', '_')}"
             entities.append(
                 {
                     "id": entity_id,
@@ -613,6 +613,21 @@ class KuzuGraphStore:
                     "type": "tool",
                 }
             )
+
+        # Extract domain/topic mentions (for category-aware search)
+        domain_pattern = r"\b(memory|retrieval|embedding|vector|search|deployment|server|production|hosting|api|endpoint|database|storage|authentication|authorization|testing|debugging|refactoring|optimization|performance|caching|logging|monitoring|backup|migration)\b"
+        for match in re.finditer(domain_pattern, content, re.IGNORECASE):
+            name = match.group(1)
+            entity_id = f"domain:{name.lower()}"
+            # Avoid duplicates
+            if not any(e["id"] == entity_id for e in entities):
+                entities.append(
+                    {
+                        "id": entity_id,
+                        "name": name,
+                        "type": "domain",
+                    }
+                )
 
         # Extract concepts (patterns like "prefers X", "likes Y", "uses Z")
         concept_pattern = r"\b(?:prefer|like|use|enjoy|avoid|dislike)s?\s+(\w+(?:\s+\w+)?)"

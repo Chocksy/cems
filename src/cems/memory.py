@@ -134,6 +134,38 @@ class CEMSMemory:
                 raise ValueError("Cannot use shared scope without team_id configured")
             return f"shared:{self.config.team_id}"
 
+    def _infer_category_from_query(self, query: str) -> str | None:
+        """Infer the likely category from a search query.
+
+        Uses keyword matching to determine if a query is about a specific domain.
+        Returns None if no category can be inferred.
+
+        Args:
+            query: Search query text
+
+        Returns:
+            Inferred category name or None
+        """
+        query_lower = query.lower()
+
+        # Category keyword mappings (keywords -> category)
+        category_keywords = {
+            "memory": ["memory", "recall", "remember", "retrieval", "search", "embedding"],
+            "deployment": ["deploy", "coolify", "server", "production", "hosting", "docker"],
+            "development": ["code", "coding", "programming", "debug", "git", "refactor"],
+            "ai": ["llm", "claude", "openai", "gpt", "ai", "model", "prompt"],
+            "project": ["project", "repo", "repository", "codebase"],
+            "preferences": ["prefer", "preference", "like", "favorite", "style"],
+            "workflow": ["workflow", "process", "habit", "routine", "automate"],
+        }
+
+        for category, keywords in category_keywords.items():
+            for keyword in keywords:
+                if keyword in query_lower:
+                    return category
+
+        return None
+
     def add(
         self,
         content: str,
@@ -266,20 +298,28 @@ class CEMSMemory:
 
         # Apply priority boost and time decay to scores
         now = datetime.now(UTC)
+        inferred_category = self._infer_category_from_query(query)
+
         for result in results:
             if result.metadata:
                 # Priority boost (1.0 default, up to 2.0 for hot memories)
                 result.score *= result.metadata.priority
 
-                # Time decay: 10% penalty per month since last access
+                # Time decay: 50% penalty per month since last access
                 # More recently accessed memories get higher scores
                 days_since_access = (now - result.metadata.last_accessed).days
-                time_decay = 1.0 / (1.0 + (days_since_access / 30) * 0.1)
+                time_decay = 1.0 / (1.0 + (days_since_access / 30))
                 result.score *= time_decay
 
                 # Boost pinned memories slightly (they're important)
                 if result.metadata.pinned:
                     result.score *= 1.1
+
+                # Cross-category penalty: 20% reduction if memory category
+                # doesn't match the inferred query category
+                if inferred_category and result.metadata.category:
+                    if result.metadata.category.lower() != inferred_category:
+                        result.score *= 0.8
 
         # Sort by adjusted score and limit
         results.sort(key=lambda x: x.score, reverse=True)
@@ -701,7 +741,7 @@ class CEMSMemory:
                 if metadata:
                     adjusted_score *= metadata.priority
                     days_old = (datetime.now(UTC) - metadata.last_accessed).days
-                    time_decay = 1.0 / (1.0 + (days_old / 30) * 0.1)
+                    time_decay = 1.0 / (1.0 + (days_old / 30))
                     adjusted_score *= time_decay
                     if metadata.pinned:
                         adjusted_score *= 1.1

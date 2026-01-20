@@ -49,14 +49,14 @@ class TestQuerySynthesis:
 
         assert result == []
 
-    def test_synthesize_query_limits_to_5_results(self):
-        """Query synthesis should return at most 5 terms."""
+    def test_synthesize_query_limits_to_3_results(self):
+        """Query synthesis should return at most 3 terms (constrained for relevance)."""
         mock_client = MagicMock()
         mock_client.complete.return_value = "\n".join([f"term{i}" for i in range(10)])
 
         result = synthesize_query("preferences", mock_client)
 
-        assert len(result) <= 5
+        assert len(result) <= 3
 
 
 class TestRelevanceScoring:
