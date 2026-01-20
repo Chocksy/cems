@@ -594,7 +594,8 @@ def create_http_app():
             results = memory.search(query, scope=scope, limit=limit)
 
             # Convert SearchResult objects to dicts for JSON serialization
-            serialized_results = [r.model_dump() for r in results]
+            # Use mode="json" to serialize datetime objects as ISO strings
+            serialized_results = [r.model_dump(mode="json") for r in results]
 
             return JSONResponse({
                 "success": True,
