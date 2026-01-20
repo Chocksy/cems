@@ -74,45 +74,27 @@ class CEMSMemory:
     def _build_mem0_config(self) -> dict[str, Any]:
         """Build Mem0 configuration dict.
 
-        Note:
-            Mem0 requires direct provider access (OpenAI/Anthropic), not OpenRouter.
-            The OPENAI_API_KEY or ANTHROPIC_API_KEY must be set for Mem0 to work.
+        Mem0 automatically uses OpenRouter if OPENROUTER_API_KEY is set.
+        Embeddings always use OPENAI_API_KEY (OpenRouter doesn't provide embeddings).
 
-            IMPORTANT: Mem0's OpenAI LLM class checks for OPENROUTER_API_KEY and uses
-            OpenRouter if found. We explicitly set api_key and openai_base_url to
-            override this behavior and ensure we always use the configured provider.
+        Required env vars:
+            - OPENROUTER_API_KEY: For LLM calls (fact extraction, updates)
+            - OPENAI_API_KEY: For embeddings only
         """
-        import os
-
-        provider = self.config.get_mem0_provider()
         model = self.config.get_mem0_model()
-
-        # Build LLM config with explicit API key to prevent OpenRouter detection
-        llm_config: dict[str, Any] = {"model": model}
-        embedder_config: dict[str, Any] = {"model": self.config.embedding_model}
-
-        if provider == "openai":
-            # Explicitly set OpenAI config to prevent OPENROUTER_API_KEY detection
-            api_key = os.environ.get("OPENAI_API_KEY")
-            if api_key:
-                llm_config["api_key"] = api_key
-                llm_config["openai_base_url"] = "https://api.openai.com/v1"
-                embedder_config["api_key"] = api_key
-                embedder_config["openai_base_url"] = "https://api.openai.com/v1"
-        elif provider == "anthropic":
-            api_key = os.environ.get("ANTHROPIC_API_KEY")
-            if api_key:
-                llm_config["api_key"] = api_key
-                embedder_config["api_key"] = api_key
 
         return {
             "llm": {
-                "provider": provider,
-                "config": llm_config,
+                "provider": "openai",  # Mem0 auto-switches to OpenRouter if key is set
+                "config": {
+                    "model": model,
+                },
             },
             "embedder": {
-                "provider": provider,
-                "config": embedder_config,
+                "provider": "openai",  # Embeddings always use OpenAI
+                "config": {
+                    "model": self.config.embedding_model,
+                },
             },
             "vector_store": {
                 "provider": self.config.vector_store,

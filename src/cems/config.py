@@ -47,37 +47,25 @@ class CEMSConfig(BaseSettings):
     )
 
     # =========================================================================
-    # Mem0 LLM Settings (for fact extraction - uses OpenAI API directly)
+    # LLM Settings - All via OpenRouter
     # =========================================================================
-    # Mem0 requires direct provider access, not OpenRouter
-    mem0_llm_provider: Literal["openai", "anthropic"] = Field(
-        default="openai",
-        description="LLM provider for Mem0 fact extraction (requires direct API key)",
-    )
+    # Mem0 auto-detects OPENROUTER_API_KEY and uses it for LLM calls.
+    # Embeddings still require OPENAI_API_KEY (OpenRouter doesn't do embeddings).
+    #
+    # Required env vars:
+    #   - OPENROUTER_API_KEY: For all LLM calls
+    #   - OPENAI_API_KEY: For embeddings only
     mem0_model: str = Field(
         default="gpt-4o-mini",
-        description="LLM model for Mem0 fact extraction",
+        description="Model for Mem0 fact extraction (via OpenRouter)",
     )
     embedding_model: str = Field(
         default="text-embedding-3-small",
-        description="Embedding model for vector storage",
+        description="Embedding model (uses OpenAI directly)",
     )
-
-    # =========================================================================
-    # Maintenance LLM Settings (via OpenRouter - unified gateway)
-    # =========================================================================
-    # All maintenance operations use OpenRouter for simplicity
     llm_model: str = Field(
         default="anthropic/claude-3-haiku",
         description="Model for maintenance ops (OpenRouter format: provider/model)",
-    )
-    openrouter_site_url: str = Field(
-        default="https://github.com/cems",
-        description="Attribution URL for OpenRouter dashboard",
-    )
-    openrouter_site_name: str = Field(
-        default="CEMS Memory Server",
-        description="Attribution name for OpenRouter dashboard",
     )
 
     # =========================================================================
@@ -177,14 +165,6 @@ class CEMSConfig(BaseSettings):
         description="Admin API key for user management. Required for /admin/* endpoints.",
     )
 
-    # =========================================================================
-    # Backwards Compatibility (deprecated - use mem0_llm_provider instead)
-    # =========================================================================
-    llm_provider: Literal["openai", "anthropic", "openrouter"] | None = Field(
-        default=None,
-        description="DEPRECATED: Use mem0_llm_provider for Mem0, OpenRouter for maintenance",
-    )
-
     @property
     def personal_collection(self) -> str:
         """Collection name for personal memories."""
@@ -219,16 +199,6 @@ class CEMSConfig(BaseSettings):
         if not self.qdrant_url:
             self.qdrant_storage_path.mkdir(parents=True, exist_ok=True)
         # Note: Don't create kuzu_storage_path - Kuzu creates its own database directory
-
-    def get_mem0_provider(self) -> str:
-        """Get the LLM provider for Mem0.
-
-        Returns mem0_llm_provider, falling back to llm_provider for backwards compat.
-        """
-        if self.llm_provider and self.llm_provider in ("openai", "anthropic"):
-            # Backwards compatibility
-            return self.llm_provider
-        return self.mem0_llm_provider
 
     def get_mem0_model(self) -> str:
         """Get the LLM model for Mem0."""
