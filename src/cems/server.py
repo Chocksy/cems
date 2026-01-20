@@ -1041,7 +1041,6 @@ def run_http_server(host: str = "0.0.0.0", port: int = 8765) -> None:
         host=host,
         port=port,
         timeout_keep_alive=120,  # Keep connections alive longer (default: 5s)
-        timeout_notify=30,  # Allow 30s for graceful shutdown
     )
 
 
