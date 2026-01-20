@@ -713,6 +713,14 @@ def create_http_app():
                 _request_user_id.reset(user_token)
                 _request_team_id.reset(team_token)
 
+    async def ping(request: Request):
+        """Ultra-lightweight ping endpoint for MCP heartbeat checks.
+        
+        Returns immediately with no database or service checks.
+        This helps prevent Cursor's MCP client timeout issues.
+        """
+        return JSONResponse({"status": "ok"})
+
     async def health_check(request: Request):
         """Health check endpoint for Docker/Kubernetes."""
         from cems.db.database import get_database, is_database_initialized
@@ -909,7 +917,8 @@ def create_http_app():
         if not (hasattr(m, 'cls') and getattr(m.cls, '__name__', '') == 'TrustedHostMiddleware')
     ]
 
-    # Add health check route
+    # Add health check and ping routes
+    app.routes.insert(0, Route("/ping", ping, methods=["GET"]))  # Ultra-fast for heartbeats
     app.routes.insert(0, Route("/health", health_check, methods=["GET"]))
 
     # Add REST API routes for hooks/CLI integration
@@ -1025,7 +1034,15 @@ def run_http_server(host: str = "0.0.0.0", port: int = 8765) -> None:
 
     # Create and run HTTP app
     app = create_http_app()
-    uvicorn.run(app, host=host, port=port)
+    # Configure uvicorn with extended timeouts for remote MCP connections
+    # This helps prevent Cursor's MCP client from marking server as "red" due to timeouts
+    uvicorn.run(
+        app,
+        host=host,
+        port=port,
+        timeout_keep_alive=120,  # Keep connections alive longer (default: 5s)
+        timeout_notify=30,  # Allow 30s for graceful shutdown
+    )
 
 
 def run_server() -> None:

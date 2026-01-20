@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import os
+import json
+import time
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -18,6 +20,18 @@ from cems.models import (
 
 if TYPE_CHECKING:
     from cems.graph import KuzuGraphStore
+
+# #region agent log
+_DEBUG_LOG_PATH = "/Users/razvan/Development/cems/.cursor/debug.log"
+def _debug_log(location: str, message: str, data: dict = None, hypothesis_id: str = ""):
+    try:
+        import os as _os
+        _os.makedirs(_os.path.dirname(_DEBUG_LOG_PATH), exist_ok=True)
+        entry = {"timestamp": int(time.time() * 1000), "location": location, "message": message, "data": data or {}, "hypothesisId": hypothesis_id, "sessionId": "debug-session"}
+        with open(_DEBUG_LOG_PATH, "a") as f:
+            f.write(json.dumps(entry) + "\n")
+    except: pass
+# #endregion
 
 
 class CEMSMemory:
@@ -262,6 +276,10 @@ Return JSON: {"facts": ["specific actionable fact 1", "specific actionable fact 
         Returns:
             List of SearchResult objects
         """
+        # #region agent log
+        _debug_log("memory.py:search", "Search entry", {"scope": scope, "team_id": self.config.team_id, "user_id": self.config.user_id}, "H6")
+        # #endregion
+
         results: list[SearchResult] = []
 
         # Determine which scopes to search
@@ -271,6 +289,10 @@ Return JSON: {"facts": ["specific actionable fact 1", "specific actionable fact 
         if scope in ("shared", "both") and self.config.team_id:
             scopes_to_search.append(MemoryScope.SHARED)
 
+        # #region agent log
+        _debug_log("memory.py:search", "Scopes determined", {"scopes": [s.value for s in scopes_to_search]}, "H6")
+        # #endregion
+
         for memory_scope in scopes_to_search:
             user_id = self._get_mem0_user_id(memory_scope)
 
@@ -279,12 +301,25 @@ Return JSON: {"facts": ["specific actionable fact 1", "specific actionable fact 
             if category:
                 filters["category"] = category
 
-            # Search in Mem0
-            mem0_results = self._memory.search(
-                query,
-                user_id=user_id,
-                limit=limit,
-            )
+            # #region agent log
+            _debug_log("memory.py:search", "Mem0 search starting", {"mem0_user_id": user_id, "scope": memory_scope.value}, "H6")
+            # #endregion
+
+            try:
+                # Search in Mem0
+                mem0_results = self._memory.search(
+                    query,
+                    user_id=user_id,
+                    limit=limit,
+                )
+                # #region agent log
+                _debug_log("memory.py:search", "Mem0 search completed", {"results_count": len(mem0_results.get("results", []))}, "H6")
+                # #endregion
+            except Exception as e:
+                # #region agent log
+                _debug_log("memory.py:search", "Mem0 search FAILED", {"error": str(e), "error_type": type(e).__name__, "scope": memory_scope.value}, "H6")
+                # #endregion
+                raise
 
             # Convert to SearchResult and track access
             for mem in mem0_results.get("results", []):
@@ -935,6 +970,10 @@ Return JSON: {"facts": ["specific actionable fact 1", "specific actionable fact 
                 "filtered_count": int,
             }
         """
+        # #region agent log
+        _debug_log("memory.py:retrieve_for_inference", "Pipeline entry", {"scope": scope, "enable_graph": enable_graph, "enable_query_synthesis": enable_query_synthesis}, "H7")
+        # #endregion
+
         from cems.retrieval import (
             assemble_context,
             deduplicate_results,
@@ -951,39 +990,63 @@ Return JSON: {"facts": ["specific actionable fact 1", "specific actionable fact 
                 client = get_client()
                 expanded = synthesize_query(query, client)
                 queries_to_search = [query] + expanded[:3]  # Original + up to 3 expansions
-            except Exception:
+                # #region agent log
+                _debug_log("memory.py:retrieve_for_inference", "Stage 1 query synthesis done", {"queries_count": len(queries_to_search)}, "H7")
+                # #endregion
+            except Exception as e:
+                # #region agent log
+                _debug_log("memory.py:retrieve_for_inference", "Stage 1 query synthesis FAILED", {"error": str(e)}, "H7")
+                # #endregion
                 pass  # Fallback to original query
 
         # Stage 2: Candidate retrieval (top_k=20 per query)
         all_candidates: list[SearchResult] = []
 
         for search_query in queries_to_search:
-            # Vector search via existing method
-            vector_results = self.search(search_query, scope, limit=20)
-            all_candidates.extend(vector_results)
+            try:
+                # Vector search via existing method
+                vector_results = self.search(search_query, scope, limit=20)
+                all_candidates.extend(vector_results)
+                # #region agent log
+                _debug_log("memory.py:retrieve_for_inference", "Stage 2 vector search done", {"results_count": len(vector_results)}, "H7")
+                # #endregion
+            except Exception as e:
+                # #region agent log
+                _debug_log("memory.py:retrieve_for_inference", "Stage 2 vector search FAILED", {"error": str(e), "error_type": type(e).__name__}, "H7")
+                # #endregion
+                raise
 
             # Graph traversal (if enabled)
             if enable_graph and self._graph and vector_results:
-                for top_result in vector_results[:3]:
-                    related = self._graph.get_related_memories(
-                        top_result.memory_id, max_depth=2, limit=5
-                    )
-                    # Convert graph results to SearchResult objects
-                    for rel in related:
-                        mem = self.get(rel["id"])
-                        if mem:
-                            metadata = self._metadata.get_metadata(rel["id"])
-                            # Assign moderate base score for graph-discovered memories
-                            base_score = 0.5
-                            all_candidates.append(
-                                SearchResult(
-                                    memory_id=rel["id"],
-                                    content=mem.get("memory", ""),
-                                    score=base_score,
-                                    scope=MemoryScope(metadata.scope) if metadata else MemoryScope.PERSONAL,
-                                    metadata=metadata,
+                try:
+                    for top_result in vector_results[:3]:
+                        related = self._graph.get_related_memories(
+                            top_result.memory_id, max_depth=2, limit=5
+                        )
+                        # Convert graph results to SearchResult objects
+                        for rel in related:
+                            mem = self.get(rel["id"])
+                            if mem:
+                                metadata = self._metadata.get_metadata(rel["id"])
+                                # Assign moderate base score for graph-discovered memories
+                                base_score = 0.5
+                                all_candidates.append(
+                                    SearchResult(
+                                        memory_id=rel["id"],
+                                        content=mem.get("memory", ""),
+                                        score=base_score,
+                                        scope=MemoryScope(metadata.scope) if metadata else MemoryScope.PERSONAL,
+                                        metadata=metadata,
+                                    )
                                 )
-                            )
+                    # #region agent log
+                    _debug_log("memory.py:retrieve_for_inference", "Stage 2 graph traversal done", {"graph_candidates": len(all_candidates)}, "H7")
+                    # #endregion
+                except Exception as e:
+                    # #region agent log
+                    _debug_log("memory.py:retrieve_for_inference", "Stage 2 graph traversal FAILED", {"error": str(e)}, "H7")
+                    # #endregion
+                    pass  # Continue without graph results
 
         # Deduplicate candidates
         candidates = deduplicate_results(all_candidates)
