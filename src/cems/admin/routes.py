@@ -546,17 +546,15 @@ async def debug_config(request: Request) -> JSONResponse:
     import os
 
     # Check which LLM-related env vars are set (values masked for security)
+    # Note: Only OPENROUTER_API_KEY is required - it handles both LLM and embeddings
     env_check = {
-        "OPENAI_API_KEY": "set" if os.environ.get("OPENAI_API_KEY") else "not set",
-        "OPENROUTER_API_KEY": "set" if os.environ.get("OPENROUTER_API_KEY") else "not set",
-        "ANTHROPIC_API_KEY": "set" if os.environ.get("ANTHROPIC_API_KEY") else "not set",
-        "MEM0_API_KEY": "set" if os.environ.get("MEM0_API_KEY") else "not set",
-        "OPENAI_BASE_URL": os.environ.get("OPENAI_BASE_URL", "not set"),
-        "CEMS_MEM0_LLM_PROVIDER": os.environ.get("CEMS_MEM0_LLM_PROVIDER", "not set"),
-        "CEMS_MEM0_MODEL": os.environ.get("CEMS_MEM0_MODEL", "not set"),
-        "CEMS_LLM_PROVIDER": os.environ.get("CEMS_LLM_PROVIDER", "not set"),
-        "CEMS_LLM_MODEL": os.environ.get("CEMS_LLM_MODEL", "not set"),
+        "OPENROUTER_API_KEY": "set" if os.environ.get("OPENROUTER_API_KEY") else "NOT SET (required)",
+        "CEMS_MEM0_MODEL": os.environ.get("CEMS_MEM0_MODEL", "openai/gpt-4o-mini (default)"),
+        "CEMS_EMBEDDING_MODEL": os.environ.get("CEMS_EMBEDDING_MODEL", "openai/text-embedding-3-small (default)"),
+        "CEMS_LLM_MODEL": os.environ.get("CEMS_LLM_MODEL", "anthropic/claude-3-haiku (default)"),
         "CEMS_QDRANT_URL": os.environ.get("CEMS_QDRANT_URL", "not set"),
+        # Legacy env vars (no longer required)
+        "OPENAI_API_KEY": "set (legacy)" if os.environ.get("OPENAI_API_KEY") else "not set (not required)",
     }
 
     return JSONResponse({"config": env_check})
@@ -572,7 +570,7 @@ async def debug_llm_test(request: Request) -> JSONResponse:
 
     results = {}
 
-    # Test OpenRouter
+    # Test OpenRouter LLM
     openrouter_key = os.environ.get("OPENROUTER_API_KEY")
     if openrouter_key:
         try:
@@ -585,48 +583,28 @@ async def debug_llm_test(request: Request) -> JSONResponse:
                 messages=[{"role": "user", "content": "Say 'OpenRouter OK' in 3 words"}],
                 max_tokens=20,
             )
-            results["openrouter"] = {
+            results["openrouter_llm"] = {
                 "status": "ok",
                 "response": response.choices[0].message.content,
             }
         except Exception as e:
-            results["openrouter"] = {"status": "error", "error": str(e)}
-    else:
-        results["openrouter"] = {"status": "not configured"}
+            results["openrouter_llm"] = {"status": "error", "error": str(e)}
 
-    # Test OpenAI
-    openai_key = os.environ.get("OPENAI_API_KEY")
-    if openai_key:
+        # Test OpenRouter Embeddings
         try:
-            client = OpenAI(api_key=openai_key)
-            response = client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[{"role": "user", "content": "Say 'OpenAI OK' in 3 words"}],
-                max_tokens=20,
-            )
-            results["openai"] = {
-                "status": "ok",
-                "response": response.choices[0].message.content,
-            }
-        except Exception as e:
-            results["openai"] = {"status": "error", "error": str(e)}
-    else:
-        results["openai"] = {"status": "not configured"}
-
-    # Test embeddings
-    if openai_key:
-        try:
-            client = OpenAI(api_key=openai_key)
             response = client.embeddings.create(
-                model="text-embedding-3-small",
-                input="test embedding",
+                model="openai/text-embedding-3-small",
+                input="test embedding via openrouter",
             )
-            results["embeddings"] = {
+            results["openrouter_embeddings"] = {
                 "status": "ok",
                 "dimensions": len(response.data[0].embedding),
             }
         except Exception as e:
-            results["embeddings"] = {"status": "error", "error": str(e)}
+            results["openrouter_embeddings"] = {"status": "error", "error": str(e)}
+    else:
+        results["openrouter_llm"] = {"status": "NOT CONFIGURED (required)"}
+        results["openrouter_embeddings"] = {"status": "NOT CONFIGURED (required)"}
 
     return JSONResponse({"llm_tests": results})
 

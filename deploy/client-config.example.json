@@ -4,7 +4,7 @@
       "type": "http",
       "url": "http://localhost:8765/mcp",
       "headers": {
-        "X-User-ID": "YOUR_USER_ID",
+        "Authorization": "Bearer cems_usr_YOUR_API_KEY",
         "X-Team-ID": "YOUR_TEAM_ID"
       }
     }

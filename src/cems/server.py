@@ -2,7 +2,7 @@
 
 Supports two modes:
 1. stdio (default) - For local Claude Code usage, uses env vars for user/team
-2. http - For server deployment, uses headers for user/team identification
+2. http - For server deployment with per-user API keys from database
 
 Provides a simplified API with 5 essential tools:
 1. memory_add - Store memories (personal or shared)
@@ -73,7 +73,7 @@ def get_memory() -> CEMSMemory:
         # HTTP mode: Create per-user memory instance
         cache_key = f"{user_id}:{team_id or 'none'}"
         if cache_key not in _memory_cache:
-            # Create config with header values but inherit API keys from base
+            # Create config with header values but inherit settings from base
             base = get_base_config()
             # Override user/team via environment for this instance
             config = CEMSConfig(
@@ -82,7 +82,6 @@ def get_memory() -> CEMSMemory:
                 # Inherit all other settings from base config
                 storage_dir=base.storage_dir,
                 memory_backend=base.memory_backend,
-                mem0_llm_provider=base.mem0_llm_provider,
                 mem0_model=base.mem0_model,
                 embedding_model=base.embedding_model,
                 llm_model=base.llm_model,
@@ -364,9 +363,10 @@ def memory_status() -> str:
     status += f"  Query Synthesis: {'enabled' if config.enable_query_synthesis else 'disabled'}\n"
     status += f"  Relevance Threshold: {config.relevance_threshold}\n"
     status += f"  Max Tokens: {config.default_max_tokens}\n"
-    status += f"\nLLM Config:\n"
-    status += f"  Mem0: {config.get_mem0_provider()}/{config.get_mem0_model()}\n"
-    status += f"  Maintenance: OpenRouter/{config.llm_model}\n"
+    status += "\nLLM Config (via OpenRouter):\n"
+    status += f"  Mem0: {config.get_mem0_model()}\n"
+    status += f"  Embeddings: {config.embedding_model}\n"
+    status += f"  Maintenance: {config.llm_model}\n"
 
     # Add graph stats if enabled
     if memory.graph_store:
@@ -460,10 +460,8 @@ def create_http_app():
     from starlette.responses import JSONResponse
     from starlette.routing import Route
 
-    # Get config
+    # Get config - HTTP mode requires database for user management
     config = get_base_config()
-    expected_api_key = config.api_key
-    use_database = config.database_url is not None
 
     class UserContextMiddleware(BaseHTTPMiddleware):
         """Middleware to extract user context and validate API key from headers."""
@@ -480,71 +478,45 @@ def create_http_app():
             # Get authorization header
             auth_header = request.headers.get("authorization", "")
 
-            if use_database:
-                # Database mode: Validate user API key from database
-                if not auth_header.startswith("Bearer "):
+            # Validate user API key from database
+            if not auth_header.startswith("Bearer "):
+                return JSONResponse(
+                    {"error": "Authorization: Bearer <api_key> header required"},
+                    status_code=401,
+                )
+            provided_key = auth_header[7:]
+
+            # Look up user by API key
+            from cems.admin.services import UserService
+            from cems.db.database import get_database, is_database_initialized
+
+            if not is_database_initialized():
+                return JSONResponse(
+                    {"error": "Database not initialized"},
+                    status_code=503,
+                )
+
+            db = get_database()
+            with db.session() as session:
+                service = UserService(session)
+                user = service.get_user_by_api_key(provided_key)
+
+                if not user:
                     return JSONResponse(
-                        {"error": "Authorization: Bearer <api_key> header required"},
+                        {"error": "Invalid API key"},
                         status_code=401,
                     )
-                provided_key = auth_header[7:]
 
-                # Look up user by API key
-                from cems.admin.services import UserService
-                from cems.db.database import get_database, is_database_initialized
-
-                if not is_database_initialized():
+                if not user.is_active:
                     return JSONResponse(
-                        {"error": "Database not initialized"},
-                        status_code=503,
+                        {"error": "User account is deactivated"},
+                        status_code=403,
                     )
 
-                db = get_database()
-                with db.session() as session:
-                    service = UserService(session)
-                    user = service.get_user_by_api_key(provided_key)
-
-                    if not user:
-                        return JSONResponse(
-                            {"error": "Invalid API key"},
-                            status_code=401,
-                        )
-
-                    if not user.is_active:
-                        return JSONResponse(
-                            {"error": "User account is deactivated"},
-                            status_code=403,
-                        )
-
-                    # Set user context from database
-                    user_id = user.username
-                    # Get team from header or user's first team
-                    team_id = request.headers.get("x-team-id")
-
-            else:
-                # Simple mode: Validate against static API key
-                if expected_api_key:
-                    if not auth_header.startswith("Bearer "):
-                        return JSONResponse(
-                            {"error": "Authorization: Bearer <token> header required"},
-                            status_code=401,
-                        )
-                    provided_token = auth_header[7:]
-                    if provided_token != expected_api_key:
-                        return JSONResponse(
-                            {"error": "Invalid bearer token"},
-                            status_code=401,
-                        )
-
-                # Extract user context from headers
-                user_id = request.headers.get("x-user-id")
+                # Set user context from database
+                user_id = user.username
+                # Get team from header (optional, to select team context)
                 team_id = request.headers.get("x-team-id")
-
-                if not user_id:
-                    return JSONResponse(
-                        {"error": "X-User-ID header required"},
-                        status_code=400,
-                    )
 
             # Set context variables
             user_token = _request_user_id.set(user_id)
@@ -571,7 +543,7 @@ def create_http_app():
             "status": "healthy",
             "service": "cems-mcp-server",
             "mode": "http",
-            "auth": "database" if use_database else ("bearer" if expected_api_key else "none"),
+            "auth": "database",
             "database": db_status,
         })
 
@@ -589,12 +561,11 @@ def create_http_app():
     # Add health check route
     app.routes.insert(0, Route("/health", health_check, methods=["GET"]))
 
-    # Add admin routes if database is configured
-    if use_database:
-        from cems.admin.routes import admin_routes
-        for route in admin_routes:
-            app.routes.insert(0, route)
-        logger.info("Admin API routes enabled (/admin/*)")
+    # Add admin routes (always available in HTTP mode with database)
+    from cems.admin.routes import admin_routes
+    for route in admin_routes:
+        app.routes.insert(0, route)
+    logger.info("Admin API routes enabled (/admin/*)")
 
     # Add our middlewares (order: last added = first executed)
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=["*"])
@@ -638,6 +609,10 @@ def wait_for_qdrant(url: str, max_retries: int = 30, delay: float = 2.0) -> bool
 def run_http_server(host: str = "0.0.0.0", port: int = 8765) -> None:
     """Run the CEMS MCP server in HTTP mode.
 
+    HTTP mode requires:
+    - CEMS_DATABASE_URL: PostgreSQL for user management
+    - OPENROUTER_API_KEY: For LLM and embedding operations
+
     Args:
         host: Host to bind to (default: 0.0.0.0 for Docker)
         port: Port to listen on (default: 8765)
@@ -651,21 +626,33 @@ def run_http_server(host: str = "0.0.0.0", port: int = 8765) -> None:
 
     # Initialize base config (loads API keys from env)
     config = get_base_config()
+
+    # Validate required configuration for HTTP mode
+    errors = []
+    if not config.database_url:
+        errors.append("CEMS_DATABASE_URL is required for HTTP mode")
+    if not os.environ.get("OPENROUTER_API_KEY"):
+        errors.append("OPENROUTER_API_KEY is required")
+    if errors:
+        for error in errors:
+            logger.error(error)
+        raise RuntimeError("Missing required configuration:\n" + "\n".join(f"  - {e}" for e in errors))
+
     logger.info(f"Starting CEMS HTTP server on {host}:{port}")
     logger.info(f"Vector store: {config.vector_store}")
     logger.info(f"Qdrant URL: {config.qdrant_url}")
-    logger.info(f"API key auth: {'enabled' if config.api_key else 'disabled'}")
+    logger.info("Authentication: per-user API keys via PostgreSQL")
 
-    # Initialize PostgreSQL database if configured
-    if config.database_url:
-        from cems.db.database import init_database, run_migrations
+    # Initialize PostgreSQL database (required for HTTP mode)
+    from cems.db.database import init_database, run_migrations
 
-        logger.info("Initializing PostgreSQL database...")
-        db = init_database(config.database_url)
-        db.create_tables()
-        run_migrations()
-        logger.info("PostgreSQL database initialized")
-        logger.info(f"Admin API: {'enabled' if config.admin_key else 'WARNING: CEMS_ADMIN_KEY not set'}")
+    logger.info("Initializing PostgreSQL database...")
+    db = init_database(config.database_url)
+    db.create_tables()
+    run_migrations()
+    logger.info("PostgreSQL database initialized")
+    if not config.admin_key:
+        logger.warning("CEMS_ADMIN_KEY not set - admin API will be inaccessible")
 
     # Wait for Qdrant if URL is configured
     if config.qdrant_url:

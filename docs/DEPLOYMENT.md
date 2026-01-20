@@ -39,7 +39,7 @@ This guide covers deploying CEMS for company-wide use with shared memory.
 
 - Docker and Docker Compose
 - A server with at least 4GB RAM, 20GB disk
-- LLM API key (OpenAI, Anthropic, or OpenRouter)
+- OpenRouter API key (single key for all LLM and embedding operations)
 - Domain name (optional, for HTTPS)
 
 ## Environment Variables Reference
@@ -48,44 +48,31 @@ This guide covers deploying CEMS for company-wide use with shared memory.
 
 | Variable | Description | Example |
 |----------|-------------|---------|
+| `OPENROUTER_API_KEY` | OpenRouter API key (for LLM + embeddings) | `sk-or-your-key` |
 | `POSTGRES_PASSWORD` | PostgreSQL password | `secure_password_123` |
-| `CEMS_API_KEY` | Server API key for authentication | `cems_your_api_key_here` |
-| `CEMS_COMPANY_ID` | Your company identifier | `acme-corp` |
+| `CEMS_ADMIN_KEY` | Admin API key for user management | `cems_admin_your_key_here` |
 
-### LLM Provider Configuration
+### LLM Configuration
 
-Choose **one** of the following provider configurations:
-
-#### Option 1: OpenAI (Default)
+CEMS uses **OpenRouter** for all LLM and embedding operations:
 
 ```bash
-CEMS_LLM_PROVIDER=openai
-OPENAI_API_KEY=sk-your-openai-key
-CEMS_LLM_MODEL=gpt-4o-mini
-```
+# Required: Single API key for everything
+OPENROUTER_API_KEY=sk-or-your-openrouter-key
 
-#### Option 2: Anthropic
-
-```bash
-CEMS_LLM_PROVIDER=anthropic
-ANTHROPIC_API_KEY=your-anthropic-key
-CEMS_LLM_MODEL=claude-3-haiku-20240307
-```
-
-#### Option 3: OpenRouter (Recommended for Enterprise)
-
-```bash
-CEMS_LLM_PROVIDER=openrouter
-OPENROUTER_API_KEY=your-openrouter-key
-CEMS_LLM_MODEL=anthropic/claude-3-haiku
+# Optional: Model configuration (defaults shown)
+CEMS_MEM0_MODEL=openai/gpt-4o-mini           # Fact extraction
+CEMS_EMBEDDING_MODEL=openai/text-embedding-3-small  # Embeddings
+CEMS_LLM_MODEL=anthropic/claude-3-haiku      # Maintenance
 
 # Optional: Attribution for OpenRouter dashboard
 CEMS_OPENROUTER_SITE_URL=https://your-company.com
 CEMS_OPENROUTER_SITE_NAME=YourCompany CEMS
 ```
 
-**Why OpenRouter for Enterprise?**
-- Centralized billing across all LLM providers
+**Why OpenRouter?**
+- **Single API key** for all LLM and embedding operations
+- Centralized billing across all providers
 - Easy model switching without code changes
 - Enterprise SSO (SAML) support
 - Team management with role-based permissions
@@ -124,13 +111,8 @@ cp deploy/.env.example .env
 ```bash
 # .env file
 POSTGRES_PASSWORD=your_secure_password_here
-CEMS_API_KEY=cems_your_api_key_here
-CEMS_COMPANY_ID=your-company
-
-# Choose your LLM provider (see options above)
-CEMS_LLM_PROVIDER=openrouter
-OPENROUTER_API_KEY=your-openrouter-key
-CEMS_LLM_MODEL=anthropic/claude-3-haiku
+OPENROUTER_API_KEY=sk-or-your-openrouter-key
+CEMS_ADMIN_KEY=cems_admin_your_secure_key_here
 ```
 
 ### 3. Start Services
@@ -177,14 +159,8 @@ cat > .env << 'EOF'
 CEMS_USER_ID=developer
 CEMS_STORAGE_DIR=~/.cems
 
-# Choose your provider
-CEMS_LLM_PROVIDER=openai
-OPENAI_API_KEY=sk-your-key
-
-# Or for OpenRouter
-# CEMS_LLM_PROVIDER=openrouter
-# OPENROUTER_API_KEY=your-key
-# CEMS_LLM_MODEL=anthropic/claude-3-haiku
+# OpenRouter API key (single key for all operations)
+OPENROUTER_API_KEY=sk-or-your-openrouter-key
 EOF
 ```
 
@@ -210,15 +186,25 @@ For Claude Code (stdio mode), add to `~/.claude.json` in the `mcpServers` sectio
       "args": ["-m", "cems.server"],
       "env": {
         "CEMS_USER_ID": "your-username",
-        "OPENAI_API_KEY": "sk-your-key",
-        "OPENROUTER_API_KEY": "your-openrouter-key"
+        "OPENROUTER_API_KEY": "sk-or-your-openrouter-key"
       }
     }
   }
 }
 ```
 
-For HTTP mode (Docker/server deployment), use:
+For HTTP mode (Docker/server deployment), first get a user API key:
+
+```bash
+# Admin creates a user
+curl -X POST http://localhost:8765/admin/users \
+  -H "Authorization: Bearer $CEMS_ADMIN_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"username": "your-username"}'
+# Returns: {"api_key": "cems_usr_abc123..."}
+```
+
+Then configure the client:
 
 ```json
 {
@@ -227,16 +213,13 @@ For HTTP mode (Docker/server deployment), use:
       "type": "http",
       "url": "http://localhost:8765/mcp",
       "headers": {
-        "X-API-Key": "your-cems-api-key",
-        "X-User-ID": "your-username",
+        "Authorization": "Bearer cems_usr_your_api_key",
         "X-Team-ID": "your-team"
       }
     }
   }
 }
 ```
-
-The `X-API-Key` must match the `CEMS_API_KEY` environment variable on the server.
 
 For Cursor, add to `~/.cursor/mcp.json`:
 
@@ -248,7 +231,7 @@ For Cursor, add to `~/.cursor/mcp.json`:
       "args": ["-m", "cems.server"],
       "env": {
         "CEMS_USER_ID": "your-username",
-        "OPENAI_API_KEY": "sk-your-key"
+        "OPENROUTER_API_KEY": "sk-or-your-openrouter-key"
       }
     }
   }
@@ -286,15 +269,11 @@ spec:
             secretKeyRef:
               name: cems-secrets
               key: database-url
-        - name: CEMS_LLM_PROVIDER
-          value: "openrouter"
         - name: OPENROUTER_API_KEY
           valueFrom:
             secretKeyRef:
               name: cems-secrets
               key: openrouter-api-key
-        - name: CEMS_LLM_MODEL
-          value: "anthropic/claude-3-haiku"
 ```
 
 ### With Coolify
@@ -488,7 +467,7 @@ services:
 docker-compose logs cems-server
 
 # Common issues:
-# - Missing LLM API key (OPENAI_API_KEY, ANTHROPIC_API_KEY, or OPENROUTER_API_KEY)
+# - Missing OPENROUTER_API_KEY
 # - PostgreSQL not ready (wait for health check)
 # - Port 8765 already in use
 ```
@@ -496,13 +475,13 @@ docker-compose logs cems-server
 ### LLM errors
 
 ```bash
-# Check which provider is configured
-docker exec cems-server printenv | grep CEMS_LLM
+# Check OpenRouter configuration
+docker exec cems-server printenv | grep -E "OPENROUTER|CEMS_.*MODEL"
 
 # Common issues:
-# - Wrong API key format
-# - Invalid model name (for OpenRouter, use provider/model format)
-# - Rate limiting (check provider dashboard)
+# - Wrong API key format (should start with sk-or-)
+# - Invalid model name (use provider/model format, e.g., openai/gpt-4o-mini)
+# - Rate limiting (check OpenRouter dashboard)
 ```
 
 ### Memory errors
@@ -523,25 +502,32 @@ curl http://localhost:6333/collections
 docker exec cems-server cems maintenance run reindex
 ```
 
-## LLM Provider Migration
+## OpenRouter Configuration
 
-### Switching from OpenAI to OpenRouter
+### Getting an API Key
 
-1. Get an OpenRouter API key from https://openrouter.ai
-2. Update environment variables:
-   ```bash
-   CEMS_LLM_PROVIDER=openrouter
-   OPENROUTER_API_KEY=your-new-key
-   CEMS_LLM_MODEL=openai/gpt-4o-mini  # or anthropic/claude-3-haiku
-   ```
-3. Restart the server
-4. No code changes needed - existing memories remain compatible
+1. Sign up at https://openrouter.ai
+2. Go to https://openrouter.ai/keys
+3. Create a new API key (starts with `sk-or-`)
+4. Set it as `OPENROUTER_API_KEY` environment variable
 
-### Using OpenRouter with Existing Provider Keys (BYOK)
+### Using BYOK (Bring Your Own Key)
 
-OpenRouter supports BYOK (Bring Your Own Key) for direct provider access with centralized billing:
+OpenRouter supports BYOK for direct provider access with centralized billing:
 
 1. Log into OpenRouter dashboard
 2. Go to Settings → Keys
 3. Add your existing OpenAI or Anthropic keys
 4. Requests will use your keys directly while being billed through OpenRouter
+
+### Model Selection
+
+Use OpenRouter format for model names: `provider/model`
+
+| Use Case | Recommended Model |
+|----------|-------------------|
+| Fact extraction | `openai/gpt-4o-mini` |
+| Embeddings | `openai/text-embedding-3-small` |
+| Maintenance | `anthropic/claude-3-haiku` |
+
+See all available models at https://openrouter.ai/models

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -74,26 +75,38 @@ class CEMSMemory:
     def _build_mem0_config(self) -> dict[str, Any]:
         """Build Mem0 configuration dict.
 
-        Mem0 automatically uses OpenRouter if OPENROUTER_API_KEY is set.
-        Embeddings always use OPENAI_API_KEY (OpenRouter doesn't provide embeddings).
+        Uses OpenRouter for ALL operations (LLM + embeddings) via single API key.
+
+        LLM: OpenAI provider with openrouter_base_url parameter
+        Embeddings: OpenAI embedder with openai_base_url pointing to OpenRouter
 
         Required env vars:
-            - OPENROUTER_API_KEY: For LLM calls (fact extraction, updates)
-            - OPENAI_API_KEY: For embeddings only
+            - OPENROUTER_API_KEY: For all LLM and embedding calls
+
+        See:
+            - https://github.com/mem0ai/mem0/blob/main/mem0/llms/openai.py
+            - https://github.com/mem0ai/mem0/blob/main/mem0/embeddings/openai.py
         """
+        api_key = os.environ.get("OPENROUTER_API_KEY")
         model = self.config.get_mem0_model()
 
         return {
             "llm": {
-                "provider": "openai",  # Mem0 auto-switches to OpenRouter if key is set
+                "provider": "openai",  # Use OpenAI provider with OpenRouter base URL
                 "config": {
                     "model": model,
+                    "api_key": api_key,
+                    "openrouter_base_url": "https://openrouter.ai/api/v1",
+                    "site_url": "https://github.com/cems",
+                    "app_name": "CEMS Memory Server",
                 },
             },
             "embedder": {
-                "provider": "openai",  # Embeddings always use OpenAI
+                "provider": "openai",  # OpenAI embedder with OpenRouter base URL
                 "config": {
                     "model": self.config.embedding_model,
+                    "api_key": api_key,
+                    "openai_base_url": "https://openrouter.ai/api/v1",
                 },
             },
             "vector_store": {

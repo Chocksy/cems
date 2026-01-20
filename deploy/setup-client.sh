@@ -6,15 +6,27 @@ set -e
 
 # Configuration
 CEMS_SERVER_URL="${CEMS_SERVER_URL:-http://localhost:8765/mcp}"
-CEMS_USER_ID="${CEMS_USER_ID:-$(whoami)}"
+CEMS_API_KEY="${CEMS_API_KEY:-}"
 CEMS_TEAM_ID="${CEMS_TEAM_ID:-default}"
 
 echo "CEMS Client Setup"
 echo "================="
 echo "Server URL: $CEMS_SERVER_URL"
-echo "User ID: $CEMS_USER_ID"
 echo "Team ID: $CEMS_TEAM_ID"
 echo ""
+
+if [ -z "$CEMS_API_KEY" ]; then
+    echo "Error: CEMS_API_KEY is required"
+    echo ""
+    echo "Get your API key from your CEMS admin:"
+    echo "  curl -X POST http://localhost:8765/admin/users \\"
+    echo "    -H \"Authorization: Bearer \$CEMS_ADMIN_KEY\" \\"
+    echo "    -H \"Content-Type: application/json\" \\"
+    echo "    -d '{\"username\": \"your-username\"}'"
+    echo ""
+    echo "Then run: CEMS_API_KEY=cems_usr_xxx ./setup-client.sh"
+    exit 1
+fi
 
 # Check if jq is installed
 if ! command -v jq &> /dev/null; then
@@ -37,13 +49,13 @@ echo "Backed up config to $CLAUDE_CONFIG.bak"
 
 # Add CEMS MCP server to config
 jq --arg url "$CEMS_SERVER_URL" \
-   --arg user_id "$CEMS_USER_ID" \
+   --arg api_key "$CEMS_API_KEY" \
    --arg team_id "$CEMS_TEAM_ID" \
    '.mcpServers.cems = {
       "type": "http",
       "url": $url,
       "headers": {
-        "X-User-ID": $user_id,
+        "Authorization": ("Bearer " + $api_key),
         "X-Team-ID": $team_id
       }
     }' "$CLAUDE_CONFIG" > "$CLAUDE_CONFIG.tmp" && mv "$CLAUDE_CONFIG.tmp" "$CLAUDE_CONFIG"

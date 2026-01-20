@@ -44,26 +44,19 @@ services:
       dockerfile: Dockerfile
     container_name: cems-server
     environment:
-      # Database
+      # Database (required for user management)
       CEMS_DATABASE_URL: postgresql://cems:${POSTGRES_PASSWORD:-cems_secure_password}@postgres:5432/cems
       # Vector store
       CEMS_VECTOR_STORE: qdrant
       CEMS_QDRANT_URL: http://qdrant:6333
-      # LLM settings
-      CEMS_LLM_PROVIDER: ${CEMS_LLM_PROVIDER:-openai}
-      CEMS_LLM_MODEL: ${CEMS_LLM_MODEL:-gpt-4o-mini}
-      OPENAI_API_KEY: ${OPENAI_API_KEY}
-      # Or use Anthropic
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      # LLM (via OpenRouter)
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
       # Server mode
       CEMS_MODE: server
       CEMS_SERVER_HOST: 0.0.0.0
       CEMS_SERVER_PORT: 8765
-      # Company settings
-      CEMS_COMPANY_ID: ${CEMS_COMPANY_ID:-default}
-      # Authentication
-      CEMS_API_KEY: ${CEMS_API_KEY}
-      CEMS_ENABLE_AUTH: "true"
+      # Admin API key (for user management)
+      CEMS_ADMIN_KEY: ${CEMS_ADMIN_KEY}
     ports:
       - "8765:8765"
     depends_on:

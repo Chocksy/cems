@@ -1,16 +1,18 @@
 """Configuration for CEMS.
 
 Environment Variables:
-    Two LLM configurations are required:
+    Only ONE API key is required - everything goes through OpenRouter:
 
-    1. Mem0 (fact extraction, ADD/UPDATE/DELETE logic):
-       - OPENAI_API_KEY: Required for Mem0's internal operations
-       - CEMS_MEM0_MODEL: Model for Mem0 (default: gpt-4o-mini)
-       - CEMS_EMBEDDING_MODEL: Embedding model (default: text-embedding-3-small)
+    - OPENROUTER_API_KEY: Required for all LLM and embedding operations
 
-    2. Maintenance (summarization, merging via OpenRouter):
-       - OPENROUTER_API_KEY: Required for maintenance operations
-       - CEMS_LLM_MODEL: Model in OpenRouter format (default: anthropic/claude-3-haiku)
+    Optional model configuration:
+    - CEMS_MEM0_MODEL: Model for Mem0 (default: openai/gpt-4o-mini)
+    - CEMS_EMBEDDING_MODEL: Embedding model (default: openai/text-embedding-3-small)
+    - CEMS_LLM_MODEL: Model for maintenance (default: anthropic/claude-3-haiku)
+
+    OpenRouter provides both LLM and embedding APIs:
+    - LLM: https://openrouter.ai/api/v1/chat/completions
+    - Embeddings: https://openrouter.ai/api/v1/embeddings
 """
 
 from pathlib import Path
@@ -47,21 +49,22 @@ class CEMSConfig(BaseSettings):
     )
 
     # =========================================================================
-    # LLM Settings - All via OpenRouter
+    # LLM Settings - Single API Key via OpenRouter
     # =========================================================================
-    # Mem0 auto-detects OPENROUTER_API_KEY and uses it for LLM calls.
-    # Embeddings still require OPENAI_API_KEY (OpenRouter doesn't do embeddings).
+    # All LLM and embedding operations use OPENROUTER_API_KEY.
+    # OpenRouter provides both chat completions AND embeddings APIs.
     #
     # Required env vars:
-    #   - OPENROUTER_API_KEY: For all LLM calls
-    #   - OPENAI_API_KEY: For embeddings only
+    #   - OPENROUTER_API_KEY: For all operations (LLM + embeddings)
+    #
+    # Model names use OpenRouter format: provider/model
     mem0_model: str = Field(
-        default="gpt-4o-mini",
-        description="Model for Mem0 fact extraction (via OpenRouter)",
+        default="openai/gpt-4o-mini",
+        description="Model for Mem0 fact extraction (OpenRouter format)",
     )
     embedding_model: str = Field(
-        default="text-embedding-3-small",
-        description="Embedding model (uses OpenAI directly)",
+        default="openai/text-embedding-3-small",
+        description="Embedding model (via OpenRouter)",
     )
     llm_model: str = Field(
         default="anthropic/claude-3-haiku",
@@ -148,13 +151,9 @@ class CEMSConfig(BaseSettings):
     # =========================================================================
     server_host: str = Field(default="localhost", description="MCP server host")
     server_port: int = Field(default=8765, description="MCP server port")
-    api_key: str | None = Field(
-        default=None,
-        description="API key for HTTP mode authentication. If set, requests must include Bearer token.",
-    )
 
     # =========================================================================
-    # PostgreSQL Settings (for multi-user/enterprise deployment)
+    # PostgreSQL Settings (required for HTTP mode)
     # =========================================================================
     database_url: str | None = Field(
         default=None,

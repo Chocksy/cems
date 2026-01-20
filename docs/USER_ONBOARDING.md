@@ -16,8 +16,8 @@ Think of it as a shared brain for your team's AI tools.
 
 Ask your DevOps team or team lead for:
 - CEMS server URL (e.g., `https://cems.yourcompany.com`)
-- CEMS API key (for authentication)
-- Your username and team ID
+- Your personal API key (starts with `cems_usr_`)
+- Your team ID
 
 ### Step 2: Configure Claude Code
 
@@ -37,8 +37,7 @@ Find the `mcpServers` section (or create one) and add:
       "type": "http",
       "url": "https://cems.yourcompany.com/mcp",
       "headers": {
-        "X-API-Key": "your-api-key-from-devops",
-        "X-User-ID": "your.username",
+        "Authorization": "Bearer cems_usr_your_api_key",
         "X-Team-ID": "your-team"
       }
     }
@@ -81,8 +80,7 @@ Add:
       "type": "http",
       "url": "https://cems.yourcompany.com/mcp",
       "headers": {
-        "X-API-Key": "your-api-key-from-devops",
-        "X-User-ID": "your.username",
+        "Authorization": "Bearer cems_usr_your_api_key",
         "X-Team-ID": "your-team"
       }
     }

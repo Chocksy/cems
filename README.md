@@ -33,23 +33,22 @@ pip install -e .
 
 ### Environment Setup
 
-CEMS requires two API keys:
+CEMS requires only **one API key** - everything goes through OpenRouter:
 
 ```bash
-# Required: OpenAI key for Mem0 (fact extraction + embeddings)
-export OPENAI_API_KEY="sk-your-openai-key"
-
-# Required: OpenRouter key for maintenance (summarization, merging)
-export OPENROUTER_API_KEY="your-openrouter-key"
+# Required: OpenRouter key for all operations (LLM + embeddings)
+export OPENROUTER_API_KEY="sk-or-your-openrouter-key"
 
 # Optional: User identification
 export CEMS_USER_ID="your-username"
 export CEMS_TEAM_ID="your-team"  # Enables shared memory
 ```
 
-**Why two keys?**
-- **Mem0** requires direct OpenAI/Anthropic access for its internal fact extraction
-- **Maintenance** uses OpenRouter as a unified gateway - switch models without code changes
+**Why OpenRouter?**
+- **Single key** for all LLM and embedding operations
+- **Model flexibility** - switch between OpenAI, Anthropic, Google models without code changes
+- **Cost tracking** - unified billing across all providers
+- OpenRouter provides both [chat completions](https://openrouter.ai/docs/api/reference/completions) and [embeddings](https://openrouter.ai/docs/api/reference/embeddings) APIs
 
 ### Option 1: Docker Deployment (Recommended)
 
@@ -93,7 +92,18 @@ CEMS_MODE=http python -m cems.server
 
 #### For HTTP Mode (Docker/Server)
 
-Add to `~/.claude.json` in the `mcpServers` section:
+First, get a user API key from your CEMS admin:
+
+```bash
+# Admin creates a user and gets an API key
+curl -X POST http://localhost:8765/admin/users \
+  -H "Authorization: Bearer $CEMS_ADMIN_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"username": "your-username"}'
+# Returns: {"api_key": "cems_usr_abc123..."}
+```
+
+Then add to `~/.claude.json` in the `mcpServers` section:
 
 ```json
 {
@@ -102,16 +112,13 @@ Add to `~/.claude.json` in the `mcpServers` section:
       "type": "http",
       "url": "http://localhost:8765/mcp",
       "headers": {
-        "X-API-Key": "your-cems-api-key",
-        "X-User-ID": "your-username",
+        "Authorization": "Bearer cems_usr_your_api_key",
         "X-Team-ID": "your-team"
       }
     }
   }
 }
 ```
-
-The `X-API-Key` must match the `CEMS_API_KEY` environment variable set on the server.
 
 #### For stdio Mode (Local)
 
@@ -125,8 +132,7 @@ Add to `~/.claude.json`:
       "args": ["-m", "cems.server"],
       "env": {
         "CEMS_USER_ID": "your-username",
-        "OPENAI_API_KEY": "sk-your-key",
-        "OPENROUTER_API_KEY": "your-openrouter-key"
+        "OPENROUTER_API_KEY": "sk-or-your-openrouter-key"
       }
     }
   }
@@ -205,10 +211,10 @@ cems index repo /path/to/repo --scope shared
                               ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │                    Mem0 (Dependency)                             │
-│  • Fact extraction prompts (uses OPENAI_API_KEY)                │
+│  • Fact extraction prompts (via OpenRouter)                     │
 │  • ADD/UPDATE/DELETE/NONE logic                                 │
 │  • Qdrant vector store                                          │
-│  • SQLite history                                                │
+│  • Embeddings (via OpenRouter)                                  │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -220,31 +226,25 @@ CEMS is configured via environment variables (all prefixed with `CEMS_`):
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `CEMS_USER_ID` | `default` | Your user identifier |
+| `CEMS_USER_ID` | `default` | Your user identifier (stdio mode) |
 | `CEMS_TEAM_ID` | (none) | Team ID for shared memory |
 | `CEMS_STORAGE_DIR` | `~/.cems` | Storage directory |
 | `CEMS_MODE` | `stdio` | Server mode: `stdio` or `http` |
-| `CEMS_API_KEY` | (none) | API key for HTTP mode. If set, requests must include `X-API-Key` header |
+| `CEMS_DATABASE_URL` | (none) | PostgreSQL URL (required for HTTP mode) |
+| `CEMS_ADMIN_KEY` | (none) | Admin API key for user management |
 
-### LLM Configuration (Dual-Key Setup)
+### LLM Configuration (Single-Key via OpenRouter)
 
-#### Mem0 (Fact Extraction)
-Requires direct provider access - OpenRouter not supported here.
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `OPENAI_API_KEY` | - | Required for Mem0 operations |
-| `CEMS_MEM0_LLM_PROVIDER` | `openai` | Provider: `openai` or `anthropic` |
-| `CEMS_MEM0_MODEL` | `gpt-4o-mini` | Model for fact extraction |
-| `CEMS_EMBEDDING_MODEL` | `text-embedding-3-small` | Embedding model |
-
-#### Maintenance (Summarization, Merging)
-Uses OpenRouter for unified access to any model.
+All LLM and embedding operations use OpenRouter:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `OPENROUTER_API_KEY` | - | Required for maintenance operations |
-| `CEMS_LLM_MODEL` | `anthropic/claude-3-haiku` | Model (OpenRouter format) |
+| `OPENROUTER_API_KEY` | - | **Required** - Single key for all operations |
+| `CEMS_MEM0_MODEL` | `openai/gpt-4o-mini` | Model for Mem0 fact extraction |
+| `CEMS_EMBEDDING_MODEL` | `openai/text-embedding-3-small` | Embedding model |
+| `CEMS_LLM_MODEL` | `anthropic/claude-3-haiku` | Model for maintenance ops |
+
+Model names use OpenRouter format: `provider/model` (e.g., `openai/gpt-4o-mini`, `anthropic/claude-3-haiku`)
 
 ### Vector Store Settings
 
@@ -415,8 +415,7 @@ Check the relevance threshold (default 0.3). If similarity scores are low, resul
 ### Server won't start
 
 ```bash
-# Check required environment variables
-echo $OPENAI_API_KEY
+# Check required environment variable
 echo $OPENROUTER_API_KEY
 
 # For Docker, check logs

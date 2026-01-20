@@ -11,9 +11,9 @@ Environment Variables:
     CEMS_OPENROUTER_SITE_NAME: Optional. Attribution name for OpenRouter dashboard.
 
 Note:
-    Mem0 uses a separate LLM configuration (OPENAI_API_KEY) for its internal
-    fact extraction. This module handles only CEMS maintenance operations
-    (summarization, merging).
+    Both Mem0 and CEMS maintenance use OPENROUTER_API_KEY. Mem0 uses the native
+    OpenRouter LLM provider for fact extraction, and the OpenAI embedder with
+    openai_base_url pointing to OpenRouter for embeddings.
 """
 
 import logging

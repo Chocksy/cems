@@ -54,8 +54,9 @@ def status(user: str, team: str | None) -> None:
     table.add_row("Memory Backend", config.memory_backend)
     table.add_row("Vector Store", config.vector_store)
     table.add_row("Qdrant URL", config.qdrant_url or "(embedded)")
-    table.add_row("Mem0 LLM", f"{config.get_mem0_provider()}/{config.get_mem0_model()}")
-    table.add_row("Maintenance LLM", config.llm_model)
+    table.add_row("Mem0 Model", config.get_mem0_model())
+    table.add_row("Embedding Model", config.embedding_model)
+    table.add_row("Maintenance Model", config.llm_model)
     table.add_row("Graph Store", config.graph_store if config.enable_graph else "disabled")
     table.add_row("Scheduler Enabled", str(config.enable_scheduler))
 
