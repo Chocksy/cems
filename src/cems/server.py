@@ -593,10 +593,13 @@ def create_http_app():
             memory = get_memory()
             results = memory.search(query, scope=scope, limit=limit)
 
+            # Convert SearchResult objects to dicts for JSON serialization
+            serialized_results = [r.model_dump() for r in results]
+
             return JSONResponse({
                 "success": True,
-                "results": results.get("results", []) if isinstance(results, dict) else results,
-                "count": len(results.get("results", [])) if isinstance(results, dict) else len(results),
+                "results": serialized_results,
+                "count": len(serialized_results),
             })
         except Exception as e:
             logger.error(f"API memory_search error: {e}")
