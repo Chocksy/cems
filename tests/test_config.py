@@ -113,9 +113,9 @@ class TestCEMSConfig:
 
     def test_relevance_threshold(self):
         """Test relevance threshold default and custom values."""
-        # Test default value
+        # Test default value (lowered from 0.5 to 0.4 for better recall)
         config = CEMSConfig()
-        assert config.relevance_threshold == 0.5
+        assert config.relevance_threshold == 0.4
 
         # Test custom value
         config = CEMSConfig(relevance_threshold=0.7)

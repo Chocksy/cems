@@ -114,6 +114,21 @@ class CEMSMemory:
                 "config": self._get_vector_store_config(),
             },
             "version": "v1.1",
+            "custom_fact_extraction_prompt": """Extract actionable facts from developer conversations.
+
+For each fact, capture:
+- SPECIFIC commands, file paths, URLs (not "uses scripts" but "uses ~/.claude/servers/gsc/seo_daily.sh")
+- CONCRETE preferences (not "likes Python" but "prefers Python 3.12+ with strict type hints")
+- WORKFLOW steps (not "does SEO" but "runs GSC scripts daily, updates GitHub issue #579 weekly")
+- DECISIONS with context (not "uses Coolify" but "deploys EpicPxls via Coolify GitHub integration, never CLI")
+
+Rules:
+- Be specific: include file paths, commands, URLs, version numbers
+- Be actionable: facts should tell an AI what to DO, not just what exists
+- Preserve context: "for EpicPxls", "in production", "when debugging"
+- Skip vague context markers like "Context: X" - extract the actual workflow instead
+
+Return JSON: {"facts": ["specific actionable fact 1", "specific actionable fact 2"]}""",
         }
 
     def _get_vector_store_config(self) -> dict[str, Any]:

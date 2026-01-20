@@ -59,7 +59,7 @@ class CEMSConfig(BaseSettings):
     #
     # Model names use OpenRouter format: provider/model
     mem0_model: str = Field(
-        default="openai/gpt-4o-mini",
+        default="x-ai/grok-code-fast-1",
         description="Model for Mem0 fact extraction (OpenRouter format)",
     )
     embedding_model: str = Field(
@@ -124,7 +124,7 @@ class CEMSConfig(BaseSettings):
         description="Enable LLM query expansion (Stage 1 of retrieval pipeline)",
     )
     relevance_threshold: float = Field(
-        default=0.5,
+        default=0.4,
         description="Minimum similarity score to include in results (Stage 3)",
     )
     default_max_tokens: int = Field(

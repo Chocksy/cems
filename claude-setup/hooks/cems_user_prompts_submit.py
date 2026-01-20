@@ -110,9 +110,9 @@ def search_cems(query: str, limit: int = 3) -> str | None:
         # Format results for Claude
         formatted = []
         for i, r in enumerate(results[:3], 1):
-            content = r.get("memory", r.get("content", ""))
+            content = r.get("content", r.get("memory", ""))
             category = r.get("category", "general")
-            mem_id = r.get("id", "")[:8] if r.get("id") else ""
+            mem_id = r.get("memory_id", r.get("id", ""))[:8] if r.get("memory_id") or r.get("id") else ""
             formatted.append(f"{i}. [{category}] {content} (id: {mem_id})")
 
         return "\n".join(formatted)
