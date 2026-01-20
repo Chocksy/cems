@@ -1,167 +1,130 @@
 # CEMS - Continuous Evolving Memory System
 
-A dual-layer memory system (personal + shared) with scheduled maintenance and knowledge graph, built on top of [Mem0](https://github.com/mem0ai/mem0) and exposed as an MCP server for Claude Code integration.
-
-## Features
-
-- **Dual-Layer Memory**: Personal (per-user) and Shared (team) memory namespaces
-- **Mem0 Backend**: Production-ready memory engine with automatic fact extraction
-- **Knowledge Graph**: Kuzu-based graph for relationship tracking between memories
-- **Scheduled Maintenance**: Automatic memory decay, consolidation, and optimization
-  - Nightly: Merge duplicates, promote frequently-accessed memories
-  - Weekly: Compress old memories, prune stale ones
-  - Monthly: Rebuild embeddings, archive dead memories
-- **MCP Server**: Integrates with Claude Code, Cursor, VS Code, and other MCP clients
-- **Extended Metadata**: Access tracking, categories, tags, priorities
-- **5-Stage Retrieval Pipeline**: Query synthesis, vector search, graph traversal, relevance filtering, token-budgeted assembly
+A dual-layer memory system (personal + shared) with scheduled maintenance and knowledge graph, built on [Mem0](https://github.com/mem0ai/mem0). Integrates with Claude Code via hooks and skills.
 
 ## Quick Start
 
-### Installation
+### Option 1: Automatic Install
 
 ```bash
-# Clone the repository
-git clone https://github.com/yourusername/llm-memory.git
-cd llm-memory
-
-# Install with uv (recommended)
-uv pip install -e .
-
-# Or with pip
-pip install -e .
+git clone https://github.com/yourusername/cems.git
+cd cems
+./install.sh
 ```
 
-### Environment Setup
+The installer will:
+1. Install the CEMS Python package
+2. Set up Claude Code hooks and skills
+3. Configure environment variables
 
-CEMS requires only **one API key** - everything goes through OpenRouter:
+### Option 2: Manual Install
+
+**If you have no existing `~/.claude` folder:**
+```bash
+cp -r claude-setup ~/.claude
+```
+
+**If you have existing Claude Code config:**
+```bash
+# Backup existing
+cp -r ~/.claude ~/.claude.backup
+
+# Copy hooks and skills
+cp claude-setup/hooks/cems_*.py ~/.claude/hooks/
+cp -r claude-setup/skills/cems ~/.claude/skills/
+
+# Then manually add hooks to ~/.claude/settings.json (see below)
+```
+
+### Environment Variables
+
+Add to your shell profile (`~/.zshrc` or `~/.bashrc`):
 
 ```bash
-# Required: OpenRouter key for all operations (LLM + embeddings)
-export OPENROUTER_API_KEY="sk-or-your-openrouter-key"
-
-# Optional: User identification
-export CEMS_USER_ID="your-username"
-export CEMS_TEAM_ID="your-team"  # Enables shared memory
+export CEMS_API_URL="https://your-cems-server.com"
+export CEMS_API_KEY="your-api-key"
 ```
 
-**Why OpenRouter?**
-- **Single key** for all LLM and embedding operations
-- **Model flexibility** - switch between OpenAI, Anthropic, Google models without code changes
-- **Cost tracking** - unified billing across all providers
-- OpenRouter provides both [chat completions](https://openrouter.ai/docs/api/reference/completions) and [embeddings](https://openrouter.ai/docs/api/reference/embeddings) APIs
+Then restart your terminal and Claude Code.
 
-### Option 1: Docker Deployment (Recommended)
+## Configuration
 
-The easiest way to run CEMS is with Docker Compose:
+### Hooks Configuration
 
-```bash
-cd deploy
-
-# Copy and configure environment
-cp .env.example .env
-# Edit .env with your API keys
-
-# Start all services (Qdrant, PostgreSQL, CEMS server)
-docker-compose up -d
-
-# Check status
-docker-compose ps
-
-# View logs
-docker-compose logs -f cems-server
-```
-
-Services:
-- **cems-server**: MCP server on port 8765
-- **cems-qdrant**: Vector database on port 6333
-- **cems-postgres**: Metadata storage on port 5432
-
-### Option 2: Local Development
-
-For local development without Docker:
-
-```bash
-# Start the MCP server in stdio mode (for local Claude Code)
-python -m cems.server
-
-# Or run in HTTP mode
-CEMS_MODE=http python -m cems.server
-```
-
-### Configure Claude Code
-
-#### For HTTP Mode (Docker/Server)
-
-First, get a user API key from your CEMS admin:
-
-```bash
-# Admin creates a user and gets an API key
-curl -X POST http://localhost:8765/admin/users \
-  -H "Authorization: Bearer $CEMS_ADMIN_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"username": "your-username"}'
-# Returns: {"api_key": "cems_usr_abc123..."}
-```
-
-Then add to `~/.claude.json` in the `mcpServers` section:
+If merging into existing config, add to `~/.claude/settings.json`:
 
 ```json
 {
-  "mcpServers": {
-    "cems": {
-      "type": "http",
-      "url": "http://localhost:8765/mcp",
-      "headers": {
-        "Authorization": "Bearer cems_usr_your_api_key",
-        "X-Team-ID": "your-team"
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "uv run ~/.claude/hooks/cems_user_prompts_submit.py"
+          }
+        ]
       }
-    }
+    ],
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "uv run ~/.claude/hooks/cems_stop.py"
+          }
+        ]
+      }
+    ]
   }
 }
 ```
 
-#### For stdio Mode (Local)
+### Directory Structure
 
-Add to `~/.claude.json`:
-
-```json
-{
-  "mcpServers": {
-    "cems": {
-      "command": "python",
-      "args": ["-m", "cems.server"],
-      "env": {
-        "CEMS_USER_ID": "your-username",
-        "OPENROUTER_API_KEY": "sk-or-your-openrouter-key"
-      }
-    }
-  }
-}
-```
-
-### Usage in Claude Code
-
-After configuration and restarting Claude Code, you can use the MCP tools directly:
+After installation, your `~/.claude` folder should contain:
 
 ```
-# Add a memory (via MCP tool)
-Use memory_add to store: "I prefer Python for backend development"
-
-# Search memories
-Use memory_search to find: "What are my coding preferences?"
-
-# The server provides 5 tools:
-# - memory_add: Store memories
-# - memory_search: Search with 5-stage pipeline
-# - memory_forget: Delete or archive
-# - memory_update: Update content
-# - memory_maintenance: Run maintenance jobs
+~/.claude/
+├── settings.json           # Hooks configuration
+├── hooks/
+│   ├── cems_user_prompts_submit.py  # Memory injection on each prompt
+│   └── cems_stop.py                 # Session summary storage
+└── skills/
+    └── cems/
+        ├── remember.md     # /remember - Add personal memory
+        ├── recall.md       # /recall - Search memories
+        ├── share.md        # /share - Add team memory
+        ├── forget.md       # /forget - Delete memory
+        └── context.md      # /context - Show status
 ```
+
+## Usage
+
+### Skills (in Claude Code)
+
+```
+/remember I prefer Python for backend development
+/remember The database uses snake_case column names
+/recall What are my coding preferences?
+/recall database conventions
+/share API endpoints follow REST conventions with /api/v1/...
+/forget abc123  # Memory ID from search results
+/context        # Show memory system status
+```
+
+### How It Works
+
+1. **Memory Injection**: On every prompt, the `UserPromptSubmit` hook searches CEMS and injects relevant memories as context
+2. **Session Summaries**: On session end, the `Stop` hook stores a summary of your commits to CEMS
+3. **Skills**: Slash commands provide direct access to memory operations
 
 ### CLI Usage
 
 ```bash
-# Check status and configuration
+# Check status
 cems status
 
 # Add a memory
@@ -172,254 +135,103 @@ cems search "coding preferences"
 
 # List all memories
 cems list
-
-# Run maintenance manually
-cems maintenance run consolidation
-cems maintenance run all
-
-# Show maintenance schedule
-cems maintenance schedule
-
-# Index a repository
-cems index repo /path/to/repo --scope shared
 ```
 
-## Architecture
+## Server Deployment
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                    CEMS (What We Built)                          │
-│                                                                  │
-│  ┌─────────────┐  ┌─────────────┐  ┌──────────────────────────┐ │
-│  │ MCP Server  │  │  Scheduler  │  │  CLI                     │ │
-│  │ (FastMCP)   │  │ (APScheduler│  │  cems status/add/search  │ │
-│  │ 5 tools     │  │  3 jobs)    │  │                          │ │
-│  └──────┬──────┘  └──────┬──────┘  └──────────────────────────┘ │
-│         │                │                                       │
-│         ▼                ▼                                       │
-│  ┌─────────────────────────────────────────────────────────────┐│
-│  │              Memory Wrapper (namespace isolation)            ││
-│  │         personal:{user_id}  |  shared:{team_id}             ││
-│  └──────────────────────────┬──────────────────────────────────┘│
-│                             │                                    │
-│  ┌───────────────────┬──────┴──────┬───────────────────────────┐│
-│  │   Metadata Store  │ Graph Store │  Vector Store (Mem0)      ││
-│  │   (SQLite)        │ (Kuzu)      │  (Qdrant)                 ││
-│  └───────────────────┴─────────────┴───────────────────────────┘│
-└─────────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                    Mem0 (Dependency)                             │
-│  • Fact extraction prompts (via OpenRouter)                     │
-│  • ADD/UPDATE/DELETE/NONE logic                                 │
-│  • Qdrant vector store                                          │
-│  • Embeddings (via OpenRouter)                                  │
-└─────────────────────────────────────────────────────────────────┘
+For team usage, deploy CEMS as a server:
+
+### Docker Compose
+
+```bash
+cd deploy
+cp .env.example .env
+# Edit .env with your API keys
+docker-compose up -d
 ```
 
-## Configuration
+Services:
+- **cems-server**: MCP server on port 8765
+- **cems-qdrant**: Vector database on port 6333
+- **cems-postgres**: Metadata storage on port 5432
 
-CEMS is configured via environment variables (all prefixed with `CEMS_`):
+### Server Configuration
 
-### Core Settings
+```bash
+# Required
+export OPENROUTER_API_KEY="sk-or-your-key"
+export CEMS_DATABASE_URL="postgresql://..."
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `CEMS_USER_ID` | `default` | Your user identifier (stdio mode) |
-| `CEMS_TEAM_ID` | (none) | Team ID for shared memory |
-| `CEMS_STORAGE_DIR` | `~/.cems` | Storage directory |
-| `CEMS_MODE` | `stdio` | Server mode: `stdio` or `http` |
-| `CEMS_DATABASE_URL` | (none) | PostgreSQL URL (required for HTTP mode) |
-| `CEMS_ADMIN_KEY` | (none) | Admin API key for user management |
-
-### LLM Configuration (Single-Key via OpenRouter)
-
-All LLM and embedding operations use OpenRouter:
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `OPENROUTER_API_KEY` | - | **Required** - Single key for all operations |
-| `CEMS_MEM0_MODEL` | `openai/gpt-4o-mini` | Model for Mem0 fact extraction |
-| `CEMS_EMBEDDING_MODEL` | `openai/text-embedding-3-small` | Embedding model |
-| `CEMS_LLM_MODEL` | `anthropic/claude-3-haiku` | Model for maintenance ops |
-
-Model names use OpenRouter format: `provider/model` (e.g., `openai/gpt-4o-mini`, `anthropic/claude-3-haiku`)
-
-### Vector Store Settings
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `CEMS_VECTOR_STORE` | `qdrant` | Backend: `qdrant`, `chroma`, `lancedb` |
-| `CEMS_QDRANT_URL` | (none) | Qdrant server URL (e.g., `http://localhost:6333`) |
-
-### Retrieval Settings
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `CEMS_ENABLE_QUERY_SYNTHESIS` | `true` | Enable LLM query expansion |
-| `CEMS_RELEVANCE_THRESHOLD` | `0.3` | Minimum score to include in results |
-| `CEMS_DEFAULT_MAX_TOKENS` | `2000` | Token budget for retrieval results |
-
-### Graph Store Settings
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `CEMS_ENABLE_GRAPH` | `true` | Enable knowledge graph |
-| `CEMS_GRAPH_STORE` | `kuzu` | Graph backend: `kuzu` or `none` |
-
-### Scheduler Settings
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `CEMS_ENABLE_SCHEDULER` | `true` | Enable background maintenance |
-| `CEMS_NIGHTLY_HOUR` | `3` | Hour for nightly consolidation (0-23) |
-| `CEMS_WEEKLY_DAY` | `sun` | Day for weekly summarization |
-| `CEMS_WEEKLY_HOUR` | `4` | Hour for weekly summarization |
-| `CEMS_MONTHLY_DAY` | `1` | Day of month for monthly reindex |
-| `CEMS_MONTHLY_HOUR` | `5` | Hour for monthly reindex |
-
-### Decay Settings
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `CEMS_STALE_DAYS` | `90` | Days before memory is stale |
-| `CEMS_ARCHIVE_DAYS` | `180` | Days before memory is archived |
-| `CEMS_HOT_ACCESS_THRESHOLD` | `5` | Access count to consider memory "hot" |
-| `CEMS_DUPLICATE_SIMILARITY_THRESHOLD` | `0.92` | Cosine similarity for duplicate detection |
-
-## MCP Tools (5 Essential Tools)
-
-| Tool | Description |
-|------|-------------|
-| `memory_add` | Store memories (personal or shared namespace) |
-| `memory_search` | Unified search with 5-stage retrieval pipeline |
-| `memory_forget` | Delete or archive a memory |
-| `memory_update` | Update a memory's content |
-| `memory_maintenance` | Run maintenance jobs (consolidation, summarization, reindex) |
-
-## MCP Resources (3 Essential)
-
-| Resource | Description |
-|----------|-------------|
-| `memory://status` | System status and configuration |
-| `memory://personal/summary` | Personal memory overview |
-| `memory://shared/summary` | Shared memory overview |
-
-## 5-Stage Inference Retrieval Pipeline
-
-The `memory_search` tool implements a sophisticated retrieval pipeline:
-
-```
-User Query
-    │
-    ▼
-┌────────────────────────────────────────────────────────┐
-│ Stage 1: Query Synthesis                               │
-│ - LLM expands query for better retrieval               │
-│ - "coding preferences" → multiple search terms         │
-└────────────────────────────────────────────────────────┘
-    │
-    ▼
-┌────────────────────────────────────────────────────────┐
-│ Stage 2: Candidate Retrieval (top_k=20)                │
-│ - Vector search via Mem0/Qdrant                        │
-│ - Graph traversal via Kuzu (if enabled)                │
-│ - Merge all candidates                                 │
-└────────────────────────────────────────────────────────┘
-    │
-    ▼
-┌────────────────────────────────────────────────────────┐
-│ Stage 3: Relevance Filtering                           │
-│ - Filter candidates with score < 0.3 threshold         │
-│ - Reject low-confidence matches                        │
-└────────────────────────────────────────────────────────┘
-    │
-    ▼
-┌────────────────────────────────────────────────────────┐
-│ Stage 4: Temporal Ranking                              │
-│ - time_decay = 1.0 / (1.0 + (age_days / 30))          │
-│ - final_score = relevance * time_decay * priority      │
-│ - Sort by final_score descending                       │
-└────────────────────────────────────────────────────────┘
-    │
-    ▼
-┌────────────────────────────────────────────────────────┐
-│ Stage 5: Token-Budgeted Assembly                       │
-│ - Select memories until max_tokens exhausted           │
-│ - Format as context payload                            │
-└────────────────────────────────────────────────────────┘
-    │
-    ▼
-Formatted Results
+# Optional
+export CEMS_ADMIN_KEY="admin-key-for-user-management"
+export CEMS_QDRANT_URL="http://cems-qdrant:6333"
 ```
 
-## Maintenance Jobs
+### Creating User API Keys
 
-### Nightly Consolidation (3 AM)
-- Finds semantically duplicate memories (>92% similarity)
-- Uses LLM to merge duplicates into comprehensive memories
-- Promotes frequently-accessed memories (>5 accesses)
+```bash
+curl -X POST http://localhost:8765/admin/users \
+  -H "Authorization: Bearer $CEMS_ADMIN_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"username": "colleague-name"}'
+# Returns: {"api_key": "cems_usr_abc123..."}
+```
 
-### Weekly Summarization (Sunday 4 AM)
-- Uses LLM to generate category summaries
-- Compresses old memories (>30 days) into category summaries
-- Prunes stale memories (not accessed in 90 days)
+## Features
 
-### Monthly Re-indexing (1st at 5 AM)
-- Rebuilds embeddings with latest model
-- Archives dead memories (not accessed in 180 days)
+- **Dual-Layer Memory**: Personal (per-user) and Shared (team) namespaces
+- **Mem0 Backend**: Automatic fact extraction and deduplication
+- **Knowledge Graph**: Kuzu-based relationship tracking
+- **Scheduled Maintenance**:
+  - Nightly: Merge duplicates, promote frequent memories
+  - Weekly: Compress old memories, prune stale ones
+  - Monthly: Rebuild embeddings, archive dead memories
+- **5-Stage Retrieval**: Query synthesis, vector search, graph traversal, relevance filtering, token-budgeted assembly
+
+## Environment Variables Reference
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CEMS_API_URL` | - | CEMS server URL (for hooks) |
+| `CEMS_API_KEY` | - | Your API key (for hooks) |
+| `OPENROUTER_API_KEY` | - | OpenRouter key (for server) |
+| `CEMS_USER_ID` | `default` | User identifier (stdio mode) |
+| `CEMS_TEAM_ID` | - | Team ID for shared memory |
+| `CEMS_DATABASE_URL` | - | PostgreSQL URL (HTTP mode) |
+| `CEMS_QDRANT_URL` | - | Qdrant server URL |
+
+## Troubleshooting
+
+### Memory not being recalled
+
+1. Check environment variables are set: `echo $CEMS_API_URL`
+2. Test API manually: `curl -X POST $CEMS_API_URL/api/memory/search -H "Authorization: Bearer $CEMS_API_KEY" -H "Content-Type: application/json" -d '{"query": "test"}'`
+3. Check hook is running: Look for `<memory-recall>` tags in Claude's context
+
+### Skills not appearing
+
+1. Verify skills are in `~/.claude/skills/cems/`
+2. Restart Claude Code
+3. Type `/` and look for `remember`, `recall`, etc.
+
+### Hook errors
+
+Check the hook scripts directly:
+```bash
+echo '{"prompt": "test query"}' | uv run ~/.claude/hooks/cems_user_prompts_submit.py
+```
 
 ## Development
 
 ```bash
 # Install with dev dependencies
-pip install -e ".[dev]"
+uv pip install -e ".[dev]"
 
 # Run tests
 pytest
 
-# Run tests with coverage
-pytest --cov=cems
-
 # Type checking
 mypy src/cems
-
-# Linting
-ruff check src/cems
-```
-
-## Deployment
-
-See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for production deployment guide including:
-- Docker Compose setup
-- Kubernetes deployment
-- Team management
-- Backup and restore
-- Monitoring
-
-## Troubleshooting
-
-### CLI Error: "Extra inputs are not permitted"
-
-If you see an error about `cems_api_key` or other fields not being permitted, your `.env` file has extra variables. This is OK - the config now ignores unknown variables. Update to the latest version.
-
-### "Not authenticated" in Claude Code MCP panel
-
-This is cosmetic. CEMS uses header-based identification (`X-User-ID`/`X-Team-ID`), not OAuth. If the tools work, you're connected.
-
-### Search returns no results
-
-Check the relevance threshold (default 0.3). If similarity scores are low, results get filtered. Try more specific queries that match your stored memories semantically.
-
-### Server won't start
-
-```bash
-# Check required environment variable
-echo $OPENROUTER_API_KEY
-
-# For Docker, check logs
-docker logs cems-server
 ```
 
 ## License
