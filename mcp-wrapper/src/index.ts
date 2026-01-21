@@ -29,6 +29,12 @@ app.use(express.json());
 // Store active transports by session ID
 const transports: Record<string, StreamableHTTPServerTransport> = {};
 
+// Store active SSE heartbeat intervals
+const heartbeatIntervals: Record<string, NodeJS.Timeout> = {};
+
+// SSE heartbeat interval (30 seconds - well under Cloudflare's 100s timeout)
+const HEARTBEAT_INTERVAL_MS = 30000;
+
 // Health check endpoint (for Docker/Kubernetes)
 app.get("/health", async (_req: Request, res: Response) => {
   try {
@@ -413,12 +419,49 @@ app.post("/mcp", async (req: Request, res: Response) => {
   await transport.handleRequest(req, res, req.body);
 });
 
-// MCP endpoint - handles GET (SSE stream)
+// MCP endpoint - handles GET (SSE stream) with heartbeat to prevent Cloudflare timeout
 app.get("/mcp", async (req: Request, res: Response) => {
   const sessionId = req.headers["mcp-session-id"] as string;
   const transport = transports[sessionId];
 
   if (transport) {
+    // Set up SSE heartbeat to prevent Cloudflare's 100s idle timeout
+    // Send SSE comment (: ping) every 30 seconds
+    const heartbeatId = `${sessionId}-${Date.now()}`;
+    
+    // Start heartbeat interval
+    heartbeatIntervals[heartbeatId] = setInterval(() => {
+      try {
+        if (!res.writableEnded && !res.destroyed) {
+          // SSE comment format - doesn't trigger client event but keeps connection alive
+          res.write(": ping\n\n");
+        } else {
+          // Connection closed, clean up
+          clearInterval(heartbeatIntervals[heartbeatId]);
+          delete heartbeatIntervals[heartbeatId];
+        }
+      } catch (err) {
+        // Connection likely closed
+        clearInterval(heartbeatIntervals[heartbeatId]);
+        delete heartbeatIntervals[heartbeatId];
+      }
+    }, HEARTBEAT_INTERVAL_MS);
+
+    // Clean up heartbeat when response ends
+    res.on("close", () => {
+      if (heartbeatIntervals[heartbeatId]) {
+        clearInterval(heartbeatIntervals[heartbeatId]);
+        delete heartbeatIntervals[heartbeatId];
+      }
+    });
+
+    res.on("finish", () => {
+      if (heartbeatIntervals[heartbeatId]) {
+        clearInterval(heartbeatIntervals[heartbeatId]);
+        delete heartbeatIntervals[heartbeatId];
+      }
+    });
+
     await transport.handleRequest(req, res);
   } else {
     res.status(400).send("Invalid session");
