@@ -28,13 +28,14 @@ OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
 # Model mapping for OpenRouter (provider/model format)
 OPENROUTER_MODELS = {
-    # Default models for maintenance tasks
-    "default": "anthropic/claude-3-haiku",
-    "fast": "anthropic/claude-3-haiku",
+    # Default models - using Grok for speed
+    "default": "x-ai/grok-4.1-fast",
+    "fast": "x-ai/grok-4.1-fast",
     "smart": "anthropic/claude-sonnet-4",
     # Explicit mappings from common model names
     "gpt-4o-mini": "openai/gpt-4o-mini",
     "gpt-4o": "openai/gpt-4o",
+    "grok-4.1-fast": "x-ai/grok-4.1-fast",
     "claude-3-haiku-20240307": "anthropic/claude-3-haiku",
     "claude-3-sonnet-20240229": "anthropic/claude-3-sonnet",
     "claude-sonnet-4-20250514": "anthropic/claude-sonnet-4",
@@ -484,7 +485,7 @@ If truly nothing useful, return: []"""
             system=system_prompt,
             max_tokens=2000,
             temperature=0.3,  # Slightly higher for more creative extraction
-            model=model or "x-ai/grok-code-fast-1",  # Fast Grok model for code/analysis
+            model=model or "x-ai/grok-4.1-fast",  # Fast Grok model
         )
 
         # Parse JSON response

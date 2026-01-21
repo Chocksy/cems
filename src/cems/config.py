@@ -6,9 +6,9 @@ Environment Variables:
     - OPENROUTER_API_KEY: Required for all LLM and embedding operations
 
     Optional model configuration:
-    - CEMS_MEM0_MODEL: Model for Mem0 (default: openai/gpt-4o-mini)
+    - CEMS_MEM0_MODEL: Model for Mem0 (default: x-ai/grok-4.1-fast)
     - CEMS_EMBEDDING_MODEL: Embedding model (default: openai/text-embedding-3-small)
-    - CEMS_LLM_MODEL: Model for maintenance (default: anthropic/claude-3-haiku)
+    - CEMS_LLM_MODEL: Model for maintenance (default: x-ai/grok-4.1-fast)
 
     OpenRouter provides both LLM and embedding APIs:
     - LLM: https://openrouter.ai/api/v1/chat/completions
@@ -59,7 +59,7 @@ class CEMSConfig(BaseSettings):
     #
     # Model names use OpenRouter format: provider/model
     mem0_model: str = Field(
-        default="x-ai/grok-code-fast-1",
+        default="x-ai/grok-4.1-fast",
         description="Model for Mem0 fact extraction (OpenRouter format)",
     )
     embedding_model: str = Field(
@@ -67,7 +67,7 @@ class CEMSConfig(BaseSettings):
         description="Embedding model (via OpenRouter)",
     )
     llm_model: str = Field(
-        default="anthropic/claude-3-haiku",
+        default="x-ai/grok-4.1-fast",
         description="Model for maintenance ops (OpenRouter format: provider/model)",
     )
 
