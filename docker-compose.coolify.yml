@@ -2,7 +2,7 @@
 # For Coolify deployment - connects to external PostgreSQL and Qdrant
 
 services:
-  # Python API (internal only)
+  # Python API (public at cems.chocksy.com)
   cems-server:
     build:
       context: .
@@ -17,14 +17,23 @@ services:
       CEMS_SERVER_PORT: 8765
     expose:
       - "8765"
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.cems-server.rule=Host(`cems.chocksy.com`)"
+      - "traefik.http.routers.cems-server.entryPoints=https"
+      - "traefik.http.routers.cems-server.tls=true"
+      - "traefik.http.routers.cems-server.tls.certresolver=letsencrypt"
+      - "traefik.http.services.cems-server.loadbalancer.server.port=8765"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8765/health"]
       interval: 30s
       timeout: 10s
       retries: 3
     restart: unless-stopped
+    networks:
+      - coolify
 
-  # Express MCP wrapper (public-facing)
+  # Express MCP wrapper (public at mcp-cems.chocksy.com)
   cems-mcp:
     build:
       context: ./mcp-wrapper
@@ -32,14 +41,27 @@ services:
     environment:
       PYTHON_API_URL: http://cems-server:8765
       PORT: 8766
-    ports:
-      - "8766:8766"
+    expose:
+      - "8766"
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.cems-mcp.rule=Host(`mcp-cems.chocksy.com`)"
+      - "traefik.http.routers.cems-mcp.entryPoints=https"
+      - "traefik.http.routers.cems-mcp.tls=true"
+      - "traefik.http.routers.cems-mcp.tls.certresolver=letsencrypt"
+      - "traefik.http.services.cems-mcp.loadbalancer.server.port=8766"
     depends_on:
       cems-server:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "node", "-e", "require('http').get('http://localhost:8766/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"]
+      test: ["CMD", "curl", "-f", "http://localhost:8766/health"]
       interval: 30s
       timeout: 10s
       retries: 3
     restart: unless-stopped
+    networks:
+      - coolify
+
+networks:
+  coolify:
+    external: true
