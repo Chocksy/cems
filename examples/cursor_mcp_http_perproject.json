@@ -1,9 +1,10 @@
 {
   "mcpServers": {
     "cems": {
-      "url": "https://cems.yourcompany.com/mcp/v1",
+      "type": "http",
+      "url": "https://mcp-cems.chocksy.com/mcp",
       "headers": {
-        "Authorization": "Bearer cems_usr_your_api_key",
+        "Authorization": "Bearer cems_ak_your_api_key",
         "X-Team-ID": "your-project-team"
       }
     }

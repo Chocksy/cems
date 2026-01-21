@@ -165,6 +165,7 @@ def add(ctx: click.Context, content: str, scope: str, category: str, tags: tuple
 @click.option("--no-graph", is_flag=True, help="Disable graph traversal")
 @click.option("--no-synthesis", is_flag=True, help="Disable LLM query expansion")
 @click.option("--raw", is_flag=True, help="Debug mode: bypass filtering to see all results")
+@click.option("--verbose", "-v", is_flag=True, help="Show full content without truncation")
 @click.pass_context
 def search(
     ctx: click.Context,
@@ -175,6 +176,7 @@ def search(
     no_graph: bool,
     no_synthesis: bool,
     raw: bool,
+    verbose: bool,
 ) -> None:
     """Search memories using unified retrieval pipeline.
 
@@ -214,9 +216,14 @@ def search(
 
             for r in results:
                 content = r.get("content", r.get("memory", ""))
+                # Show full content if verbose, otherwise truncate to 120 chars (up from 80)
+                if verbose:
+                    display_content = content
+                else:
+                    display_content = content[:120] + "..." if len(content) > 120 else content
                 table.add_row(
                     (r.get("memory_id") or r.get("id", "?"))[:12],
-                    content[:80] + "..." if len(content) > 80 else content,
+                    display_content,
                     f"{r.get('score', 0):.3f}",
                     r.get("scope", "?"),
                 )
