@@ -28,9 +28,9 @@ OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
 # Model mapping for OpenRouter (provider/model format)
 OPENROUTER_MODELS = {
-    # Default models - using Grok for speed
-    "default": "x-ai/grok-4.1-fast",
-    "fast": "x-ai/grok-4.1-fast",
+    # Default models - using Gemma 3 4B for speed (2.83s vs 11s for Grok via OpenRouter)
+    "default": "google/gemma-3-4b-it:free",
+    "fast": "google/gemma-3-4b-it:free",
     "smart": "anthropic/claude-sonnet-4",
     # Explicit mappings from common model names
     "gpt-4o-mini": "openai/gpt-4o-mini",
