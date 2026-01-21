@@ -270,9 +270,9 @@ app.post("/mcp", async (req: Request, res: Response) => {
       "session_analyze",
       {
         title: "Analyze Session",
-        description: "Analyze a session transcript and extract learnings to remember",
+        description: "Analyze a raw session transcript and extract learnings to remember. IMPORTANT: Pass the actual conversation text (USER/ASSISTANT messages), NOT a summary. The system uses an LLM to extract patterns from raw dialogue.",
         inputSchema: {
-          transcript: z.string().describe("The session transcript"),
+          transcript: z.string().describe("The RAW session transcript with USER and ASSISTANT messages. Do NOT summarize - pass the actual conversation verbatim. Example format: 'USER: How do I fix X?\\nASSISTANT: You can fix it by...'"),
           session_id: z.string().optional().describe("Optional session identifier"),
           working_dir: z.string().optional().describe("Optional working directory for context"),
         },

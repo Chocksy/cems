@@ -320,6 +320,12 @@ def create_http_app():
             working_dir = body.get("working_dir")
             tool_summary = body.get("tool_summary")
 
+            # Debug logging to help diagnose transcript issues
+            transcript_preview = transcript[:500] if isinstance(transcript, str) else str(transcript)[:500]
+            transcript_len = len(transcript) if isinstance(transcript, str) else len(str(transcript))
+            logger.info(f"session_analyze called: session_id={session_id}, transcript_len={transcript_len}")
+            logger.debug(f"session_analyze transcript preview: {transcript_preview}...")
+
             # Run analysis (synchronous since haiku is fast)
             learnings = extract_session_learnings(
                 transcript=transcript,
