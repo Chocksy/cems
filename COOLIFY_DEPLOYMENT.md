@@ -19,6 +19,7 @@ After the app is created, set these environment variables (get UUID from app lis
 
 ```bash
 # Replace NEW_APP_UUID with the UUID from the newly created app
+# Replace placeholder values with your actual secrets (NEVER commit real secrets!)
 coolify app env set NEW_APP_UUID CEMS_DATABASE_URL="postgres://cems:YOUR_DB_PASSWORD@YOUR_DB_HOST:5432/cems"
 coolify app env set NEW_APP_UUID CEMS_QDRANT_URL="http://cems-qdrant:6333"
 coolify app env set NEW_APP_UUID OPENROUTER_API_KEY="sk-or-YOUR-API-KEY"
@@ -56,12 +57,12 @@ curl https://cems.chocksy.com/admin \
 
 ## Environment Variables Reference
 
-| Variable | Value |
-|----------|-------|
-| `CEMS_DATABASE_URL` | `postgres://cems:YOUR_DB_PASSWORD@YOUR_DB_HOST:5432/cems` |
+| Variable | Description |
+|----------|-------------|
+| `CEMS_DATABASE_URL` | PostgreSQL connection string (get from Coolify managed DB) |
 | `CEMS_QDRANT_URL` | `http://cems-qdrant:6333` |
-| `OPENROUTER_API_KEY` | `sk-or-YOUR-API-KEY` |
-| `CEMS_ADMIN_KEY` | `YOUR_ADMIN_KEY` |
+| `OPENROUTER_API_KEY` | Your OpenRouter API key (from openrouter.ai/keys) |
+| `CEMS_ADMIN_KEY` | Random admin key for API authentication |
 
 ## Domains
 
