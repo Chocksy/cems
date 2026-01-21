@@ -1,5 +1,8 @@
 FROM node:20-slim
 
+# Install curl for healthchecks (Coolify requires it)
+RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 
 # Install all dependencies (including dev for build)
