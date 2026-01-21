@@ -75,7 +75,7 @@ class CEMSConfig(BaseSettings):
     #
     # Model names use OpenRouter format: provider/model
     mem0_model: str = Field(
-        default="google/gemma-3-4b-it:free",
+        default="openai/gpt-4o-mini",
         description="Model for Mem0 fact extraction (OpenRouter format)",
     )
     embedding_model: str = Field(
@@ -83,7 +83,7 @@ class CEMSConfig(BaseSettings):
         description="Embedding model (via OpenRouter)",
     )
     llm_model: str = Field(
-        default="google/gemma-3-4b-it:free",
+        default="openai/gpt-4o-mini",
         description="Model for maintenance ops (OpenRouter format: provider/model)",
     )
 

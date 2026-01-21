@@ -233,6 +233,12 @@ install_cursor() {
                 echo "Installing CEMS hooks..."
                 cp -r cursor-setup/hooks "$CURSOR_DIR/"
                 cp cursor-setup/hooks.json "$CURSOR_HOOKS_JSON"
+                
+                # Install CEMS skills
+                mkdir -p "$CURSOR_DIR/skills/cems"
+                cp -r skills/* "$CURSOR_DIR/skills/cems/"
+                echo "  Copied CEMS skills to ~/.cursor/skills/cems/"
+                
                 echo -e "${GREEN}Cursor: Fresh install complete${NC}"
                 INSTALLED_CURSOR=true
                 ;;
@@ -246,6 +252,11 @@ install_cursor() {
                 # Copy hook scripts
                 cp cursor-setup/hooks/cems_*.py "$CURSOR_DIR/hooks/"
                 echo "  Copied CEMS hooks to ~/.cursor/hooks/"
+
+                # Install CEMS skills
+                mkdir -p "$CURSOR_DIR/skills/cems"
+                cp -r skills/* "$CURSOR_DIR/skills/cems/"
+                echo "  Copied CEMS skills to ~/.cursor/skills/cems/"
 
                 echo
                 echo -e "${YELLOW}IMPORTANT: You need to manually merge hooks into ~/.cursor/hooks.json${NC}"
@@ -270,6 +281,12 @@ install_cursor() {
         mkdir -p "$CURSOR_DIR/hooks"
         cp -r cursor-setup/hooks "$CURSOR_DIR/"
         cp cursor-setup/hooks.json "$CURSOR_HOOKS_JSON"
+        
+        # Install CEMS skills
+        mkdir -p "$CURSOR_DIR/skills/cems"
+        cp -r skills/* "$CURSOR_DIR/skills/cems/"
+        echo "  Copied CEMS skills to ~/.cursor/skills/cems/"
+        
         echo -e "${GREEN}Cursor: Fresh install complete${NC}"
         INSTALLED_CURSOR=true
     fi

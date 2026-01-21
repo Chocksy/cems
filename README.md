@@ -141,41 +141,47 @@ cems list
 
 For team usage, deploy CEMS as a server:
 
-### Docker Compose
+### Quick Start
 
-```bash
-cd deploy
-cp .env.example .env
-# Edit .env with your API keys
-docker-compose up -d
-```
+1. **Clone and configure:**
+   ```bash
+   git clone https://github.com/yourusername/cems && cd cems
+   cp .env.example .env
+   # Edit .env with your OPENROUTER_API_KEY and CEMS_ADMIN_KEY
+   ```
 
-Services:
-- **cems-server**: MCP server on port 8765
+2. **Start services:**
+   ```bash
+   docker-compose up -d
+   ```
+
+3. **Create your first user:**
+   ```bash
+   source .env
+   curl -X POST http://localhost:8765/admin/users \
+     -H "Authorization: Bearer $CEMS_ADMIN_KEY" \
+     -H "Content-Type: application/json" \
+     -d '{"username": "yourname"}'
+   # Returns: {"api_key": "cems_usr_abc123..."}
+   ```
+
+4. **Configure your IDE** (see Quick Start section above)
+
+### Services
+
+- **cems-server**: Python API server on port 8765 (internal)
+- **cems-mcp**: Express MCP wrapper on port 8766 (public-facing)
 - **cems-qdrant**: Vector database on port 6333
 - **cems-postgres**: Metadata storage on port 5432
 
-### Server Configuration
+### Environment Variables
 
-```bash
-# Required
-export OPENROUTER_API_KEY="sk-or-your-key"
-export CEMS_DATABASE_URL="postgresql://..."
+Required variables (set in `.env`):
+- `OPENROUTER_API_KEY` - Get from https://openrouter.ai/keys
+- `CEMS_ADMIN_KEY` - Generate with: `openssl rand -hex 32`
 
-# Optional
-export CEMS_ADMIN_KEY="admin-key-for-user-management"
-export CEMS_QDRANT_URL="http://cems-qdrant:6333"
-```
-
-### Creating User API Keys
-
-```bash
-curl -X POST http://localhost:8765/admin/users \
-  -H "Authorization: Bearer $CEMS_ADMIN_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"username": "colleague-name"}'
-# Returns: {"api_key": "cems_usr_abc123..."}
-```
+Optional:
+- `POSTGRES_PASSWORD` - Default: `cems_secure_password` (change in production!)
 
 ## Features
 

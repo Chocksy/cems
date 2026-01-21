@@ -4,10 +4,10 @@
 
 ### 1. Create Docker Compose App in Coolify UI
 
-1. Go to Coolify UI → Project "cems" (fsgsks8go4c4k0w8ko8844ok)
+1. Go to Coolify UI → Create or select your project
 2. Click **"New"** → **"Docker Compose"**
 3. Configure:
-   - **GitHub Repository**: `chocksy/cems`
+   - **GitHub Repository**: `your-org/cems` (or your fork)
    - **Branch**: `main`
    - **Docker Compose File Path**: `docker-compose.coolify.yml`
    - **Name**: `cems-stack` (or any name you prefer)
@@ -32,8 +32,8 @@ After deployment, configure domains in the Coolify UI:
 
 1. Go to the app → **"Domains"** tab
 2. Add domains:
-   - `cems.chocksy.com` → Route to `cems-server` service (port 8765)
-   - `mcp-cems.chocksy.com` → Route to `cems-mcp` service (port 8766)
+   - `cems.yourdomain.com` → Route to `cems-server` service (port 8765)
+   - `mcp-cems.yourdomain.com` → Route to `cems-mcp` service (port 8766)
 
 **Note**: The Traefik labels in `docker-compose.coolify.yml` should handle routing automatically, but you may need to configure domains in Coolify UI as well.
 
@@ -45,13 +45,13 @@ Click **"Deploy"** in the Coolify UI.
 
 ```bash
 # Test Python API
-curl https://cems.chocksy.com/health
+curl https://cems.yourdomain.com/health
 
 # Test Express MCP wrapper
-curl https://mcp-cems.chocksy.com/health
+curl https://mcp-cems.yourdomain.com/health
 
 # Test admin API
-curl https://cems.chocksy.com/admin \
+curl https://cems.yourdomain.com/admin \
   -H "Authorization: Bearer YOUR_ADMIN_KEY"
 ```
 
@@ -66,9 +66,9 @@ curl https://cems.chocksy.com/admin \
 
 ## Domains
 
-- **cems.chocksy.com** → Python REST API (admin + hooks + memory API)
-- **mcp-cems.chocksy.com** → Express MCP wrapper (Cursor MCP protocol)
+- **cems.yourdomain.com** → Python REST API (admin + hooks + memory API)
+- **mcp-cems.yourdomain.com** → Express MCP wrapper (Cursor MCP protocol)
 
 ## Backup
 
-PostgreSQL backup created at: `~/cems_backup_20260121.sql` on Hetzner server
+Set up automated backups for PostgreSQL and Qdrant volumes according to your infrastructure preferences.

@@ -88,6 +88,108 @@ Add:
 }
 ```
 
+## VS Code Setup
+
+VS Code doesn't have built-in MCP support, but you can use CEMS via MCP-compatible extensions:
+
+### Option 1: Cline Extension
+
+1. Install the [Cline extension](https://marketplace.visualstudio.com/items?itemName=clinyong.vscode-cline)
+2. Configure CEMS in your VS Code settings (`.vscode/settings.json` or user settings):
+
+```json
+{
+  "cline.mcpServers": {
+    "cems": {
+      "type": "http",
+      "url": "https://cems.yourcompany.com/mcp",
+      "headers": {
+        "Authorization": "Bearer cems_usr_your_api_key",
+        "X-Team-ID": "your-team"
+      }
+    }
+  }
+}
+```
+
+### Option 2: Continue Extension
+
+1. Install the [Continue extension](https://marketplace.visualstudio.com/items?itemName=Continue.continue)
+2. Add CEMS to your Continue config (usually `~/.continue/config.json`):
+
+```json
+{
+  "mcpServers": {
+    "cems": {
+      "type": "http",
+      "url": "https://cems.yourcompany.com/mcp",
+      "headers": {
+        "Authorization": "Bearer cems_usr_your_api_key",
+        "X-Team-ID": "your-team"
+      }
+    }
+  }
+}
+```
+
+**Note**: VS Code extensions may have different MCP support levels. Check extension documentation for the latest configuration format.
+
+## Configure AI Rules (Important!)
+
+Having CEMS installed is not enough - you need to **tell your AI to use it**. Add rules to your IDE so the AI proactively searches memory:
+
+### For Cursor Users
+
+Create or edit `.cursor/rules/cems.md` in your project (or add to your global Cursor rules):
+
+```markdown
+# CEMS Memory Integration
+
+IMPORTANT: Use CEMS MCP tools to search memory FIRST before starting any task.
+
+## When to Search Memory
+
+- Before coding: Search for relevant patterns, conventions, preferences
+- Before debugging: Search for similar issues and solutions  
+- After learning something: Store it with `memory_add` for future reference
+- For team knowledge: Use `memory_add` with scope="shared"
+
+## Example Queries
+
+- "authentication patterns"
+- "database conventions"
+- "testing preferences"
+- "API error handling"
+
+Always check memory when:
+1. Starting a new feature - search for architecture patterns
+2. Debugging - search for similar error patterns
+3. Code review - search for team conventions
+4. Uncertain about approach - search for past decisions
+```
+
+### For Claude Code Users
+
+Create or edit `CLAUDE.md` in your project root:
+
+```markdown
+# CEMS Memory System
+
+This project uses CEMS for persistent memory. Use these MCP tools:
+
+- `memory_search` - Search before starting any task
+- `memory_add` - Store learnings and decisions
+- `memory_forget` - Remove outdated information
+
+Always check memory first when:
+- Starting a new task
+- Debugging an issue
+- Making architecture decisions
+- Unsure about conventions
+```
+
+**Why this matters**: Without explicit instructions, the AI won't automatically use CEMS. These rules ensure your AI assistant leverages your team's collective memory.
+
 ## Using CEMS
 
 ### Basic Commands
