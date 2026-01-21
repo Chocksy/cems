@@ -370,7 +370,84 @@ LEARNING_TYPES = [
     "USER_PREFERENCE",   # User's stated preferences
     "ERROR_FIX",         # How errors were resolved
     "DECISION",          # Architectural/design decisions made
+    "GUIDELINE",         # Rules, conventions, best practices
 ]
+
+
+def chunk_content(content: str, max_chunk_size: int = 6000) -> list[str]:
+    """Split long content intelligently for processing.
+
+    Strategy:
+    1. If under max_chunk_size, return as-is
+    2. Try splitting by markdown ## headers
+    3. If chunks still too large, split by paragraphs
+    4. Ensure reasonable chunk sizes
+
+    Args:
+        content: The content to chunk
+        max_chunk_size: Maximum characters per chunk
+
+    Returns:
+        List of content chunks
+    """
+    import re
+
+    if len(content) <= max_chunk_size:
+        return [content]
+
+    chunks = []
+
+    # Try splitting by markdown headers first (## or ###)
+    sections = re.split(r"\n(?=##?\s)", content)
+
+    current_chunk = ""
+    for section in sections:
+        # If adding this section would exceed limit, save current and start new
+        if len(current_chunk) + len(section) > max_chunk_size:
+            if current_chunk.strip():
+                chunks.append(current_chunk.strip())
+            # If single section is too large, split by paragraphs
+            if len(section) > max_chunk_size:
+                paragraphs = section.split("\n\n")
+                para_chunk = ""
+                for para in paragraphs:
+                    if len(para_chunk) + len(para) > max_chunk_size:
+                        if para_chunk.strip():
+                            chunks.append(para_chunk.strip())
+                        para_chunk = para + "\n\n"
+                    else:
+                        para_chunk += para + "\n\n"
+                current_chunk = para_chunk
+            else:
+                current_chunk = section
+        else:
+            current_chunk += section
+
+    # Don't forget the last chunk
+    if current_chunk.strip():
+        chunks.append(current_chunk.strip())
+
+    return chunks if chunks else [content[:max_chunk_size]]
+
+
+def _get_size_guidance(input_size: int) -> str:
+    """Get extraction guidance based on input size."""
+    if input_size > 10000:
+        return (
+            f"This is a LARGE document ({input_size:,} chars). "
+            "Extract ALL distinct learnings, guidelines, rules, and conventions. "
+            "Expect 15-50+ items. Each rule or guideline should be a separate learning."
+        )
+    elif input_size > 3000:
+        return (
+            f"This is a medium-sized input ({input_size:,} chars). "
+            "Extract all significant learnings - expect 5-15 items."
+        )
+    else:
+        return (
+            f"This is a short input ({input_size:,} chars). "
+            "Extract the key learnings - expect 1-5 items."
+        )
 
 
 def extract_session_learnings(
@@ -420,7 +497,11 @@ def extract_session_learnings(
 
     context_section = "\n".join(context_parts) if context_parts else "No additional context."
 
-    system_prompt = """You are a Learning Extractor. Analyze ANY input (transcripts, summaries, notes, or descriptions) and extract useful learnings to store for future reference.
+    # Get adaptive guidance based on input size
+    input_size = len(transcript_text)
+    size_guidance = _get_size_guidance(input_size)
+
+    system_prompt = """You are a Learning Extractor. Analyze ANY input (transcripts, summaries, notes, documents, or guidelines) and extract useful learnings to store for future reference.
 
 ## Learning Types
 
@@ -429,16 +510,17 @@ def extract_session_learnings(
 3. **USER_PREFERENCE** - User preferences about tools, styles, workflows, naming conventions
 4. **ERROR_FIX** - How specific errors were diagnosed and fixed
 5. **DECISION** - Design/architectural decisions with their reasoning
+6. **GUIDELINE** - Rules, conventions, best practices, or standards to follow
 
 ## Output Format
 
 Return a JSON array. Each learning needs:
-- "type": One of the 5 types above
-- "content": Clear, actionable learning (1-3 sentences)
+- "type": One of the 6 types above
+- "content": Clear, actionable learning (can be 1-3 sentences for simple items, or longer for detailed guidelines)
 - "confidence": 0.0-1.0 (how useful is this to remember)
-- "category": Topic category (e.g., "docker", "deployment", "git", "python", "preferences")
+- "category": Topic category (e.g., "docker", "deployment", "git", "python", "testing", "rspec", "preferences")
 
-Extract ALL learnings you find - be generous, not restrictive. Even partial or uncertain learnings are valuable.
+Extract ALL learnings you find - be generous, not restrictive. For documents with many rules/guidelines, extract EACH ONE as a separate item.
 
 If the input is a summary that mentions learnings, extract each one as a separate item.
 If truly nothing useful to extract, return: []
@@ -453,39 +535,53 @@ Example output:
     "category": "python"
   },
   {
-    "type": "USER_PREFERENCE",
-    "content": "User prefers using uv for Python package management instead of pip.",
-    "confidence": 0.8,
-    "category": "preferences"
+    "type": "GUIDELINE",
+    "content": "In RSpec tests, ALWAYS use 'its', 'its_block', 'its_call' helpers instead of standalone 'it' blocks. Never use explicit expect() - prefer is_expected.to instead.",
+    "confidence": 1.0,
+    "category": "rspec"
   }
 ]
 ```"""
 
-    # Truncate transcript if too long (keep last 8000 chars for context window)
-    max_transcript_len = 8000
-    if len(transcript_text) > max_transcript_len:
-        transcript_text = "...[truncated]...\n" + transcript_text[-max_transcript_len:]
+    # For very long content, process in chunks
+    if input_size > 12000:
+        return _extract_from_chunks(
+            transcript_text,
+            context_section,
+            system_prompt,
+            model,
+        )
 
     prompt = f"""Analyze this input and extract ALL learnings worth remembering.
 
 ## Context
 {context_section}
 
-## Input (transcript, summary, or notes)
+## Scale Guidance
+{size_guidance}
+
+## Input (transcript, summary, notes, or document)
 {transcript_text}
 
 ## Instructions
-Extract every useful learning from this input. The input might be a raw transcript, a summary, or notes - extract learnings from whatever format is provided. Return ONLY a JSON array (no markdown, no explanation).
+Extract every useful learning from this input. The input might be a raw transcript, a summary, notes, or a full document with guidelines - extract learnings from whatever format is provided.
+
+For documents with rules/guidelines/conventions, extract EACH distinct rule as a separate learning item.
+
+Return ONLY a JSON array (no markdown, no explanation).
 If truly nothing useful, return: []"""
 
     try:
         client = get_client()
+        # Use more tokens for larger inputs
+        max_tokens = 4000 if input_size > 5000 else 2000
+
         response = client.complete(
             prompt=prompt,
             system=system_prompt,
-            max_tokens=2000,
+            max_tokens=max_tokens,
             temperature=0.3,  # Slightly higher for more creative extraction
-            model=model or "x-ai/grok-4.1-fast",  # Fast Grok model
+            model=model or "openai/gpt-4o-mini",  # Fast, reliable, supports system prompts
         )
 
         # Parse JSON response
@@ -500,6 +596,106 @@ If truly nothing useful, return: []"""
     except Exception as e:
         logger.error(f"Failed to extract session learnings: {e}")
         return []
+
+
+def _extract_from_chunks(
+    content: str,
+    context_section: str,
+    system_prompt: str,
+    model: str | None = None,
+) -> list[dict]:
+    """Extract learnings from content by processing in chunks.
+
+    Used for very long documents (> 12k chars) that need to be split.
+
+    Args:
+        content: The full content to process
+        context_section: Context info to include in each chunk prompt
+        system_prompt: The system prompt to use
+        model: Optional model override
+
+    Returns:
+        Aggregated and deduplicated list of learnings
+    """
+    chunks = chunk_content(content, max_chunk_size=6000)
+    all_learnings = []
+
+    logger.info(f"Processing content in {len(chunks)} chunks")
+
+    for i, chunk in enumerate(chunks):
+        chunk_size = len(chunk)
+        chunk_guidance = _get_size_guidance(chunk_size)
+
+        prompt = f"""Analyze this section (part {i + 1} of {len(chunks)}) and extract ALL learnings.
+
+## Context
+{context_section}
+
+## Scale Guidance
+{chunk_guidance}
+
+## Content Section {i + 1}/{len(chunks)}
+{chunk}
+
+## Instructions
+Extract every useful learning from this section. For documents with rules/guidelines, extract EACH distinct rule as a separate item.
+
+Return ONLY a JSON array (no markdown, no explanation).
+If nothing useful in this section, return: []"""
+
+        try:
+            client = get_client()
+            response = client.complete(
+                prompt=prompt,
+                system=system_prompt,
+                max_tokens=4000,
+                temperature=0.3,
+                model=model or "meta-llama/llama-3.1-8b-instruct",
+            )
+
+            chunk_learnings = _parse_learnings_response(response)
+            chunk_learnings = [l for l in chunk_learnings if l.get("confidence", 0) >= 0.3]
+
+            logger.info(f"Chunk {i + 1}/{len(chunks)}: extracted {len(chunk_learnings)} learnings")
+            all_learnings.extend(chunk_learnings)
+
+        except Exception as e:
+            logger.warning(f"Failed to extract from chunk {i + 1}: {e}")
+            continue
+
+    # Deduplicate learnings by content similarity
+    deduplicated = _deduplicate_learnings(all_learnings)
+    logger.info(f"Total learnings after deduplication: {len(deduplicated)}")
+
+    return deduplicated
+
+
+def _deduplicate_learnings(learnings: list[dict]) -> list[dict]:
+    """Remove duplicate learnings based on content similarity.
+
+    Args:
+        learnings: List of learning dicts
+
+    Returns:
+        Deduplicated list
+    """
+    if not learnings:
+        return []
+
+    seen_content = set()
+    unique = []
+
+    for learning in learnings:
+        # Normalize content for comparison
+        content = learning.get("content", "").lower().strip()
+        # Use first 100 chars as fingerprint to catch near-duplicates
+        fingerprint = content[:100]
+
+        if fingerprint not in seen_content:
+            seen_content.add(fingerprint)
+            unique.append(learning)
+
+    return unique
 
 
 def _format_transcript(messages: list[dict]) -> str:

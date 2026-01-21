@@ -410,11 +410,14 @@ def create_http_app():
                     if session_id != "unknown":
                         formatted_content += f" (session: {session_id[:8]})"
 
+                    # Use infer=False since learnings are already extracted by LLM
+                    # This bypasses Mem0's fact extraction (much faster, no extra LLM calls)
                     result = memory.add(
                         content=formatted_content,
                         scope="personal",
                         category=category,
                         tags=["session-learning", learning_type.lower()],
+                        infer=False,
                     )
 
                     # Extract memory ID
