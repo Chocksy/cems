@@ -98,22 +98,58 @@ def test_memory_add_with_llm() -> tuple[bool, str]:
     """Test POST /api/memory/add with infer=True (LLM fact extraction).
     
     This is the critical test that validates the model supports system prompts.
+    Creates a unique memory, verifies it, then deletes it for idempotent testing.
     """
+    import time
+    timestamp = int(time.time())
+    unique_content = f"LLM test memory created at {timestamp} - should be deleted after test"
+    
     try:
+        # Step 1: Add memory with LLM inference
         result = call_api("POST", "/api/memory/add", {
-            "content": "User prefers Python 3.12+ with strict type hints for backend development",
-            "category": "preferences",
+            "content": unique_content,
+            "category": "test",
             "infer": True,  # Use LLM - this will fail if model doesn't support system prompts
         })
         
-        if result.get("success"):
-            # Check if memory was actually created
-            mem_result = result.get("result", {})
-            if mem_result.get("results"):
-                memory_id = mem_result["results"][0].get("id", "unknown")
-                return True, f"memory created: {memory_id[:12]}..."
-            return False, "success=True but no memory ID returned"
-        return False, f"failed: {result.get('error', 'unknown error')}"
+        if not result.get("success"):
+            return False, f"add failed: {result.get('error', 'unknown error')}"
+        
+        # Check memory operation result
+        mem_result = result.get("result", {})
+        results = mem_result.get("results", [])
+        
+        if not results:
+            return False, "success=True but empty results"
+        
+        first_result = results[0]
+        event = first_result.get("event", "UNKNOWN")
+        memory_id = first_result.get("id", "")
+        
+        # Valid LLM events: ADD (new), UPDATE (modified), DELETE (consolidated/removed)
+        # All these prove the LLM is working - it's making decisions about memory
+        if event not in ("ADD", "UPDATE", "DELETE"):
+            return False, f"unexpected event: {event} (expected ADD, UPDATE, or DELETE)"
+        
+        # For DELETE events, Mem0 consolidated/removed - LLM worked but no cleanup needed
+        if event == "DELETE":
+            return True, f"LLM consolidated memory (event=DELETE)"
+        
+        if not memory_id:
+            return False, f"event={event} but no memory_id returned"
+        
+        # Step 2: Clean up - forget the test memory
+        forget_result = call_api("POST", "/api/memory/forget", {
+            "memory_id": memory_id,
+            "hard_delete": True,  # Actually delete, not just archive
+        })
+        
+        if forget_result.get("success"):
+            return True, f"created & cleaned up: {memory_id[:12]}..."
+        else:
+            # Memory was created but cleanup failed - still pass but note it
+            return True, f"created {memory_id[:12]}... (cleanup failed)"
+            
     except Exception as e:
         error_str = str(e)
         # Check for the specific Gemma error

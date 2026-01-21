@@ -108,9 +108,8 @@ class SummarizationJob:
             category: The category name
             memory_ids: Memory IDs in this category
         """
-        import sqlite3
-
         from cems.llm import summarize_memories
+        from cems.models import CategorySummary, MemoryScope
 
         # Gather memory contents
         contents = []
@@ -127,37 +126,28 @@ class SummarizationJob:
 
         # Generate LLM summary (uses OpenRouter via llm.py)
         logger.info(f"Generating LLM summary for category '{category}' with {len(contents)} memories")
-        summary = summarize_memories(
+        summary_text = summarize_memories(
             memories=contents,
             category=category,
             model=self.config.llm_model,  # OpenRouter format: provider/model
         )
 
-        # Store in database
-        conn = sqlite3.connect(self.config.metadata_db_path)
-        try:
-            conn.execute(
-                """
-                INSERT OR REPLACE INTO category_summaries
-                (user_id, category, scope, summary, item_count, last_updated, version)
-                VALUES (?, ?, 'personal', ?, ?, ?, COALESCE(
-                    (SELECT version + 1 FROM category_summaries
-                     WHERE user_id = ? AND category = ? AND scope = 'personal'), 1
-                ))
-                """,
-                (
-                    self.config.user_id,
-                    category,
-                    summary,
-                    len(contents),
-                    datetime.now(UTC).isoformat(),
-                    self.config.user_id,
-                    category,
-                ),
-            )
-            conn.commit()
-        finally:
-            conn.close()
+        # Get existing summary version if any
+        existing = self.memory.metadata_store.get_category_summary(
+            self.config.user_id, category, MemoryScope.PERSONAL
+        )
+        version = (existing.version + 1) if existing else 1
+
+        # Store in database via PostgresMetadataStore
+        summary_obj = CategorySummary(
+            category=category,
+            scope=MemoryScope.PERSONAL,
+            summary=summary_text,
+            item_count=len(contents),
+            last_updated=datetime.now(UTC),
+            version=version,
+        )
+        self.memory.metadata_store.save_category_summary(summary_obj)
 
         logger.info(f"Created LLM summary for category {category} with {len(contents)} items")
 

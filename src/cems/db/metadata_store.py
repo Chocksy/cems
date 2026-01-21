@@ -273,6 +273,20 @@ class PostgresMetadataStore:
             ).scalars().all()
             return list(rows)
 
+    def get_old_memories(self, user_id: str, days: int) -> list[str]:
+        """Get memories older than N days."""
+        from datetime import timedelta
+
+        cutoff = datetime.now(UTC) - timedelta(days=days)
+        with self._db.session() as session:
+            rows = session.execute(
+                select(PgMemoryMetadata.memory_id).where(
+                    PgMemoryMetadata.created_at < cutoff,
+                    PgMemoryMetadata.archived == False,  # noqa: E712
+                )
+            ).scalars().all()
+            return list(rows)
+
     def get_all_categories(
         self, user_id: str, scope: MemoryScope | None = None
     ) -> list[str]:

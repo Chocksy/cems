@@ -1,26 +1,10 @@
-"""Tests for CEMS models and metadata store."""
+"""Tests for CEMS Pydantic models."""
 
-import tempfile
-from datetime import datetime
-from pathlib import Path
+from datetime import datetime, UTC
 
 import pytest
 
-from cems.models import MemoryMetadata, MemoryScope, MetadataStore
-
-
-@pytest.fixture
-def temp_db():
-    """Create a temporary database for testing."""
-    with tempfile.TemporaryDirectory() as tmpdir:
-        db_path = Path(tmpdir) / "test_metadata.db"
-        yield db_path
-
-
-@pytest.fixture
-def metadata_store(temp_db):
-    """Create a metadata store for testing."""
-    return MetadataStore(temp_db)
+from cems.models import MemoryMetadata, MemoryScope, CategorySummary, PinCategory
 
 
 class TestMemoryMetadata:
@@ -54,170 +38,84 @@ class TestMemoryMetadata:
 
         assert metadata.tags == ["python", "backend"]
 
-
-class TestMetadataStore:
-    """Tests for MetadataStore."""
-
-    def test_save_and_get_metadata(self, metadata_store):
-        """Test saving and retrieving metadata."""
+    def test_metadata_defaults(self):
+        """Test default values are set correctly."""
         metadata = MemoryMetadata(
-            memory_id="mem-001",
+            memory_id="test-defaults",
             user_id="user-1",
             scope=MemoryScope.PERSONAL,
+        )
+
+        assert metadata.category == "general"
+        assert metadata.access_count == 0
+        assert metadata.archived is False
+        assert metadata.priority == 1.0
+        assert metadata.pinned is False
+        assert metadata.pin_reason is None
+        assert metadata.expires_at is None
+        assert isinstance(metadata.created_at, datetime)
+        assert isinstance(metadata.updated_at, datetime)
+        assert isinstance(metadata.last_accessed, datetime)
+
+    def test_pinned_metadata(self):
+        """Test pinned memory metadata."""
+        metadata = MemoryMetadata(
+            memory_id="pinned-123",
+            user_id="user-1",
+            scope=MemoryScope.PERSONAL,
+            pinned=True,
+            pin_reason="Core guideline",
+            pin_category="guideline",
+        )
+
+        assert metadata.pinned is True
+        assert metadata.pin_reason == "Core guideline"
+        assert metadata.pin_category == "guideline"
+
+
+class TestCategorySummary:
+    """Tests for CategorySummary model."""
+
+    def test_create_summary(self):
+        """Test creating a category summary."""
+        summary = CategorySummary(
+            category="preferences",
+            scope=MemoryScope.PERSONAL,
+            summary="User prefers Python with type hints.",
+            item_count=5,
+            last_updated=datetime.now(UTC),
+        )
+
+        assert summary.category == "preferences"
+        assert summary.scope == MemoryScope.PERSONAL
+        assert summary.summary == "User prefers Python with type hints."
+        assert summary.item_count == 5
+        assert summary.version == 1
+
+    def test_summary_version(self):
+        """Test summary versioning."""
+        summary = CategorySummary(
             category="decisions",
+            scope=MemoryScope.SHARED,
+            summary="Team uses PostgreSQL.",
+            item_count=3,
+            last_updated=datetime.now(UTC),
+            version=5,
         )
 
-        metadata_store.save_metadata(metadata)
-        retrieved = metadata_store.get_metadata("mem-001")
+        assert summary.version == 5
 
-        assert retrieved is not None
-        assert retrieved.memory_id == "mem-001"
-        assert retrieved.user_id == "user-1"
-        assert retrieved.category == "decisions"
 
-    def test_record_access(self, metadata_store):
-        """Test recording memory access."""
-        metadata = MemoryMetadata(
-            memory_id="mem-002",
-            user_id="user-1",
-            scope=MemoryScope.PERSONAL,
-        )
-        metadata_store.save_metadata(metadata)
+class TestEnums:
+    """Tests for enum types."""
 
-        # Record access
-        metadata_store.record_access("mem-002")
+    def test_memory_scope_values(self):
+        """Test MemoryScope enum values."""
+        assert MemoryScope.PERSONAL.value == "personal"
+        assert MemoryScope.SHARED.value == "shared"
 
-        retrieved = metadata_store.get_metadata("mem-002")
-        assert retrieved is not None
-        assert retrieved.access_count == 1
-
-        # Record another access
-        metadata_store.record_access("mem-002")
-        retrieved = metadata_store.get_metadata("mem-002")
-        assert retrieved.access_count == 2
-
-    def test_get_hot_memories(self, metadata_store):
-        """Test finding frequently accessed memories."""
-        # Create some memories
-        for i in range(5):
-            metadata = MemoryMetadata(
-                memory_id=f"mem-{i:03d}",
-                user_id="user-1",
-                scope=MemoryScope.PERSONAL,
-            )
-            metadata_store.save_metadata(metadata)
-
-        # Access some memories multiple times
-        for _ in range(6):
-            metadata_store.record_access("mem-001")
-            metadata_store.record_access("mem-002")
-
-        # Get hot memories (threshold 5)
-        hot = metadata_store.get_hot_memories("user-1", threshold=5)
-        assert len(hot) == 2
-        assert "mem-001" in hot
-        assert "mem-002" in hot
-
-    def test_archive_memory(self, metadata_store):
-        """Test archiving a memory."""
-        metadata = MemoryMetadata(
-            memory_id="mem-archive",
-            user_id="user-1",
-            scope=MemoryScope.PERSONAL,
-        )
-        metadata_store.save_metadata(metadata)
-
-        metadata_store.archive_memory("mem-archive")
-
-        retrieved = metadata_store.get_metadata("mem-archive")
-        assert retrieved is not None
-        assert retrieved.archived is True
-
-    def test_increase_priority(self, metadata_store):
-        """Test increasing memory priority."""
-        metadata = MemoryMetadata(
-            memory_id="mem-priority",
-            user_id="user-1",
-            scope=MemoryScope.PERSONAL,
-            priority=1.0,
-        )
-        metadata_store.save_metadata(metadata)
-
-        metadata_store.increase_priority("mem-priority", boost=0.2)
-
-        retrieved = metadata_store.get_metadata("mem-priority")
-        assert retrieved is not None
-        assert retrieved.priority == 1.2
-
-    def test_delete_metadata(self, metadata_store):
-        """Test deleting metadata."""
-        metadata = MemoryMetadata(
-            memory_id="mem-delete",
-            user_id="user-1",
-            scope=MemoryScope.PERSONAL,
-        )
-        metadata_store.save_metadata(metadata)
-
-        metadata_store.delete_metadata("mem-delete")
-
-        retrieved = metadata_store.get_metadata("mem-delete")
-        assert retrieved is None
-
-    def test_log_maintenance(self, metadata_store):
-        """Test logging maintenance jobs."""
-        log_id = metadata_store.log_maintenance(
-            job_type="consolidation",
-            user_id="user-1",
-            status="started",
-        )
-
-        assert log_id > 0
-
-        metadata_store.update_maintenance_log(
-            log_id,
-            status="completed",
-            details='{"duplicates_merged": 5}',
-        )
-
-    def test_get_all_user_memories(self, metadata_store):
-        """Test getting all memories for a user."""
-        # Create memories for different users
-        for i in range(3):
-            metadata = MemoryMetadata(
-                memory_id=f"user1-mem-{i}",
-                user_id="user-1",
-                scope=MemoryScope.PERSONAL,
-            )
-            metadata_store.save_metadata(metadata)
-
-        for i in range(2):
-            metadata = MemoryMetadata(
-                memory_id=f"user2-mem-{i}",
-                user_id="user-2",
-                scope=MemoryScope.PERSONAL,
-            )
-            metadata_store.save_metadata(metadata)
-
-        user1_memories = metadata_store.get_all_user_memories("user-1")
-        assert len(user1_memories) == 3
-
-        user2_memories = metadata_store.get_all_user_memories("user-2")
-        assert len(user2_memories) == 2
-
-    def test_get_memories_by_category(self, metadata_store):
-        """Test getting memories by category."""
-        categories = ["preferences", "decisions", "preferences"]
-        for i, cat in enumerate(categories):
-            metadata = MemoryMetadata(
-                memory_id=f"cat-mem-{i}",
-                user_id="user-1",
-                scope=MemoryScope.PERSONAL,
-                category=cat,
-            )
-            metadata_store.save_metadata(metadata)
-
-        prefs = metadata_store.get_memories_by_category("user-1", "preferences")
-        assert len(prefs) == 2
-
-        decisions = metadata_store.get_memories_by_category("user-1", "decisions")
-        assert len(decisions) == 1
+    def test_pin_category_values(self):
+        """Test PinCategory enum values."""
+        assert PinCategory.GUIDELINE.value == "guideline"
+        assert PinCategory.CONVENTION.value == "convention"
+        assert PinCategory.ARCHITECTURE.value == "architecture"

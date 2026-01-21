@@ -202,11 +202,6 @@ class CEMSConfig(BaseSettings):
         """Path for Kuzu graph database."""
         return self.kuzu_path or (self.storage_dir / "graph")
 
-    @property
-    def metadata_db_path(self) -> Path:
-        """Path for metadata SQLite database."""
-        return self.storage_dir / "metadata.db"
-
     def ensure_dirs(self) -> None:
         """Ensure all required directories exist."""
         self.storage_dir.mkdir(parents=True, exist_ok=True)

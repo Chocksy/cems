@@ -12,11 +12,11 @@ from cems.config import CEMSConfig
 from cems.models import (
     MemoryMetadata,
     MemoryScope,
-    MetadataStore,
     SearchResult,
 )
 
 if TYPE_CHECKING:
+    from cems.db.metadata_store import PostgresMetadataStore
     from cems.graph import KuzuGraphStore
 
 
@@ -41,21 +41,20 @@ class CEMSMemory:
         mem0_config = self._build_mem0_config()
         self._memory = Memory.from_config(mem0_config)
 
-        # Initialize metadata store (PostgreSQL if configured, else SQLite)
-        if self.config.database_url:
-            from cems.db.database import is_database_initialized
-            from cems.db.metadata_store import PostgresMetadataStore
+        # Initialize metadata store (PostgreSQL only - Docker/server mode)
+        if not self.config.database_url:
+            raise ValueError(
+                "CEMS_DATABASE_URL is required. "
+                "CEMS runs in Docker/server mode only (no local SQLite mode)."
+            )
 
-            if is_database_initialized():
-                self._metadata = PostgresMetadataStore()
-            else:
-                # Fallback to SQLite if DB not initialized yet
-                self.config.ensure_dirs()
-                self._metadata = MetadataStore(self.config.metadata_db_path)
-        else:
-            # Local mode: use SQLite
-            self.config.ensure_dirs()
-            self._metadata = MetadataStore(self.config.metadata_db_path)
+        from cems.db.database import init_database, is_database_initialized
+        from cems.db.metadata_store import PostgresMetadataStore
+
+        # Initialize database if not already done (e.g., by server.py)
+        if not is_database_initialized():
+            init_database(self.config.database_url)
+        self._metadata = PostgresMetadataStore()
 
         # Initialize graph store (optional)
         self._graph: KuzuGraphStore | None = None
@@ -296,14 +295,8 @@ Return JSON: {"facts": ["specific actionable fact 1", "specific actionable fact 
         # Batch fetch all metadata in a single query
         memory_ids = [mem.get("id") for mem, _ in raw_results if mem.get("id")]
         metadata_map: dict[str, MemoryMetadata] = {}
-        if memory_ids and hasattr(self._metadata, "get_metadata_batch"):
+        if memory_ids:
             metadata_map = self._metadata.get_metadata_batch(memory_ids)
-        elif memory_ids:
-            # Fallback for SQLite store (no batch method)
-            for mid in memory_ids:
-                m = self._metadata.get_metadata(mid)
-                if m:
-                    metadata_map[mid] = m
 
         # Build results and collect IDs to record access
         access_ids: list[str] = []
@@ -329,12 +322,8 @@ Return JSON: {"facts": ["specific actionable fact 1", "specific actionable fact 
             )
 
         # Batch record access in a single query
-        if access_ids and hasattr(self._metadata, "record_access_batch"):
+        if access_ids:
             self._metadata.record_access_batch(access_ids)
-        elif access_ids:
-            # Fallback for SQLite store (no batch method)
-            for mid in access_ids:
-                self._metadata.record_access(mid)
 
         # Apply priority boost and time decay to scores
         now = datetime.now(UTC)
@@ -572,20 +561,10 @@ Return JSON: {"facts": ["specific actionable fact 1", "specific actionable fact 
         
         scope_enum = MemoryScope(scope) if scope else None
         
-        # Check if metadata store has the optimized method
-        if hasattr(self._metadata, "get_category_counts"):
-            return self._metadata.get_category_counts(self.config.user_id, scope_enum)
-        
-        # Fallback for SQLite store (uses get_all_categories which already has GROUP BY)
-        if hasattr(self._metadata, "get_all_categories"):
-            results = self._metadata.get_all_categories(self.config.user_id, scope_enum)
-            return {r["category"]: r["count"] for r in results}
-        
-        # Ultimate fallback - empty dict
-        return {}
+        return self._metadata.get_category_counts(self.config.user_id, scope_enum)
 
     @property
-    def metadata_store(self) -> MetadataStore:
+    def metadata_store(self) -> "PostgresMetadataStore":
         """Access the metadata store directly for maintenance operations."""
         return self._metadata
 
