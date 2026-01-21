@@ -1,14 +1,14 @@
 /**
  * Express.js MCP Transport Wrapper for CEMS
  *
- * This wrapper handles MCP transport (SSE) reliably while proxying
+ * This wrapper handles MCP Streamable HTTP transport while proxying
  * all tool calls to the Python REST API server.
  *
  * Key features:
- * - SSE transport with proper connection cleanup (Context7 pattern)
+ * - Streamable HTTP transport (MCP spec recommended, introduced March 2025)
  * - Heartbeat every 30 seconds to prevent proxy timeouts
  * - Proxies all MCP tool calls to Python REST API endpoints
- * - Handles authentication via Bearer token passthrough
+ * - Session-aware auth headers (updated on each request for token refresh)
  */
 
 import express, { Request, Response } from "express";
@@ -28,6 +28,9 @@ app.use(express.json());
 
 // Store active transports by session ID
 const transports: Record<string, StreamableHTTPServerTransport> = {};
+
+// Store session auth headers (updated on each request to support token refresh)
+const sessionHeaders: Record<string, { authorization?: string; teamId?: string }> = {};
 
 // Store active SSE heartbeat intervals
 const heartbeatIntervals: Record<string, NodeJS.Timeout> = {};
@@ -64,18 +67,28 @@ app.post("/mcp", async (req: Request, res: Response) => {
   let transport: StreamableHTTPServerTransport;
 
   if (sessionId && transports[sessionId]) {
-    // Reuse existing session
+    // Reuse existing session - update auth headers (supports token refresh)
     transport = transports[sessionId];
+    sessionHeaders[sessionId] = {
+      authorization: req.headers.authorization as string | undefined,
+      teamId: req.headers["x-team-id"] as string | undefined,
+    };
   } else if (!sessionId && isInitializeRequest(req.body)) {
     // New session initialization
     transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: () => randomUUID(),
       onsessioninitialized: (id) => {
         transports[id] = transport;
+        // Store initial auth headers for this session
+        sessionHeaders[id] = {
+          authorization: req.headers.authorization as string | undefined,
+          teamId: req.headers["x-team-id"] as string | undefined,
+        };
         console.log("Session initialized:", id);
       },
       onsessionclosed: (id) => {
         delete transports[id];
+        delete sessionHeaders[id];
         console.log("Session closed:", id);
       },
     });
@@ -83,7 +96,21 @@ app.post("/mcp", async (req: Request, res: Response) => {
     transport.onclose = () => {
       if (transport.sessionId) {
         delete transports[transport.sessionId];
+        delete sessionHeaders[transport.sessionId];
       }
+    };
+
+    // Helper to get current session's auth headers
+    const getAuthHeaders = () => {
+      const sid = transport.sessionId;
+      if (sid && sessionHeaders[sid]) {
+        return sessionHeaders[sid];
+      }
+      // Fallback to request headers (during initialization)
+      return {
+        authorization: req.headers.authorization as string | undefined,
+        teamId: req.headers["x-team-id"] as string | undefined,
+      };
     };
 
     // Create MCP server instance
@@ -106,13 +133,13 @@ app.post("/mcp", async (req: Request, res: Response) => {
         },
       },
       async (args) => {
-        const authHeader = req.headers.authorization;
+        const auth = getAuthHeaders();
         const response = await fetch(`${PYTHON_API_URL}/api/memory/add`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            ...(authHeader && { Authorization: authHeader as string }),
-            ...(req.headers["x-team-id"] && { "x-team-id": req.headers["x-team-id"] as string }),
+            ...(auth.authorization && { Authorization: auth.authorization }),
+            ...(auth.teamId && { "x-team-id": auth.teamId }),
           },
           body: JSON.stringify(args),
         });
@@ -141,13 +168,13 @@ app.post("/mcp", async (req: Request, res: Response) => {
         },
       },
       async (args) => {
-        const authHeader = req.headers.authorization;
+        const auth = getAuthHeaders();
         const response = await fetch(`${PYTHON_API_URL}/api/memory/search`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            ...(authHeader && { Authorization: authHeader as string }),
-            ...(req.headers["x-team-id"] && { "x-team-id": req.headers["x-team-id"] as string }),
+            ...(auth.authorization && { Authorization: auth.authorization }),
+            ...(auth.teamId && { "x-team-id": auth.teamId }),
           },
           body: JSON.stringify({
             query: args.query,
@@ -179,12 +206,12 @@ app.post("/mcp", async (req: Request, res: Response) => {
         },
       },
       async (args) => {
-        const authHeader = req.headers.authorization;
+        const auth = getAuthHeaders();
         const response = await fetch(`${PYTHON_API_URL}/api/memory/forget`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            ...(authHeader && { Authorization: authHeader as string }),
+            ...(auth.authorization && { Authorization: auth.authorization }),
           },
           body: JSON.stringify(args),
         });
@@ -212,12 +239,12 @@ app.post("/mcp", async (req: Request, res: Response) => {
         },
       },
       async (args) => {
-        const authHeader = req.headers.authorization;
+        const auth = getAuthHeaders();
         const response = await fetch(`${PYTHON_API_URL}/api/memory/update`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            ...(authHeader && { Authorization: authHeader as string }),
+            ...(auth.authorization && { Authorization: auth.authorization }),
           },
           body: JSON.stringify(args),
         });
@@ -244,12 +271,12 @@ app.post("/mcp", async (req: Request, res: Response) => {
         },
       },
       async (args) => {
-        const authHeader = req.headers.authorization;
+        const auth = getAuthHeaders();
         const response = await fetch(`${PYTHON_API_URL}/api/memory/maintenance`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            ...(authHeader && { Authorization: authHeader as string }),
+            ...(auth.authorization && { Authorization: auth.authorization }),
           },
           body: JSON.stringify(args),
         });
@@ -278,12 +305,12 @@ app.post("/mcp", async (req: Request, res: Response) => {
         },
       },
       async (args) => {
-        const authHeader = req.headers.authorization;
+        const auth = getAuthHeaders();
         const response = await fetch(`${PYTHON_API_URL}/api/session/analyze`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            ...(authHeader && { Authorization: authHeader as string }),
+            ...(auth.authorization && { Authorization: auth.authorization }),
           },
           body: JSON.stringify(args),
         });
@@ -310,11 +337,11 @@ app.post("/mcp", async (req: Request, res: Response) => {
         mimeType: "application/json",
       },
       async (uri) => {
-        const authHeader = req.headers.authorization;
+        const auth = getAuthHeaders();
         const response = await fetch(`${PYTHON_API_URL}/api/memory/status`, {
           method: "GET",
           headers: {
-            ...(authHeader && { Authorization: authHeader as string }),
+            ...(auth.authorization && { Authorization: auth.authorization }),
           },
         });
 
@@ -344,11 +371,11 @@ app.post("/mcp", async (req: Request, res: Response) => {
         mimeType: "application/json",
       },
       async (uri) => {
-        const authHeader = req.headers.authorization;
+        const auth = getAuthHeaders();
         const response = await fetch(`${PYTHON_API_URL}/api/memory/summary/personal`, {
           method: "GET",
           headers: {
-            ...(authHeader && { Authorization: authHeader as string }),
+            ...(auth.authorization && { Authorization: auth.authorization }),
           },
         });
 
@@ -378,12 +405,12 @@ app.post("/mcp", async (req: Request, res: Response) => {
         mimeType: "application/json",
       },
       async (uri) => {
-        const authHeader = req.headers.authorization;
+        const auth = getAuthHeaders();
         const response = await fetch(`${PYTHON_API_URL}/api/memory/summary/shared`, {
           method: "GET",
           headers: {
-            ...(authHeader && { Authorization: authHeader as string }),
-            ...(req.headers["x-team-id"] && { "x-team-id": req.headers["x-team-id"] as string }),
+            ...(auth.authorization && { Authorization: auth.authorization }),
+            ...(auth.teamId && { "x-team-id": auth.teamId }),
           },
         });
 
