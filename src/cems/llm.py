@@ -419,34 +419,28 @@ def extract_session_learnings(
 
     context_section = "\n".join(context_parts) if context_parts else "No additional context."
 
-    system_prompt = """You are a Session Learning Extractor. Your job is to analyze AI assistant session transcripts and extract learnings worth remembering for future sessions.
+    system_prompt = """You are a Learning Extractor. Analyze ANY input (transcripts, summaries, notes, or descriptions) and extract useful learnings to store for future reference.
 
-## What to Extract
+## Learning Types
 
-Extract ONLY significant learnings that would help in future sessions:
-
-1. **WORKING_SOLUTION** - Code patterns, commands, or approaches that successfully solved a problem
-2. **FAILED_APPROACH** - Approaches that didn't work and why (prevents repeating mistakes)
-3. **USER_PREFERENCE** - User's stated preferences about tools, styles, or workflows
-4. **ERROR_FIX** - How a specific error was diagnosed and resolved
-5. **DECISION** - Architectural or design decisions made with reasoning
-
-## What NOT to Extract
-
-- Generic knowledge that any AI would know
-- Temporary debugging steps without lasting value
-- Trivial changes or routine operations
-- Information already commonly known
+1. **WORKING_SOLUTION** - Code patterns, commands, configurations, or approaches that work
+2. **FAILED_APPROACH** - What didn't work and why (helps avoid repeating mistakes)
+3. **USER_PREFERENCE** - User preferences about tools, styles, workflows, naming conventions
+4. **ERROR_FIX** - How specific errors were diagnosed and fixed
+5. **DECISION** - Design/architectural decisions with their reasoning
 
 ## Output Format
 
-Return a JSON array of learnings. Each learning must have:
+Return a JSON array. Each learning needs:
 - "type": One of the 5 types above
-- "content": The learning in a clear, reusable format (2-4 sentences max)
-- "confidence": 0.0-1.0 (how confident this is worth remembering)
-- "category": Suggested category (e.g., "git", "python", "debugging", "preferences")
+- "content": Clear, actionable learning (1-3 sentences)
+- "confidence": 0.0-1.0 (how useful is this to remember)
+- "category": Topic category (e.g., "docker", "deployment", "git", "python", "preferences")
 
-If no significant learnings, return an empty array: []
+Extract ALL learnings you find - be generous, not restrictive. Even partial or uncertain learnings are valuable.
+
+If the input is a summary that mentions learnings, extract each one as a separate item.
+If truly nothing useful to extract, return: []
 
 Example output:
 ```json
@@ -471,17 +465,17 @@ Example output:
     if len(transcript_text) > max_transcript_len:
         transcript_text = "...[truncated]...\n" + transcript_text[-max_transcript_len:]
 
-    prompt = f"""Analyze this session transcript and extract learnings worth remembering.
+    prompt = f"""Analyze this input and extract ALL learnings worth remembering.
 
 ## Context
 {context_section}
 
-## Session Transcript
+## Input (transcript, summary, or notes)
 {transcript_text}
 
 ## Instructions
-Extract significant learnings from this session. Return ONLY a JSON array (no markdown, no explanation).
-If nothing significant to learn, return: []"""
+Extract every useful learning from this input. The input might be a raw transcript, a summary, or notes - extract learnings from whatever format is provided. Return ONLY a JSON array (no markdown, no explanation).
+If truly nothing useful, return: []"""
 
     try:
         client = get_client()
@@ -489,15 +483,15 @@ If nothing significant to learn, return: []"""
             prompt=prompt,
             system=system_prompt,
             max_tokens=2000,
-            temperature=0.2,
-            model=model or "anthropic/claude-3-haiku",  # Use haiku by default for speed/cost
+            temperature=0.3,  # Slightly higher for more creative extraction
+            model=model or "x-ai/grok-code-fast-1",  # Fast Grok model for code/analysis
         )
 
         # Parse JSON response
         learnings = _parse_learnings_response(response)
 
-        # Filter by confidence threshold
-        learnings = [l for l in learnings if l.get("confidence", 0) >= 0.6]
+        # Lower confidence threshold - be generous with what we store
+        learnings = [l for l in learnings if l.get("confidence", 0) >= 0.3]
 
         logger.info(f"Extracted {len(learnings)} learnings from session")
         return learnings
