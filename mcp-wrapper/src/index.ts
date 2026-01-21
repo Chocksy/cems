@@ -73,8 +73,12 @@ app.post("/mcp", async (req: Request, res: Response) => {
       authorization: req.headers.authorization as string | undefined,
       teamId: req.headers["x-team-id"] as string | undefined,
     };
-  } else if (!sessionId && isInitializeRequest(req.body)) {
-    // New session initialization
+  } else if (isInitializeRequest(req.body)) {
+    // New session initialization OR re-initialization with stale/missing session
+    // This handles the case where Cursor has a cached session ID from before server restart
+    if (sessionId) {
+      console.log(`Stale session detected (${sessionId}), creating new session`);
+    }
     transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: () => randomUUID(),
       onsessioninitialized: (id) => {
@@ -459,9 +463,15 @@ app.post("/mcp", async (req: Request, res: Response) => {
     // Connect server to transport
     await server.connect(transport);
   } else {
+    // Non-initialize request with invalid/missing session
+    // This prompts the client to re-initialize
+    const msg = sessionId
+      ? `Session expired or invalid (${sessionId.slice(0, 8)}...). Please re-initialize.`
+      : "No session. Send initialize request first.";
+    console.log(`Invalid session request: ${msg}`);
     res.status(400).json({
       jsonrpc: "2.0",
-      error: { code: -32000, message: "Invalid session" },
+      error: { code: -32000, message: msg },
       id: null,
     });
     return;
