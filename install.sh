@@ -46,10 +46,24 @@ if [ ! -f "pyproject.toml" ]; then
     exit 1
 fi
 
-# 2. Install CEMS Python package
+# 2. Install CEMS Python package as a CLI tool
 echo
 echo "Installing CEMS package..."
-uv pip install -e . 2>&1 | grep -v "^Resolved\|^Prepared\|^Installed" || true
+
+# Remove any stale cems installations first
+if command -v cems >/dev/null 2>&1; then
+    EXISTING_CEMS=$(which cems 2>/dev/null || true)
+    if [ -n "$EXISTING_CEMS" ] && [[ "$EXISTING_CEMS" == /opt/homebrew/* ]]; then
+        echo -e "${YELLOW}Removing stale cems installation at $EXISTING_CEMS${NC}"
+        rm -f "$EXISTING_CEMS" 2>/dev/null || true
+    fi
+fi
+
+# Uninstall any existing uv tool installation
+uv tool uninstall cems 2>/dev/null || true
+
+# Install using uv tool for global CLI access (editable mode for development)
+uv tool install -e . --force 2>&1 | grep -v "^Resolved\|^Prepared\|^Installed" || true
 echo -e "${GREEN}CEMS package installed${NC}"
 
 # =============================================================================

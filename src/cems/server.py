@@ -498,7 +498,7 @@ def create_http_app():
                 "status": "healthy",
                 "user_id": config.user_id,
                 "team_id": config.team_id,
-                "storage_dir": config.storage_dir,
+                "storage_dir": str(config.storage_dir),  # Convert Path to string for JSON
                 "backend": config.memory_backend,
                 "vector_store": config.vector_store,
                 "graph_store": config.graph_store if config.enable_graph else None,
