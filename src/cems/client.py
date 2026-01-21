@@ -178,25 +178,47 @@ class CEMSClient:
     def search(
         self,
         query: str,
-        limit: int = 5,
+        limit: int = 10,
         scope: Literal["personal", "shared", "both"] = "both",
-    ) -> list[dict[str, Any]]:
-        """Search memories.
+        max_tokens: int = 2000,
+        enable_graph: bool = True,
+        enable_query_synthesis: bool = True,
+        raw: bool = False,
+    ) -> dict[str, Any]:
+        """Search memories using unified retrieval pipeline.
+
+        The unified pipeline implements 5 stages:
+        1. Query synthesis (LLM expands query for better retrieval)
+        2. Candidate retrieval (vector + graph search)
+        3. Relevance filtering (threshold-based)
+        4. Temporal ranking (time decay + priority)
+        5. Token-budgeted assembly
 
         Args:
             query: Search query
-            limit: Maximum results
+            limit: Maximum results (default 10)
             scope: Which scope to search
+            max_tokens: Token budget for results
+            enable_graph: Include graph traversal
+            enable_query_synthesis: Use LLM query expansion
+            raw: Debug mode - bypass filtering to see all results
 
         Returns:
-            List of matching memories
+            Full search result including results, tokens_used, etc.
         """
-        result = self._request(
+        return self._request(
             "POST",
             "/api/memory/search",
-            json={"query": query, "limit": limit, "scope": scope},
+            json={
+                "query": query,
+                "limit": limit,
+                "scope": scope,
+                "max_tokens": max_tokens,
+                "enable_graph": enable_graph,
+                "enable_query_synthesis": enable_query_synthesis,
+                "raw": raw,
+            },
         )
-        return result.get("results", [])
 
     def delete(self, memory_id: str, hard: bool = False) -> dict[str, Any]:
         """Delete or archive a memory.

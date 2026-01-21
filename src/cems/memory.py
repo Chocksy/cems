@@ -188,6 +188,7 @@ Return JSON: {"facts": ["specific actionable fact 1", "specific actionable fact 
         category: str = "general",
         source: str | None = None,
         tags: list[str] | None = None,
+        infer: bool = True,
     ) -> dict[str, Any]:
         """Add a memory to the specified namespace.
 
@@ -197,6 +198,9 @@ Return JSON: {"facts": ["specific actionable fact 1", "specific actionable fact 
             category: Category for organization
             source: Optional source identifier
             tags: Optional tags for organization
+            infer: If True (default), use LLM for fact extraction and deduplication.
+                   If False, store raw content directly (100-200ms vs 1-10s per memory).
+                   Use infer=False for bulk imports where speed matters.
 
         Returns:
             Dict with memory operation results
@@ -205,6 +209,7 @@ Return JSON: {"facts": ["specific actionable fact 1", "specific actionable fact 
         user_id = self._get_mem0_user_id(memory_scope)
 
         # Add to Mem0
+        # infer=False skips LLM fact extraction and deduplication (much faster)
         result = self._memory.add(
             content,
             user_id=user_id,
@@ -213,6 +218,7 @@ Return JSON: {"facts": ["specific actionable fact 1", "specific actionable fact 
                 "source": source,
                 "tags": tags or [],
             },
+            infer=infer,
         )
 
         # Track extended metadata for each created memory
@@ -726,222 +732,6 @@ Return JSON: {"facts": ["specific actionable fact 1", "specific actionable fact 
         if not self._graph:
             return {}
         return self._graph.get_graph_stats()
-
-    # =========================================================================
-    # V2 Advanced Search Methods
-    # =========================================================================
-
-    def hybrid_search(
-        self,
-        query: str,
-        scope: Literal["personal", "shared", "both"] = "both",
-        category: str | None = None,
-        limit: int = 10,
-        graph_weight: float = 0.3,
-    ) -> list[SearchResult]:
-        """Hybrid search combining vector similarity and graph relationships.
-
-        This method performs:
-        1. Vector similarity search (via Mem0)
-        2. Graph traversal to find related memories
-        3. Merges and re-ranks results
-
-        Args:
-            query: Search query
-            scope: Which namespace(s) to search
-            category: Optional category filter
-            limit: Maximum results to return
-            graph_weight: Weight for graph-based results (0.0-1.0)
-
-        Returns:
-            List of SearchResult objects with combined ranking
-        """
-        # Step 1: Get vector search results
-        vector_results = self.search(
-            query=query,
-            scope=scope,
-            category=category,
-            limit=limit * 2,  # Get more to allow for merging
-        )
-
-        if not self._graph or not vector_results:
-            return vector_results[:limit]
-
-        # Step 2: Get graph-related memories for top vector results
-        graph_memory_ids: set[str] = set()
-        for result in vector_results[:3]:  # Use top 3 as seeds
-            related = self._graph.get_related_memories(
-                result.memory_id, max_depth=2, limit=5
-            )
-            for rel in related:
-                graph_memory_ids.add(rel["id"])
-
-        # Step 3: Also search by entities mentioned in query
-        entities = self._graph.extract_entities_from_content(query)
-        for entity in entities[:3]:  # Limit to 3 entities
-            entity_memories = self._graph.get_memories_by_entity(entity["id"], limit=5)
-            for mem in entity_memories:
-                graph_memory_ids.add(mem["id"])
-
-        # Step 4: Fetch graph-discovered memories not in vector results
-        vector_ids = {r.memory_id for r in vector_results}
-        new_ids = graph_memory_ids - vector_ids
-
-        graph_results: list[SearchResult] = []
-        for memory_id in new_ids:
-            mem = self.get(memory_id)
-            if mem:
-                metadata = self._metadata.get_metadata(memory_id)
-                # Apply category filter
-                if category and metadata and metadata.category != category:
-                    continue
-
-                # Assign a base score for graph-discovered memories
-                base_score = 0.5  # Lower than vector similarity
-
-                # Apply priority/decay adjustments
-                adjusted_score = base_score
-                if metadata:
-                    adjusted_score *= metadata.priority
-                    days_old = (datetime.now(UTC) - metadata.last_accessed).days
-                    time_decay = 1.0 / (1.0 + (days_old / 30))
-                    adjusted_score *= time_decay
-                    if metadata.pinned:
-                        adjusted_score *= 1.1
-
-                graph_results.append(
-                    SearchResult(
-                        memory_id=memory_id,
-                        content=mem.get("memory", ""),
-                        score=adjusted_score * graph_weight,
-                        scope=MemoryScope(metadata.scope) if metadata else MemoryScope.PERSONAL,
-                        metadata=metadata,
-                    )
-                )
-
-        # Step 5: Merge results - vector results keep their scores,
-        # graph results are weighted
-        combined = vector_results + graph_results
-        combined.sort(key=lambda x: x.score, reverse=True)
-
-        # Deduplicate (prefer higher-scored version)
-        seen: set[str] = set()
-        unique_results: list[SearchResult] = []
-        for result in combined:
-            if result.memory_id not in seen:
-                seen.add(result.memory_id)
-                unique_results.append(result)
-
-        return unique_results[:limit]
-
-    def smart_search(
-        self,
-        query: str,
-        scope: Literal["personal", "shared", "both"] = "both",
-        category: str | None = None,
-        limit: int = 5,
-    ) -> dict[str, Any]:
-        """Tiered retrieval: check category summaries first, then drill down.
-
-        This implements the "sufficiency check" pattern from the original plan:
-        1. First, check if category summaries can answer the query
-        2. If summaries seem sufficient, return them
-        3. Otherwise, drill down into individual memories
-
-        Args:
-            query: Search query
-            scope: Which namespace(s) to search
-            category: Optional specific category to search
-            limit: Maximum memory results if drilling down
-
-        Returns:
-            Dict with:
-                - tier: "summary" or "memories"
-                - summaries: List of relevant category summaries (if tier=summary)
-                - results: List of SearchResult objects (if tier=memories)
-                - categories_checked: Categories that were evaluated
-        """
-        # Step 1: Get all category summaries
-        if category:
-            # Single category requested
-            summary = self.get_category_summary(
-                category,
-                scope=scope if scope != "both" else "personal",  # type: ignore
-            )
-            summaries = [{"category": category, "scope": scope, **summary}] if summary else []
-        else:
-            summaries = self.get_all_category_summaries(scope=scope)
-
-        if not summaries:
-            # No summaries exist - go straight to memory search
-            results = self.search(query=query, scope=scope, category=category, limit=limit)
-            return {
-                "tier": "memories",
-                "summaries": [],
-                "results": results,
-                "categories_checked": [],
-            }
-
-        # Step 2: Check which summaries might be relevant
-        # Simple heuristic: check if query terms appear in category name or summary
-        query_lower = query.lower()
-        query_terms = set(query_lower.split())
-
-        relevant_summaries = []
-        for s in summaries:
-            cat_name = s.get("category", "").lower()
-            summary_text = s.get("summary", "").lower()
-
-            # Check for term overlap
-            relevance_score = 0
-            for term in query_terms:
-                if len(term) > 2:  # Skip very short terms
-                    if term in cat_name:
-                        relevance_score += 2
-                    if term in summary_text:
-                        relevance_score += 1
-
-            if relevance_score > 0:
-                s["_relevance"] = relevance_score
-                relevant_summaries.append(s)
-
-        # Sort by relevance
-        relevant_summaries.sort(key=lambda x: x.get("_relevance", 0), reverse=True)
-
-        # Step 3: Determine if summaries are sufficient
-        # Heuristic: If we have high-relevance summaries, use them
-        if relevant_summaries and relevant_summaries[0].get("_relevance", 0) >= 2:
-            # Summaries seem sufficient
-            # Clean up internal fields
-            for s in relevant_summaries:
-                s.pop("_relevance", None)
-
-            return {
-                "tier": "summary",
-                "summaries": relevant_summaries[:3],  # Top 3 relevant summaries
-                "results": [],
-                "categories_checked": [s["category"] for s in summaries],
-            }
-
-        # Step 4: Summaries not sufficient - drill down into memories
-        # Use the most relevant category if we found any
-        search_category = category
-        if relevant_summaries and not category:
-            search_category = relevant_summaries[0]["category"]
-
-        results = self.search(
-            query=query,
-            scope=scope,
-            category=search_category,
-            limit=limit,
-        )
-
-        return {
-            "tier": "memories",
-            "summaries": relevant_summaries[:2] if relevant_summaries else [],
-            "results": results,
-            "categories_checked": [s["category"] for s in summaries],
-        }
 
     # =========================================================================
     # Unified Retrieval Pipeline (5-Stage Inference Retrieval)

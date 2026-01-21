@@ -237,7 +237,15 @@ def create_http_app():
         """REST API endpoint to add a memory.
 
         POST /api/memory/add
-        Body: {"content": "...", "category": "...", "scope": "personal|shared"}
+        Body: {
+            "content": "...",
+            "category": "...",
+            "scope": "personal|shared",
+            "infer": true/false  (optional, default true)
+        }
+        
+        Note: Set infer=false for bulk imports (100-200ms vs 1-10s per memory).
+        With infer=false, content is stored raw without LLM fact extraction.
         """
         try:
             body = await request.json()
@@ -247,9 +255,10 @@ def create_http_app():
 
             category = body.get("category", "general")
             scope = body.get("scope", "personal")
+            infer = body.get("infer", True)  # Default to True for backwards compatibility
 
             memory = get_memory()
-            result = memory.add(content, scope=scope, category=category)
+            result = memory.add(content, scope=scope, category=category, infer=infer)
 
             return JSONResponse({
                 "success": True,
@@ -260,10 +269,27 @@ def create_http_app():
             return JSONResponse({"error": str(e)}, status_code=500)
 
     async def api_memory_search(request: Request):
-        """REST API endpoint to search memories.
+        """REST API endpoint to search memories using unified retrieval pipeline.
 
         POST /api/memory/search
-        Body: {"query": "...", "limit": 5, "scope": "personal|shared|both"}
+        Body: {
+            "query": "...",
+            "limit": 10,
+            "scope": "personal|shared|both",
+            "max_tokens": 2000,           # Token budget for results
+            "enable_graph": true,         # Include graph traversal
+            "enable_query_synthesis": true,  # LLM query expansion
+            "raw": false                  # Bypass filtering (debug mode)
+        }
+
+        The unified pipeline (retrieve_for_inference) implements 5 stages:
+        1. Query synthesis (LLM expands query for better retrieval)
+        2. Candidate retrieval (vector + graph search)
+        3. Relevance filtering (threshold-based)
+        4. Temporal ranking (time decay + priority)
+        5. Token-budgeted assembly
+
+        Use raw=true for debugging to see all results without filtering.
         """
         try:
             body = await request.json()
@@ -271,20 +297,47 @@ def create_http_app():
             if not query:
                 return JSONResponse({"error": "query is required"}, status_code=400)
 
-            limit = body.get("limit", 5)
+            limit = body.get("limit", 10)
             scope = body.get("scope", "both")
+            max_tokens = body.get("max_tokens", 2000)
+            enable_graph = body.get("enable_graph", True)
+            enable_query_synthesis = body.get("enable_query_synthesis", True)
+            raw_mode = body.get("raw", False)
 
             memory = get_memory()
-            results = memory.search(query, scope=scope, limit=limit)
 
-            # Convert SearchResult objects to dicts for JSON serialization
-            # Use mode="json" to serialize datetime objects as ISO strings
-            serialized_results = [r.model_dump(mode="json") for r in results]
+            if raw_mode:
+                # Debug mode: use raw search without filtering
+                results = memory.search(query, scope=scope, limit=limit)
+                serialized_results = [r.model_dump(mode="json") for r in results]
+                return JSONResponse({
+                    "success": True,
+                    "results": serialized_results,
+                    "count": len(serialized_results),
+                    "mode": "raw",
+                })
+
+            # Production mode: use unified retrieval pipeline
+            result = memory.retrieve_for_inference(
+                query=query,
+                scope=scope,
+                max_tokens=max_tokens,
+                enable_query_synthesis=enable_query_synthesis,
+                enable_graph=enable_graph,
+            )
+
+            # Apply limit to results
+            limited_results = result["results"][:limit]
 
             return JSONResponse({
                 "success": True,
-                "results": serialized_results,
-                "count": len(serialized_results),
+                "results": limited_results,
+                "count": len(limited_results),
+                "mode": "unified",
+                "tokens_used": result["tokens_used"],
+                "queries_used": result["queries_used"],
+                "total_candidates": result["total_candidates"],
+                "filtered_count": result["filtered_count"],
             })
         except Exception as e:
             logger.error(f"API memory_search error: {e}")

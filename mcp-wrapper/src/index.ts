@@ -124,12 +124,13 @@ app.post("/mcp", async (req: Request, res: Response) => {
       "memory_add",
       {
         title: "Add Memory",
-        description: "Store a memory in personal or shared namespace",
+        description: "Store a memory in personal or shared namespace. Set infer=false for bulk imports (much faster).",
         inputSchema: {
           content: z.string().describe("What to remember"),
           scope: z.enum(["personal", "shared"]).default("personal").describe("Namespace"),
           category: z.string().default("general").describe("Category for organization"),
           tags: z.array(z.string()).default([]).describe("Optional tags"),
+          infer: z.boolean().default(true).describe("Use LLM for fact extraction (true) or store raw (false). Use false for bulk imports."),
         },
       },
       async (args) => {
@@ -160,11 +161,31 @@ app.post("/mcp", async (req: Request, res: Response) => {
       "memory_search",
       {
         title: "Search Memories",
-        description: "Search memories using unified intelligent search",
+        description:
+          "Search memories using unified 5-stage retrieval pipeline: query synthesis, vector+graph search, relevance filtering, temporal ranking, and token budgeting. Only returns relevant results (filtered by threshold). Use raw=true for debugging.",
         inputSchema: {
           query: z.string().describe("What to search for"),
-          scope: z.enum(["personal", "shared", "both"]).default("both").describe("Namespace"),
+          scope: z
+            .enum(["personal", "shared", "both"])
+            .default("both")
+            .describe("Namespace to search"),
           max_results: z.number().default(10).describe("Max results (1-20)"),
+          max_tokens: z
+            .number()
+            .default(2000)
+            .describe("Token budget for results"),
+          enable_graph: z
+            .boolean()
+            .default(true)
+            .describe("Include graph traversal for related memories"),
+          enable_query_synthesis: z
+            .boolean()
+            .default(true)
+            .describe("Use LLM to expand query for better retrieval"),
+          raw: z
+            .boolean()
+            .default(false)
+            .describe("Debug mode: bypass filtering to see all results"),
         },
       },
       async (args) => {
@@ -180,6 +201,10 @@ app.post("/mcp", async (req: Request, res: Response) => {
             query: args.query,
             limit: args.max_results,
             scope: args.scope,
+            max_tokens: args.max_tokens,
+            enable_graph: args.enable_graph,
+            enable_query_synthesis: args.enable_query_synthesis,
+            raw: args.raw,
           }),
         });
 

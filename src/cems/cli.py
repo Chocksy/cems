@@ -160,22 +160,53 @@ def add(ctx: click.Context, content: str, scope: str, category: str, tags: tuple
 @main.command()
 @click.argument("query")
 @click.option("--scope", "-s", default="both", type=click.Choice(["personal", "shared", "both"]))
-@click.option("--limit", "-l", default=5, help="Maximum results")
+@click.option("--limit", "-l", default=10, help="Maximum results")
+@click.option("--max-tokens", "-t", default=2000, help="Token budget for results")
+@click.option("--no-graph", is_flag=True, help="Disable graph traversal")
+@click.option("--no-synthesis", is_flag=True, help="Disable LLM query expansion")
+@click.option("--raw", is_flag=True, help="Debug mode: bypass filtering to see all results")
 @click.pass_context
-def search(ctx: click.Context, query: str, scope: str, limit: int) -> None:
-    """Search memories.
+def search(
+    ctx: click.Context,
+    query: str,
+    scope: str,
+    limit: int,
+    max_tokens: int,
+    no_graph: bool,
+    no_synthesis: bool,
+    raw: bool,
+) -> None:
+    """Search memories using unified retrieval pipeline.
+
+    Uses 5-stage retrieval: query synthesis, vector+graph search,
+    relevance filtering, temporal ranking, and token budgeting.
 
     Example:
         cems search "TypeScript preferences"
+        cems search "coding style" --raw  # Debug mode
     """
     try:
         client = get_client(ctx)
 
         with console.status("Searching..."):
-            results = client.search(query, scope=scope, limit=limit)
+            result = client.search(
+                query,
+                scope=scope,
+                limit=limit,
+                max_tokens=max_tokens,
+                enable_graph=not no_graph,
+                enable_query_synthesis=not no_synthesis,
+                raw=raw,
+            )
+
+        results = result.get("results", [])
+        mode = result.get("mode", "unified")
 
         if results:
-            table = Table(title=f"Search Results for: {query}")
+            title = f"Search Results for: {query}"
+            if mode == "raw":
+                title += " [RAW MODE]"
+            table = Table(title=title)
             table.add_column("ID", style="dim", max_width=12)
             table.add_column("Content", style="white")
             table.add_column("Score", style="cyan")
@@ -191,8 +222,20 @@ def search(ctx: click.Context, query: str, scope: str, limit: int) -> None:
                 )
 
             console.print(table)
+
+            # Show pipeline stats in unified mode
+            if mode == "unified":
+                console.print(
+                    f"[dim]Pipeline: {result.get('total_candidates', '?')} candidates → "
+                    f"{result.get('filtered_count', '?')} after filtering → "
+                    f"{len(results)} returned | "
+                    f"Tokens: {result.get('tokens_used', '?')} | "
+                    f"Queries: {len(result.get('queries_used', []))}[/dim]"
+                )
         else:
-            console.print("[yellow]No results found[/yellow]")
+            console.print("[yellow]No relevant results found[/yellow]")
+            if mode == "unified" and not raw:
+                console.print("[dim]Tip: Use --raw to see unfiltered results[/dim]")
 
     except CEMSClientError as e:
         handle_error(e)
