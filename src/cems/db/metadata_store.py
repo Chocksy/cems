@@ -320,6 +320,51 @@ class PostgresMetadataStore:
             rows = session.execute(query).scalars().all()
             return [self._pg_to_metadata(row) for row in rows]
 
+    def get_archived_memory_ids(self) -> set[str]:
+        """Get all archived memory IDs in a single query.
+        
+        Much faster than checking each memory individually.
+        """
+        with self._db.session() as session:
+            rows = session.execute(
+                select(PgMemoryMetadata.memory_id).where(
+                    PgMemoryMetadata.archived == True  # noqa: E712
+                )
+            ).scalars().all()
+            return set(rows)
+
+    def get_metadata_batch(self, memory_ids: list[str]) -> dict[str, MemoryMetadata]:
+        """Get metadata for multiple memories in a single query.
+        
+        Returns:
+            Dict mapping memory_id to MemoryMetadata
+        """
+        if not memory_ids:
+            return {}
+        
+        with self._db.session() as session:
+            rows = session.execute(
+                select(PgMemoryMetadata).where(
+                    PgMemoryMetadata.memory_id.in_(memory_ids)
+                )
+            ).scalars().all()
+            return {row.memory_id: self._pg_to_metadata(row) for row in rows}
+
+    def record_access_batch(self, memory_ids: list[str]) -> None:
+        """Record access for multiple memories in a single query."""
+        if not memory_ids:
+            return
+        
+        with self._db.session() as session:
+            session.execute(
+                update(PgMemoryMetadata)
+                .where(PgMemoryMetadata.memory_id.in_(memory_ids))
+                .values(
+                    last_accessed=datetime.now(UTC),
+                    access_count=PgMemoryMetadata.access_count + 1,
+                )
+            )
+
     def get_category_summary(
         self, user_id: str, category: str, scope: MemoryScope
     ) -> CategorySummary | None:

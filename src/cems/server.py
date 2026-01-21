@@ -493,6 +493,15 @@ def create_http_app():
         try:
             memory = get_memory()
             config = memory.config
+            
+            # Get actual scheduler state from global scheduler (not per-user config)
+            scheduler_running = False
+            scheduler_jobs = []
+            if "default" in _scheduler_cache:
+                scheduler = _scheduler_cache["default"]
+                scheduler_running = scheduler.is_running
+                if scheduler_running:
+                    scheduler_jobs = scheduler.get_jobs()
 
             status = {
                 "status": "healthy",
@@ -502,7 +511,8 @@ def create_http_app():
                 "backend": config.memory_backend,
                 "vector_store": config.vector_store,
                 "graph_store": config.graph_store if config.enable_graph else None,
-                "scheduler": config.enable_scheduler,
+                "scheduler": scheduler_running,
+                "scheduler_jobs": scheduler_jobs,
                 "query_synthesis": config.enable_query_synthesis,
                 "relevance_threshold": config.relevance_threshold,
                 "max_tokens": config.default_max_tokens,

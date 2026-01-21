@@ -271,13 +271,11 @@ Return JSON: {"facts": ["specific actionable fact 1", "specific actionable fact 
         if scope in ("shared", "both") and self.config.team_id:
             scopes_to_search.append(MemoryScope.SHARED)
 
+        # Collect all results first, then batch fetch metadata
+        raw_results: list[tuple[dict, MemoryScope]] = []
+        
         for memory_scope in scopes_to_search:
             user_id = self._get_mem0_user_id(memory_scope)
-
-            # Build filters
-            filters = {}
-            if category:
-                filters["category"] = category
 
             # Search in Mem0
             mem0_results = self._memory.search(
@@ -286,30 +284,51 @@ Return JSON: {"facts": ["specific actionable fact 1", "specific actionable fact 
                 limit=limit,
             )
 
-            # Convert to SearchResult and track access
             for mem in mem0_results.get("results", []):
-                memory_id = mem.get("id")
+                raw_results.append((mem, memory_scope))
 
-                # Get extended metadata
-                metadata = self._metadata.get_metadata(memory_id) if memory_id else None
+        # Batch fetch all metadata in a single query
+        memory_ids = [mem.get("id") for mem, _ in raw_results if mem.get("id")]
+        metadata_map: dict[str, MemoryMetadata] = {}
+        if memory_ids and hasattr(self._metadata, "get_metadata_batch"):
+            metadata_map = self._metadata.get_metadata_batch(memory_ids)
+        elif memory_ids:
+            # Fallback for SQLite store (no batch method)
+            for mid in memory_ids:
+                m = self._metadata.get_metadata(mid)
+                if m:
+                    metadata_map[mid] = m
 
-                # Apply category filter if metadata exists
-                if category and metadata and metadata.category != category:
-                    continue
+        # Build results and collect IDs to record access
+        access_ids: list[str] = []
+        for mem, memory_scope in raw_results:
+            memory_id = mem.get("id")
+            metadata = metadata_map.get(memory_id) if memory_id else None
 
-                # Record access
-                if memory_id:
-                    self._metadata.record_access(memory_id)
+            # Apply category filter if metadata exists
+            if category and metadata and metadata.category != category:
+                continue
 
-                results.append(
-                    SearchResult(
-                        memory_id=memory_id or "",
-                        content=mem.get("memory", ""),
-                        score=mem.get("score", 0.0),
-                        scope=memory_scope,
-                        metadata=metadata,
-                    )
+            if memory_id:
+                access_ids.append(memory_id)
+
+            results.append(
+                SearchResult(
+                    memory_id=memory_id or "",
+                    content=mem.get("memory", ""),
+                    score=mem.get("score", 0.0),
+                    scope=memory_scope,
+                    metadata=metadata,
                 )
+            )
+
+        # Batch record access in a single query
+        if access_ids and hasattr(self._metadata, "record_access_batch"):
+            self._metadata.record_access_batch(access_ids)
+        elif access_ids:
+            # Fallback for SQLite store (no batch method)
+            for mid in access_ids:
+                self._metadata.record_access(mid)
 
         # Apply priority boost and time decay to scores
         now = datetime.now(UTC)
@@ -376,6 +395,11 @@ Return JSON: {"facts": ["specific actionable fact 1", "specific actionable fact 
         if scope in ("shared", "both") and self.config.team_id:
             scopes_to_get.append(MemoryScope.SHARED)
 
+        # Get archived IDs in a single batch query (if filtering)
+        archived_ids: set[str] = set()
+        if not include_archived and hasattr(self._metadata, "get_archived_memory_ids"):
+            archived_ids = self._metadata.get_archived_memory_ids()
+
         for memory_scope in scopes_to_get:
             user_id = self._get_mem0_user_id(memory_scope)
             result = self._memory.get_all(user_id=user_id)
@@ -383,10 +407,9 @@ Return JSON: {"facts": ["specific actionable fact 1", "specific actionable fact 
             if result and "results" in result:
                 for mem in result["results"]:
                     memory_id = mem.get("id")
-                    if memory_id and not include_archived:
-                        metadata = self._metadata.get_metadata(memory_id)
-                        if metadata and metadata.archived:
-                            continue
+                    # Fast O(1) set lookup instead of N database queries
+                    if memory_id and not include_archived and memory_id in archived_ids:
+                        continue
                     mem["scope"] = memory_scope.value
                     all_memories.append(mem)
 

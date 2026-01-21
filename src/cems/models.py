@@ -663,3 +663,58 @@ class MetadataStore:
             ]
         finally:
             conn.close()
+
+    def get_archived_memory_ids(self) -> set[str]:
+        """Get all archived memory IDs in a single query.
+        
+        Much faster than checking each memory individually.
+        """
+        conn = sqlite3.connect(self.db_path)
+        try:
+            rows = conn.execute(
+                "SELECT memory_id FROM memory_metadata WHERE archived = 1"
+            ).fetchall()
+            return {row[0] for row in rows}
+        finally:
+            conn.close()
+
+    def get_metadata_batch(self, memory_ids: list[str]) -> dict[str, MemoryMetadata]:
+        """Get metadata for multiple memories in a single query.
+        
+        Returns:
+            Dict mapping memory_id to MemoryMetadata
+        """
+        if not memory_ids:
+            return {}
+        
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+        try:
+            placeholders = ",".join("?" * len(memory_ids))
+            rows = conn.execute(
+                f"SELECT * FROM memory_metadata WHERE memory_id IN ({placeholders})",
+                memory_ids,
+            ).fetchall()
+            return {row["memory_id"]: self._row_to_metadata(row) for row in rows}
+        finally:
+            conn.close()
+
+    def record_access_batch(self, memory_ids: list[str]) -> None:
+        """Record access for multiple memories in a single query."""
+        if not memory_ids:
+            return
+        
+        conn = sqlite3.connect(self.db_path)
+        try:
+            placeholders = ",".join("?" * len(memory_ids))
+            conn.execute(
+                f"""
+                UPDATE memory_metadata
+                SET last_accessed = CURRENT_TIMESTAMP, access_count = access_count + 1
+                WHERE memory_id IN ({placeholders})
+                """,
+                memory_ids,
+            )
+            conn.commit()
+        finally:
+            conn.close()
