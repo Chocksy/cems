@@ -284,6 +284,26 @@ class PostgresMetadataStore:
             rows = session.execute(query).scalars().all()
             return list(rows)
 
+    def get_category_counts(
+        self, user_id: str, scope: MemoryScope | None = None
+    ) -> dict[str, int]:
+        """Get category counts with a single GROUP BY query.
+        
+        Much faster than iterating over memories and calling get_metadata() for each.
+        """
+        from sqlalchemy import func
+        
+        with self._db.session() as session:
+            query = (
+                select(PgMemoryMetadata.category, func.count(PgMemoryMetadata.memory_id))
+                .where(PgMemoryMetadata.archived == False)  # noqa: E712
+                .group_by(PgMemoryMetadata.category)
+            )
+            if scope:
+                query = query.where(PgMemoryMetadata.scope == scope.value)
+            rows = session.execute(query).all()
+            return {cat: count for cat, count in rows if cat}
+
     def get_recently_accessed(
         self, user_id: str, limit: int = 10, scope: MemoryScope | None = None
     ) -> list[MemoryMetadata]:

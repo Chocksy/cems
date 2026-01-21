@@ -1,4 +1,8 @@
-"""CLI interface for CEMS."""
+"""CLI interface for CEMS.
+
+This CLI communicates with a CEMS server via HTTP API.
+All operations require CEMS_API_URL and CEMS_API_KEY to be set.
+"""
 
 import json
 import logging
@@ -8,167 +12,278 @@ import click
 from rich.console import Console
 from rich.table import Table
 
-from cems.config import CEMSConfig
-from cems.memory import CEMSMemory
-from cems.scheduler import CEMSScheduler
+from cems.client import (
+    CEMSAdminClient,
+    CEMSAuthError,
+    CEMSClient,
+    CEMSClientError,
+    CEMSConnectionError,
+)
 
 console = Console()
 
 
 def setup_logging(verbose: bool) -> None:
     """Set up logging configuration."""
-    level = logging.DEBUG if verbose else logging.INFO
+    level = logging.DEBUG if verbose else logging.WARNING
     logging.basicConfig(
         level=level,
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     )
 
 
+def handle_error(e: Exception) -> None:
+    """Handle and display errors nicely."""
+    if isinstance(e, CEMSConnectionError):
+        console.print(f"[red]Connection Error:[/red] {e}")
+        console.print("[dim]Is the CEMS server running? Check CEMS_API_URL.[/dim]")
+    elif isinstance(e, CEMSAuthError):
+        console.print(f"[red]Authentication Error:[/red] {e}")
+        console.print("[dim]Check your CEMS_API_KEY or admin key.[/dim]")
+    elif isinstance(e, CEMSClientError):
+        console.print(f"[red]Error:[/red] {e}")
+    else:
+        console.print(f"[red]Unexpected Error:[/red] {e}")
+    sys.exit(1)
+
+
 @click.group()
 @click.option("-v", "--verbose", is_flag=True, help="Enable verbose output")
+@click.option("--api-url", envvar="CEMS_API_URL", help="CEMS server URL")
+@click.option("--api-key", envvar="CEMS_API_KEY", help="API key for authentication")
 @click.pass_context
-def main(ctx: click.Context, verbose: bool) -> None:
+def main(ctx: click.Context, verbose: bool, api_url: str | None, api_key: str | None) -> None:
     """CEMS - Continuous Evolving Memory System.
 
-    A dual-layer memory system with scheduled maintenance.
+    A memory system for AI assistants. Requires a CEMS server.
+
+    Configuration:
+      CEMS_API_URL  - Server URL (e.g., https://cems.example.com)
+      CEMS_API_KEY  - Your API key
     """
     ctx.ensure_object(dict)
     ctx.obj["verbose"] = verbose
+    ctx.obj["api_url"] = api_url
+    ctx.obj["api_key"] = api_key
     setup_logging(verbose)
 
 
+def get_client(ctx: click.Context) -> CEMSClient:
+    """Get a CEMS client from context."""
+    return CEMSClient(
+        api_url=ctx.obj.get("api_url"),
+        api_key=ctx.obj.get("api_key"),
+    )
+
+
+def get_admin_client(ctx: click.Context, admin_key: str | None = None) -> CEMSAdminClient:
+    """Get an admin client from context."""
+    return CEMSAdminClient(
+        api_url=ctx.obj.get("api_url"),
+        admin_key=admin_key,  # Falls back to env vars in client
+    )
+
+
+# =============================================================================
+# Status Command
+# =============================================================================
+
+
 @main.command()
-@click.option("--user", "-u", envvar="CEMS_USER_ID", default="default", help="User ID")
-@click.option("--team", "-t", envvar="CEMS_TEAM_ID", default=None, help="Team ID")
-def status(user: str, team: str | None) -> None:
+@click.pass_context
+def status(ctx: click.Context) -> None:
     """Show CEMS status and configuration."""
-    config = CEMSConfig(user_id=user, team_id=team)
+    try:
+        client = get_client(ctx)
+        data = client.status()
 
-    table = Table(title="CEMS Configuration")
-    table.add_column("Setting", style="cyan")
-    table.add_column("Value", style="green")
+        table = Table(title="CEMS Status")
+        table.add_column("Setting", style="cyan")
+        table.add_column("Value", style="green")
 
-    table.add_row("User ID", config.user_id)
-    table.add_row("Team ID", config.team_id or "(not set)")
-    table.add_row("Storage Directory", str(config.storage_dir))
-    table.add_row("Memory Backend", config.memory_backend)
-    table.add_row("Vector Store", config.vector_store)
-    table.add_row("Qdrant URL", config.qdrant_url or "(embedded)")
-    table.add_row("Mem0 Model", config.get_mem0_model())
-    table.add_row("Embedding Model", config.embedding_model)
-    table.add_row("Maintenance Model", config.llm_model)
-    table.add_row("Graph Store", config.graph_store if config.enable_graph else "disabled")
-    table.add_row("Scheduler Enabled", str(config.enable_scheduler))
+        table.add_row("Server", client.api_url)
+        table.add_row("User ID", data.get("user_id", "?"))
+        table.add_row("Team ID", data.get("team_id") or "(not set)")
+        table.add_row("Status", data.get("status", "unknown"))
+        table.add_row("Backend", data.get("backend", "?"))
+        table.add_row("Vector Store", data.get("vector_store", "?"))
+        table.add_row("Graph Store", data.get("graph_store") or "disabled")
+        table.add_row("Query Synthesis", str(data.get("query_synthesis", False)))
 
-    console.print(table)
+        console.print(table)
+
+        # Show graph stats if available
+        if data.get("graph_stats"):
+            console.print("\n[bold]Graph Statistics:[/bold]")
+            for key, value in data["graph_stats"].items():
+                console.print(f"  {key}: {value}")
+
+    except CEMSClientError as e:
+        handle_error(e)
+
+
+# =============================================================================
+# Memory Commands
+# =============================================================================
 
 
 @main.command()
 @click.argument("content")
 @click.option("--scope", "-s", default="personal", type=click.Choice(["personal", "shared"]))
 @click.option("--category", "-c", default="general", help="Memory category")
-@click.option("--user", "-u", envvar="CEMS_USER_ID", default="default", help="User ID")
-@click.option("--team", "-t", envvar="CEMS_TEAM_ID", default=None, help="Team ID")
-def add(content: str, scope: str, category: str, user: str, team: str | None) -> None:
-    """Add a memory."""
-    config = CEMSConfig(user_id=user, team_id=team)
-    memory = CEMSMemory(config)
+@click.option("--tags", "-t", multiple=True, help="Tags for the memory")
+@click.pass_context
+def add(ctx: click.Context, content: str, scope: str, category: str, tags: tuple) -> None:
+    """Add a memory.
 
-    with console.status("Adding memory..."):
-        result = memory.add(content, scope=scope, category=category)
+    Example:
+        cems add "Always use TypeScript for new projects" -c preferences
+    """
+    try:
+        client = get_client(ctx)
 
-    if result:
-        console.print("[green]Memory added successfully[/green]")
-        console.print(json.dumps(result, indent=2, default=str))
-    else:
-        console.print("[red]Failed to add memory[/red]")
+        with console.status("Adding memory..."):
+            result = client.add(content, category=category, scope=scope, tags=list(tags))
+
+        if result.get("success"):
+            console.print("[green]Memory added successfully[/green]")
+            if ctx.obj["verbose"]:
+                console.print(json.dumps(result, indent=2, default=str))
+        else:
+            console.print("[yellow]Memory may not have been added[/yellow]")
+            console.print(json.dumps(result, indent=2, default=str))
+
+    except CEMSClientError as e:
+        handle_error(e)
 
 
 @main.command()
 @click.argument("query")
 @click.option("--scope", "-s", default="both", type=click.Choice(["personal", "shared", "both"]))
 @click.option("--limit", "-l", default=5, help="Maximum results")
-@click.option("--user", "-u", envvar="CEMS_USER_ID", default="default", help="User ID")
-@click.option("--team", "-t", envvar="CEMS_TEAM_ID", default=None, help="Team ID")
-def search(query: str, scope: str, limit: int, user: str, team: str | None) -> None:
-    """Search memories."""
-    config = CEMSConfig(user_id=user, team_id=team)
-    memory = CEMSMemory(config)
+@click.pass_context
+def search(ctx: click.Context, query: str, scope: str, limit: int) -> None:
+    """Search memories.
 
-    with console.status("Searching..."):
-        results = memory.search(query, scope=scope, limit=limit)
+    Example:
+        cems search "TypeScript preferences"
+    """
+    try:
+        client = get_client(ctx)
 
-    if results:
-        table = Table(title=f"Search Results for: {query}")
-        table.add_column("ID", style="dim", max_width=12)
-        table.add_column("Content", style="white")
-        table.add_column("Score", style="cyan")
-        table.add_column("Scope", style="yellow")
+        with console.status("Searching..."):
+            results = client.search(query, scope=scope, limit=limit)
 
-        for r in results:
-            table.add_row(
-                r.memory_id[:12] if r.memory_id else "?",
-                r.content[:80] + "..." if len(r.content) > 80 else r.content,
-                f"{r.score:.3f}",
-                r.scope.value,
-            )
+        if results:
+            table = Table(title=f"Search Results for: {query}")
+            table.add_column("ID", style="dim", max_width=12)
+            table.add_column("Content", style="white")
+            table.add_column("Score", style="cyan")
+            table.add_column("Scope", style="yellow")
 
-        console.print(table)
-    else:
-        console.print("[yellow]No results found[/yellow]")
+            for r in results:
+                content = r.get("content", r.get("memory", ""))
+                table.add_row(
+                    (r.get("memory_id") or r.get("id", "?"))[:12],
+                    content[:80] + "..." if len(content) > 80 else content,
+                    f"{r.get('score', 0):.3f}",
+                    r.get("scope", "?"),
+                )
+
+            console.print(table)
+        else:
+            console.print("[yellow]No results found[/yellow]")
+
+    except CEMSClientError as e:
+        handle_error(e)
 
 
 @main.command("list")
-@click.option("--scope", "-s", default="both", type=click.Choice(["personal", "shared", "both"]))
-@click.option("--user", "-u", envvar="CEMS_USER_ID", default="default", help="User ID")
-@click.option("--team", "-t", envvar="CEMS_TEAM_ID", default=None, help="Team ID")
-def list_memories(scope: str, user: str, team: str | None) -> None:
-    """List all memories."""
-    config = CEMSConfig(user_id=user, team_id=team)
-    memory = CEMSMemory(config)
+@click.option("--scope", "-s", default="personal", type=click.Choice(["personal", "shared"]))
+@click.pass_context
+def list_memories(ctx: click.Context, scope: str) -> None:
+    """List memories (via summary).
 
-    with console.status("Loading memories..."):
-        memories = memory.get_all(scope=scope)
+    Shows a summary of memories by category.
+    """
+    try:
+        client = get_client(ctx)
 
-    if memories:
-        table = Table(title=f"All Memories ({scope})")
-        table.add_column("ID", style="dim", max_width=12)
-        table.add_column("Content", style="white")
-        table.add_column("Scope", style="yellow")
+        with console.status("Loading summary..."):
+            result = client.summary(scope=scope)
 
-        for m in memories:
-            content = m.get("memory", "")
-            table.add_row(
-                m.get("id", "?")[:12],
-                content[:80] + "..." if len(content) > 80 else content,
-                m.get("scope", "?"),
-            )
+        if result.get("success"):
+            table = Table(title=f"Memory Summary ({scope})")
+            table.add_column("Category", style="cyan")
+            table.add_column("Count", style="green")
 
-        console.print(table)
-        console.print(f"\nTotal: {len(memories)} memories")
-    else:
-        console.print("[yellow]No memories found[/yellow]")
+            categories = result.get("categories", {})
+            for cat, count in sorted(categories.items()):
+                table.add_row(cat, str(count))
+
+            console.print(table)
+            console.print(f"\n[bold]Total:[/bold] {result.get('total', 0)} memories")
+        else:
+            console.print("[yellow]Could not load summary[/yellow]")
+
+    except CEMSClientError as e:
+        handle_error(e)
 
 
 @main.command()
 @click.argument("memory_id")
 @click.option("--hard", is_flag=True, help="Permanently delete instead of archive")
-@click.option("--user", "-u", envvar="CEMS_USER_ID", default="default", help="User ID")
-@click.option("--team", "-t", envvar="CEMS_TEAM_ID", default=None, help="Team ID")
-def delete(memory_id: str, hard: bool, user: str, team: str | None) -> None:
-    """Delete or archive a memory."""
-    config = CEMSConfig(user_id=user, team_id=team)
-    memory = CEMSMemory(config)
+@click.pass_context
+def delete(ctx: click.Context, memory_id: str, hard: bool) -> None:
+    """Delete or archive a memory.
 
-    action = "Deleting" if hard else "Archiving"
-    with console.status(f"{action} memory..."):
-        result = memory.delete(memory_id, hard=hard)
+    Example:
+        cems delete abc123 --hard
+    """
+    try:
+        client = get_client(ctx)
 
-    console.print(f"[green]Memory {'deleted' if hard else 'archived'} successfully[/green]")
-    console.print(json.dumps(result, indent=2, default=str))
+        action = "Deleting" if hard else "Archiving"
+        with console.status(f"{action} memory..."):
+            result = client.delete(memory_id, hard=hard)
+
+        console.print(f"[green]Memory {'deleted' if hard else 'archived'} successfully[/green]")
+        if ctx.obj["verbose"]:
+            console.print(json.dumps(result, indent=2, default=str))
+
+    except CEMSClientError as e:
+        handle_error(e)
 
 
-# Maintenance commands
+@main.command()
+@click.argument("memory_id")
+@click.argument("content")
+@click.pass_context
+def update(ctx: click.Context, memory_id: str, content: str) -> None:
+    """Update a memory's content.
+
+    Example:
+        cems update abc123 "Updated content here"
+    """
+    try:
+        client = get_client(ctx)
+
+        with console.status("Updating memory..."):
+            result = client.update(memory_id, content)
+
+        console.print("[green]Memory updated successfully[/green]")
+        if ctx.obj["verbose"]:
+            console.print(json.dumps(result, indent=2, default=str))
+
+    except CEMSClientError as e:
+        handle_error(e)
+
+
+# =============================================================================
+# Maintenance Commands
+# =============================================================================
+
+
 @main.group()
 def maintenance() -> None:
     """Maintenance commands for memory system."""
@@ -177,340 +292,453 @@ def maintenance() -> None:
 
 @maintenance.command("run")
 @click.argument("job_type", type=click.Choice(["consolidation", "summarization", "reindex", "all"]))
-@click.option("--user", "-u", envvar="CEMS_USER_ID", default="default", help="User ID")
-@click.option("--team", "-t", envvar="CEMS_TEAM_ID", default=None, help="Team ID")
-def run_maintenance(job_type: str, user: str, team: str | None) -> None:
+@click.pass_context
+def run_maintenance(ctx: click.Context, job_type: str) -> None:
     """Run a maintenance job immediately.
 
     JOB_TYPE: consolidation, summarization, reindex, or all
     """
-    config = CEMSConfig(user_id=user, team_id=team)
-    memory = CEMSMemory(config)
-    scheduler = CEMSScheduler(memory)
-
-    jobs = (
-        ["consolidation", "summarization", "reindex"]
-        if job_type == "all"
-        else [job_type]
-    )
-
-    for job in jobs:
-        console.print(f"\n[cyan]Running {job}...[/cyan]")
-        try:
-            result = scheduler.run_now(job)
-            console.print(f"[green]{job} completed:[/green]")
-            console.print(json.dumps(result, indent=2))
-        except Exception as e:
-            console.print(f"[red]{job} failed: {e}[/red]")
-
-
-@maintenance.command("schedule")
-@click.option("--user", "-u", envvar="CEMS_USER_ID", default="default", help="User ID")
-@click.option("--team", "-t", envvar="CEMS_TEAM_ID", default=None, help="Team ID")
-def show_schedule(user: str, team: str | None) -> None:
-    """Show the maintenance schedule."""
-    config = CEMSConfig(user_id=user, team_id=team)
-    memory = CEMSMemory(config)
-    scheduler = CEMSScheduler(memory)
-
-    # Start scheduler to get job info
-    scheduler.start()
-    jobs = scheduler.get_jobs()
-    scheduler.stop()
-
-    table = Table(title="Maintenance Schedule")
-    table.add_column("Job", style="cyan")
-    table.add_column("Next Run", style="green")
-
-    for job in jobs:
-        table.add_row(job["name"], job["next_run"] or "Not scheduled")
-
-    console.print(table)
-
-    # Also show config
-    console.print("\n[bold]Schedule Configuration:[/bold]")
-    console.print(f"  Nightly consolidation: {config.nightly_hour}:00")
-    console.print(f"  Weekly summarization: {config.weekly_day} at {config.weekly_hour}:00")
-    console.print(f"  Monthly re-index: Day {config.monthly_day} at {config.monthly_hour}:00")
-
-
-@maintenance.command("history")
-@click.option("--limit", "-l", default=10, help="Number of entries to show")
-@click.option("--user", "-u", envvar="CEMS_USER_ID", default="default", help="User ID")
-@click.option("--team", "-t", envvar="CEMS_TEAM_ID", default=None, help="Team ID")
-def maintenance_history(limit: int, user: str, team: str | None) -> None:
-    """Show maintenance job history."""
-    import sqlite3
-
-    config = CEMSConfig(user_id=user, team_id=team)
-
-    conn = sqlite3.connect(config.metadata_db_path)
-    conn.row_factory = sqlite3.Row
     try:
-        rows = conn.execute(
-            """
-            SELECT * FROM maintenance_log
-            WHERE user_id = ?
-            ORDER BY started_at DESC
-            LIMIT ?
-            """,
-            (user, limit),
-        ).fetchall()
+        client = get_client(ctx)
 
-        if rows:
-            table = Table(title="Maintenance History")
-            table.add_column("Job", style="cyan")
-            table.add_column("Started", style="white")
-            table.add_column("Status", style="green")
-            table.add_column("Details", style="dim", max_width=40)
+        console.print(f"[cyan]Running {job_type}...[/cyan]")
+        with console.status("Running maintenance..."):
+            result = client.maintenance(job_type)
 
-            for row in rows:
-                status_color = "green" if row["status"] == "completed" else "red"
+        if result.get("success"):
+            console.print(f"[green]{job_type} completed[/green]")
+            if ctx.obj["verbose"]:
+                console.print(json.dumps(result, indent=2, default=str))
+        else:
+            console.print(f"[yellow]{job_type} may have failed[/yellow]")
+            console.print(json.dumps(result, indent=2, default=str))
+
+    except CEMSClientError as e:
+        handle_error(e)
+
+
+# =============================================================================
+# Admin Commands
+# =============================================================================
+
+
+@main.group()
+@click.option("--admin-key", envvar="CEMS_ADMIN_KEY", help="Admin API key")
+@click.pass_context
+def admin(ctx: click.Context, admin_key: str | None) -> None:
+    """Admin commands for user and team management.
+
+    Requires admin privileges (CEMS_ADMIN_KEY or admin user API key).
+    """
+    ctx.obj["admin_key"] = admin_key
+
+
+# -----------------------------------------------------------------------------
+# User Management
+# -----------------------------------------------------------------------------
+
+
+@admin.group("users")
+def admin_users() -> None:
+    """User management commands."""
+    pass
+
+
+@admin_users.command("list")
+@click.option("--include-inactive", is_flag=True, help="Include inactive users")
+@click.option("--limit", default=100, help="Maximum users to return")
+@click.pass_context
+def users_list(ctx: click.Context, include_inactive: bool, limit: int) -> None:
+    """List all users."""
+    try:
+        client = get_admin_client(ctx, ctx.obj.get("admin_key"))
+
+        with console.status("Loading users..."):
+            result = client.list_users(include_inactive=include_inactive, limit=limit)
+
+        users = result.get("users", [])
+        if users:
+            table = Table(title="Users")
+            table.add_column("Username", style="cyan")
+            table.add_column("Email", style="white")
+            table.add_column("Admin", style="yellow")
+            table.add_column("Active", style="green")
+            table.add_column("API Key Prefix", style="dim")
+
+            for u in users:
                 table.add_row(
-                    row["job_type"],
-                    row["started_at"],
-                    f"[{status_color}]{row['status']}[/{status_color}]",
-                    (row["details"] or "")[:40],
+                    u.get("username", "?"),
+                    u.get("email") or "-",
+                    "Yes" if u.get("is_admin") else "No",
+                    "Yes" if u.get("is_active") else "No",
+                    u.get("api_key_prefix", "?"),
+                )
+
+            console.print(table)
+            console.print(f"\nTotal: {len(users)} users")
+        else:
+            console.print("[yellow]No users found[/yellow]")
+
+    except CEMSClientError as e:
+        handle_error(e)
+
+
+@admin_users.command("create")
+@click.argument("username")
+@click.option("--email", "-e", help="User email")
+@click.option("--admin", "is_admin", is_flag=True, help="Make user an admin")
+@click.pass_context
+def users_create(ctx: click.Context, username: str, email: str | None, is_admin: bool) -> None:
+    """Create a new user.
+
+    The API key will be displayed ONCE - save it!
+
+    Example:
+        cems admin users create john --email john@example.com
+    """
+    try:
+        client = get_admin_client(ctx, ctx.obj.get("admin_key"))
+
+        with console.status("Creating user..."):
+            result = client.create_user(username, email=email, is_admin=is_admin)
+
+        console.print("[green]User created successfully![/green]\n")
+
+        user = result.get("user", {})
+        table = Table(title="New User")
+        table.add_column("Field", style="cyan")
+        table.add_column("Value", style="white")
+
+        table.add_row("Username", user.get("username", "?"))
+        table.add_row("Email", user.get("email") or "-")
+        table.add_row("Admin", "Yes" if user.get("is_admin") else "No")
+        table.add_row("API Key Prefix", user.get("api_key_prefix", "?"))
+
+        console.print(table)
+
+        # Show API key prominently
+        api_key = result.get("api_key")
+        if api_key:
+            console.print("\n[bold red]IMPORTANT: Save this API key - it will NOT be shown again![/bold red]")
+            console.print(f"\n[bold]API Key:[/bold] {api_key}\n")
+
+    except CEMSClientError as e:
+        handle_error(e)
+
+
+@admin_users.command("get")
+@click.argument("user")
+@click.pass_context
+def users_get(ctx: click.Context, user: str) -> None:
+    """Get user details.
+
+    USER can be a username or UUID.
+    """
+    try:
+        client = get_admin_client(ctx, ctx.obj.get("admin_key"))
+
+        with console.status("Loading user..."):
+            result = client.get_user(user)
+
+        table = Table(title=f"User: {result.get('username', '?')}")
+        table.add_column("Field", style="cyan")
+        table.add_column("Value", style="white")
+
+        table.add_row("ID", result.get("id", "?"))
+        table.add_row("Username", result.get("username", "?"))
+        table.add_row("Email", result.get("email") or "-")
+        table.add_row("Admin", "Yes" if result.get("is_admin") else "No")
+        table.add_row("Active", "Yes" if result.get("is_active") else "No")
+        table.add_row("API Key Prefix", result.get("api_key_prefix", "?"))
+        table.add_row("Created", result.get("created_at", "?"))
+        table.add_row("Last Active", result.get("last_active", "?"))
+
+        console.print(table)
+
+    except CEMSClientError as e:
+        handle_error(e)
+
+
+@admin_users.command("delete")
+@click.argument("user_id")
+@click.option("--yes", "-y", is_flag=True, help="Skip confirmation")
+@click.pass_context
+def users_delete(ctx: click.Context, user_id: str, yes: bool) -> None:
+    """Delete a user.
+
+    USER_ID must be the UUID.
+    """
+    if not yes:
+        if not click.confirm(f"Delete user {user_id}?"):
+            console.print("[yellow]Cancelled[/yellow]")
+            return
+
+    try:
+        client = get_admin_client(ctx, ctx.obj.get("admin_key"))
+
+        with console.status("Deleting user..."):
+            client.delete_user(user_id)
+
+        console.print("[green]User deleted[/green]")
+
+    except CEMSClientError as e:
+        handle_error(e)
+
+
+@admin_users.command("reset-key")
+@click.argument("user_id")
+@click.option("--yes", "-y", is_flag=True, help="Skip confirmation")
+@click.pass_context
+def users_reset_key(ctx: click.Context, user_id: str, yes: bool) -> None:
+    """Reset a user's API key.
+
+    The new API key will be displayed ONCE - save it!
+    """
+    if not yes:
+        if not click.confirm(f"Reset API key for user {user_id}?"):
+            console.print("[yellow]Cancelled[/yellow]")
+            return
+
+    try:
+        client = get_admin_client(ctx, ctx.obj.get("admin_key"))
+
+        with console.status("Resetting API key..."):
+            result = client.reset_api_key(user_id)
+
+        console.print("[green]API key reset successfully![/green]\n")
+
+        user = result.get("user", {})
+        console.print(f"[bold]Username:[/bold] {user.get('username', '?')}")
+        console.print(f"[bold]New Prefix:[/bold] {user.get('api_key_prefix', '?')}")
+
+        api_key = result.get("api_key")
+        if api_key:
+            console.print("\n[bold red]IMPORTANT: Save this API key - it will NOT be shown again![/bold red]")
+            console.print(f"\n[bold]API Key:[/bold] {api_key}\n")
+
+    except CEMSClientError as e:
+        handle_error(e)
+
+
+# -----------------------------------------------------------------------------
+# Team Management
+# -----------------------------------------------------------------------------
+
+
+@admin.group("teams")
+def admin_teams() -> None:
+    """Team management commands."""
+    pass
+
+
+@admin_teams.command("list")
+@click.option("--limit", default=100, help="Maximum teams to return")
+@click.pass_context
+def teams_list(ctx: click.Context, limit: int) -> None:
+    """List all teams."""
+    try:
+        client = get_admin_client(ctx, ctx.obj.get("admin_key"))
+
+        with console.status("Loading teams..."):
+            result = client.list_teams(limit=limit)
+
+        teams = result.get("teams", [])
+        if teams:
+            table = Table(title="Teams")
+            table.add_column("Name", style="cyan")
+            table.add_column("Company ID", style="white")
+            table.add_column("Created", style="dim")
+            table.add_column("ID", style="dim", max_width=12)
+
+            for t in teams:
+                table.add_row(
+                    t.get("name", "?"),
+                    t.get("company_id", "?"),
+                    t.get("created_at", "?")[:10] if t.get("created_at") else "?",
+                    t.get("id", "?")[:12],
+                )
+
+            console.print(table)
+            console.print(f"\nTotal: {len(teams)} teams")
+        else:
+            console.print("[yellow]No teams found[/yellow]")
+
+    except CEMSClientError as e:
+        handle_error(e)
+
+
+@admin_teams.command("create")
+@click.argument("name")
+@click.option("--company-id", "-c", required=True, help="Company identifier")
+@click.pass_context
+def teams_create(ctx: click.Context, name: str, company_id: str) -> None:
+    """Create a new team.
+
+    Example:
+        cems admin teams create engineering --company-id acme
+    """
+    try:
+        client = get_admin_client(ctx, ctx.obj.get("admin_key"))
+
+        with console.status("Creating team..."):
+            result = client.create_team(name, company_id)
+
+        console.print("[green]Team created successfully![/green]\n")
+
+        team = result.get("team", {})
+        console.print(f"[bold]Name:[/bold] {team.get('name', '?')}")
+        console.print(f"[bold]Company:[/bold] {team.get('company_id', '?')}")
+        console.print(f"[bold]ID:[/bold] {team.get('id', '?')}")
+
+    except CEMSClientError as e:
+        handle_error(e)
+
+
+@admin_teams.command("get")
+@click.argument("team")
+@click.pass_context
+def teams_get(ctx: click.Context, team: str) -> None:
+    """Get team details with members.
+
+    TEAM can be a team name or UUID.
+    """
+    try:
+        client = get_admin_client(ctx, ctx.obj.get("admin_key"))
+
+        with console.status("Loading team..."):
+            result = client.get_team(team)
+
+        console.print(f"\n[bold]Team: {result.get('name', '?')}[/bold]\n")
+        console.print(f"ID: {result.get('id', '?')}")
+        console.print(f"Company: {result.get('company_id', '?')}")
+        console.print(f"Created: {result.get('created_at', '?')}")
+
+        members = result.get("members", [])
+        if members:
+            console.print("\n[bold]Members:[/bold]")
+            table = Table()
+            table.add_column("User ID", style="dim", max_width=12)
+            table.add_column("Role", style="cyan")
+            table.add_column("Joined", style="white")
+
+            for m in members:
+                table.add_row(
+                    m.get("user_id", "?")[:12],
+                    m.get("role", "?"),
+                    m.get("joined_at", "?")[:10] if m.get("joined_at") else "?",
                 )
 
             console.print(table)
         else:
-            console.print("[yellow]No maintenance history found[/yellow]")
-    finally:
-        conn.close()
+            console.print("\n[yellow]No members[/yellow]")
+
+    except CEMSClientError as e:
+        handle_error(e)
 
 
-@main.command("generate-config")
-@click.option("--user", "-u", envvar="CEMS_USER_ID", default="default", help="User ID")
-@click.option("--team", "-t", envvar="CEMS_TEAM_ID", default=None, help="Team ID")
-@click.option("--output", "-o", type=click.Path(), help="Output file path")
-def generate_config(user: str, team: str | None, output: str | None) -> None:
-    """Generate MCP configuration for Claude Code."""
-    from pathlib import Path
+@admin_teams.command("delete")
+@click.argument("team_id")
+@click.option("--yes", "-y", is_flag=True, help="Skip confirmation")
+@click.pass_context
+def teams_delete(ctx: click.Context, team_id: str, yes: bool) -> None:
+    """Delete a team.
 
-    mcp_config = {
-        "mcpServers": {
-            "cems": {
-                "command": "cems-server",
-                "args": [],
-                "env": {
-                    "CEMS_USER_ID": user,
-                },
-            }
-        }
-    }
-
-    if team:
-        mcp_config["mcpServers"]["cems"]["env"]["CEMS_TEAM_ID"] = team
-
-    config_json = json.dumps(mcp_config, indent=2)
-
-    if output:
-        Path(output).write_text(config_json)
-        console.print(f"[green]Configuration written to {output}[/green]")
-    else:
-        console.print("\n[bold]Add this to ~/.claude/mcp_config.json:[/bold]\n")
-        console.print(config_json)
-
-
-# Indexer commands
-@main.group()
-def index() -> None:
-    """Repository indexing commands."""
-    pass
-
-
-@index.command("repo")
-@click.argument("path", type=click.Path(exists=True))
-@click.option("--scope", "-s", default="shared", type=click.Choice(["personal", "shared"]))
-@click.option("--patterns", "-p", multiple=True, help="Specific patterns to use")
-@click.option("--user", "-u", envvar="CEMS_USER_ID", default="default", help="User ID")
-@click.option("--team", "-t", envvar="CEMS_TEAM_ID", default=None, help="Team ID")
-def index_repo(path: str, scope: str, patterns: tuple, user: str, team: str | None) -> None:
-    """Index a local repository.
-
-    Scans the repository for patterns like RSpec conventions, architecture
-    decisions, documentation, etc. Extracted knowledge is stored as
-    PINNED memories that won't be auto-pruned.
-
-    PATH: Path to the repository to index
+    TEAM_ID must be the UUID.
     """
-    from cems.indexer import RepositoryIndexer
+    if not yes:
+        if not click.confirm(f"Delete team {team_id}?"):
+            console.print("[yellow]Cancelled[/yellow]")
+            return
 
-    config = CEMSConfig(user_id=user, team_id=team)
-    memory = CEMSMemory(config)
-    indexer = RepositoryIndexer(memory)
+    try:
+        client = get_admin_client(ctx, ctx.obj.get("admin_key"))
 
-    pattern_list = list(patterns) if patterns else None
+        with console.status("Deleting team..."):
+            client.delete_team(team_id)
 
-    with console.status(f"Indexing {path}..."):
-        results = indexer.index_local_path(path, scope=scope, patterns=pattern_list)
+        console.print("[green]Team deleted[/green]")
 
-    console.print(f"\n[bold green]Indexing complete![/bold green]\n")
-
-    table = Table(title="Indexing Results")
-    table.add_column("Metric", style="cyan")
-    table.add_column("Value", style="green")
-
-    table.add_row("Repository", results["repo_path"])
-    table.add_row("Files scanned", str(results["files_scanned"]))
-    table.add_row("Knowledge extracted", str(results["knowledge_extracted"]))
-    table.add_row("Memories created", str(results["memories_created"]))
-    table.add_row("Patterns used", ", ".join(results["patterns_used"]))
-
-    console.print(table)
-
-    if results["errors"]:
-        console.print(f"\n[yellow]Warnings: {len(results['errors'])} errors[/yellow]")
+    except CEMSClientError as e:
+        handle_error(e)
 
 
-@index.command("git")
-@click.argument("repo_url")
-@click.option("--branch", "-b", default="main", help="Branch to clone")
-@click.option("--scope", "-s", default="shared", type=click.Choice(["personal", "shared"]))
-@click.option("--patterns", "-p", multiple=True, help="Specific patterns to use")
-@click.option("--user", "-u", envvar="CEMS_USER_ID", default="default", help="User ID")
-@click.option("--team", "-t", envvar="CEMS_TEAM_ID", default=None, help="Team ID")
-def index_git(
-    repo_url: str, branch: str, scope: str, patterns: tuple, user: str, team: str | None
-) -> None:
-    """Index a git repository.
+@admin_teams.command("add-member")
+@click.argument("team_id")
+@click.argument("user_id")
+@click.option("--role", "-r", default="member", type=click.Choice(["admin", "member", "viewer"]))
+@click.pass_context
+def teams_add_member(ctx: click.Context, team_id: str, user_id: str, role: str) -> None:
+    """Add a user to a team.
 
-    Clones and indexes a git repository. Useful for indexing external
-    repositories or remote team repos.
-
-    REPO_URL: Git repository URL (https or ssh)
+    Example:
+        cems admin teams add-member <team-uuid> <user-uuid> --role member
     """
-    from cems.indexer import RepositoryIndexer
+    try:
+        client = get_admin_client(ctx, ctx.obj.get("admin_key"))
 
-    config = CEMSConfig(user_id=user, team_id=team)
-    memory = CEMSMemory(config)
-    indexer = RepositoryIndexer(memory)
+        with console.status("Adding member..."):
+            result = client.add_team_member(team_id, user_id, role)
 
-    pattern_list = list(patterns) if patterns else None
+        console.print("[green]Member added successfully![/green]")
+        member = result.get("member", {})
+        console.print(f"Role: {member.get('role', '?')}")
 
-    with console.status(f"Cloning and indexing {repo_url}..."):
-        results = indexer.index_git_repo(repo_url, branch=branch, scope=scope, patterns=pattern_list)
-
-    console.print(f"\n[bold green]Indexing complete![/bold green]\n")
-
-    table = Table(title="Indexing Results")
-    table.add_column("Metric", style="cyan")
-    table.add_column("Value", style="green")
-
-    table.add_row("Repository", results.get("repo_url", ""))
-    table.add_row("Branch", results.get("branch", ""))
-    table.add_row("Files scanned", str(results["files_scanned"]))
-    table.add_row("Knowledge extracted", str(results["knowledge_extracted"]))
-    table.add_row("Memories created", str(results["memories_created"]))
-    table.add_row("Patterns used", ", ".join(results["patterns_used"]))
-
-    console.print(table)
+    except CEMSClientError as e:
+        handle_error(e)
 
 
-@index.command("patterns")
-def list_patterns() -> None:
-    """List available index patterns."""
-    from cems.indexer import get_default_patterns
+@admin_teams.command("remove-member")
+@click.argument("team_id")
+@click.argument("user_id")
+@click.option("--yes", "-y", is_flag=True, help="Skip confirmation")
+@click.pass_context
+def teams_remove_member(ctx: click.Context, team_id: str, user_id: str, yes: bool) -> None:
+    """Remove a user from a team."""
+    if not yes:
+        if not click.confirm(f"Remove user {user_id} from team {team_id}?"):
+            console.print("[yellow]Cancelled[/yellow]")
+            return
 
-    patterns = get_default_patterns()
+    try:
+        client = get_admin_client(ctx, ctx.obj.get("admin_key"))
 
-    table = Table(title="Available Index Patterns")
-    table.add_column("Name", style="cyan")
-    table.add_column("Description", style="white")
-    table.add_column("Pin Category", style="yellow")
-    table.add_column("File Patterns", style="dim", max_width=40)
+        with console.status("Removing member..."):
+            client.remove_team_member(team_id, user_id)
 
-    for p in patterns:
-        table.add_row(
-            p.name,
-            p.description,
-            p.pin_category,
-            ", ".join(p.file_patterns[:2]) + ("..." if len(p.file_patterns) > 2 else ""),
-        )
+        console.print("[green]Member removed[/green]")
 
-    console.print(table)
-
-
-# Pin/unpin commands
-@main.command("pin")
-@click.argument("memory_id")
-@click.option("--reason", "-r", required=True, help="Reason for pinning")
-@click.option(
-    "--category",
-    "-c",
-    default="guideline",
-    type=click.Choice(["guideline", "convention", "architecture", "standard", "documentation"]),
-)
-@click.option("--user", "-u", envvar="CEMS_USER_ID", default="default", help="User ID")
-@click.option("--team", "-t", envvar="CEMS_TEAM_ID", default=None, help="Team ID")
-def pin_memory(memory_id: str, reason: str, category: str, user: str, team: str | None) -> None:
-    """Pin a memory to prevent automatic decay.
-
-    Pinned memories are never auto-pruned by maintenance jobs.
-    Use this for important guidelines, conventions, or architecture decisions.
-    """
-    config = CEMSConfig(user_id=user, team_id=team)
-    memory = CEMSMemory(config)
-
-    memory.metadata_store.pin_memory(memory_id, reason=reason, pin_category=category)
-    console.print(f"[green]Memory {memory_id} pinned as {category}[/green]")
-    console.print(f"Reason: {reason}")
+    except CEMSClientError as e:
+        handle_error(e)
 
 
-@main.command("unpin")
-@click.argument("memory_id")
-@click.option("--user", "-u", envvar="CEMS_USER_ID", default="default", help="User ID")
-@click.option("--team", "-t", envvar="CEMS_TEAM_ID", default=None, help="Team ID")
-def unpin_memory(memory_id: str, user: str, team: str | None) -> None:
-    """Unpin a memory, allowing normal decay."""
-    config = CEMSConfig(user_id=user, team_id=team)
-    memory = CEMSMemory(config)
-
-    memory.metadata_store.unpin_memory(memory_id)
-    console.print(f"[green]Memory {memory_id} unpinned[/green]")
+# =============================================================================
+# Health Check
+# =============================================================================
 
 
-@main.command("pinned")
-@click.option(
-    "--category",
-    "-c",
-    default=None,
-    type=click.Choice(["guideline", "convention", "architecture", "standard", "documentation"]),
-)
-@click.option("--user", "-u", envvar="CEMS_USER_ID", default="default", help="User ID")
-@click.option("--team", "-t", envvar="CEMS_TEAM_ID", default=None, help="Team ID")
-def list_pinned(category: str | None, user: str, team: str | None) -> None:
-    """List pinned memories."""
-    config = CEMSConfig(user_id=user, team_id=team)
-    memory = CEMSMemory(config)
+@main.command()
+@click.pass_context
+def health(ctx: click.Context) -> None:
+    """Check server health."""
+    try:
+        client = get_client(ctx)
 
-    pinned_ids = memory.metadata_store.get_pinned_memories(user, pin_category=category)
+        with console.status("Checking health..."):
+            result = client.health()
 
-    if pinned_ids:
-        table = Table(title="Pinned Memories")
-        table.add_column("ID", style="dim", max_width=12)
-        table.add_column("Content", style="white", max_width=50)
-        table.add_column("Category", style="yellow")
-        table.add_column("Reason", style="cyan")
+        status_text = result.get("status", "unknown")
+        if status_text == "healthy":
+            console.print(f"[green]Server: {status_text}[/green]")
+        else:
+            console.print(f"[yellow]Server: {status_text}[/yellow]")
 
-        for mem_id in pinned_ids:
-            metadata = memory.get_metadata(mem_id)
-            mem = memory.get(mem_id)
-            content = mem.get("memory", "") if mem else ""
+        console.print(f"Service: {result.get('service', '?')}")
+        console.print(f"Mode: {result.get('mode', '?')}")
+        console.print(f"Auth: {result.get('auth', '?')}")
+        console.print(f"Database: {result.get('database', '?')}")
 
-            if metadata:
-                table.add_row(
-                    mem_id[:12],
-                    content[:50] + "..." if len(content) > 50 else content,
-                    metadata.pin_category or "",
-                    (metadata.pin_reason or "")[:30],
-                )
-
-        console.print(table)
-        console.print(f"\nTotal pinned: {len(pinned_ids)}")
-    else:
-        console.print("[yellow]No pinned memories found[/yellow]")
+    except CEMSClientError as e:
+        handle_error(e)
 
 
 if __name__ == "__main__":

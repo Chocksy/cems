@@ -530,6 +530,31 @@ Return JSON: {"facts": ["specific actionable fact 1", "specific actionable fact 
         """
         return self._metadata.get_metadata(memory_id)
 
+    def get_category_counts(self, scope: Literal["personal", "shared"] | None = None) -> dict[str, int]:
+        """Get memory counts grouped by category using a single efficient query.
+
+        Args:
+            scope: Optional filter by scope ("personal" or "shared")
+
+        Returns:
+            Dict mapping category name to count
+        """
+        from cems.models import MemoryScope
+        
+        scope_enum = MemoryScope(scope) if scope else None
+        
+        # Check if metadata store has the optimized method
+        if hasattr(self._metadata, "get_category_counts"):
+            return self._metadata.get_category_counts(self.config.user_id, scope_enum)
+        
+        # Fallback for SQLite store (uses get_all_categories which already has GROUP BY)
+        if hasattr(self._metadata, "get_all_categories"):
+            results = self._metadata.get_all_categories(self.config.user_id, scope_enum)
+            return {r["category"]: r["count"] for r in results}
+        
+        # Ultimate fallback - empty dict
+        return {}
+
     @property
     def metadata_store(self) -> MetadataStore:
         """Access the metadata store directly for maintenance operations."""

@@ -1,12 +1,18 @@
 #!/bin/bash
 # CEMS Installation Script
-# Installs CEMS and configures Claude Code and/or Cursor integration
+# Installs CEMS CLI and configures Claude Code and/or Cursor integration
+#
+# IMPORTANT: The CLI requires a running CEMS server.
+# Deploy the server first, then run this script to install the CLI.
 
 set -e
 
 echo "========================================="
 echo "CEMS - Continuous Evolving Memory System"
 echo "========================================="
+echo
+echo "NOTE: This CLI requires a running CEMS server."
+echo "      See DEPLOYMENT.md for server setup."
 echo
 
 # Colors for output
@@ -292,50 +298,61 @@ case $ide_choice in
 esac
 
 # =============================================================================
-# Environment Variables Setup
+# Environment Variables Setup (Required for CLI)
 # =============================================================================
-if [ "$INSTALLED_CLAUDE" = true ] || [ "$INSTALLED_CURSOR" = true ]; then
-    echo
-    echo "========================================="
-    echo "Environment Variables"
-    echo "========================================="
-    echo
-    echo "CEMS requires these environment variables:"
-    echo "  CEMS_API_URL - Your CEMS server URL"
-    echo "  CEMS_API_KEY - Your CEMS API key"
-    echo
-    
-    # Check if already set
-    if [ -n "$CEMS_API_URL" ] && [ -n "$CEMS_API_KEY" ]; then
-        echo -e "${GREEN}Environment variables already set!${NC}"
-        echo "  CEMS_API_URL=$CEMS_API_URL"
-        echo "  CEMS_API_KEY=****${CEMS_API_KEY: -4}"
-    else
-        read -p "Add to shell profile now? [y/N]: " add_env
+echo
+echo "========================================="
+echo "Environment Variables (Required)"
+echo "========================================="
+echo
+echo "The CEMS CLI requires these environment variables:"
+echo "  CEMS_API_URL - Your CEMS server URL (required)"
+echo "  CEMS_API_KEY - Your personal API key (required)"
+echo
+echo "For admin operations (user/team management):"
+echo "  CEMS_ADMIN_KEY - Admin API key (optional, or use admin user's API key)"
+echo
 
-        if [[ "$add_env" =~ ^[Yy]$ ]]; then
-            echo
-            read -p "CEMS_API_URL (e.g., https://cems.example.com): " api_url
-            read -p "CEMS_API_KEY: " api_key
+# Check if already set
+if [ -n "$CEMS_API_URL" ] && [ -n "$CEMS_API_KEY" ]; then
+    echo -e "${GREEN}Environment variables already set!${NC}"
+    echo "  CEMS_API_URL=$CEMS_API_URL"
+    echo "  CEMS_API_KEY=****${CEMS_API_KEY: -4}"
+else
+    read -p "Configure environment variables now? [y/N]: " add_env
 
-            # Detect shell config file
-            if [ -n "$ZSH_VERSION" ] || [ -f "$HOME/.zshrc" ]; then
-                SHELL_RC="$HOME/.zshrc"
-            elif [ -f "$HOME/.bashrc" ]; then
-                SHELL_RC="$HOME/.bashrc"
-            else
-                SHELL_RC="$HOME/.profile"
-            fi
+    if [[ "$add_env" =~ ^[Yy]$ ]]; then
+        echo
+        echo "Get these from your CEMS server admin."
+        echo "If you are the admin, create a user with:"
+        echo "  curl -X POST https://your-server/admin/users \\"
+        echo "    -H 'Authorization: Bearer \$CEMS_ADMIN_KEY' \\"
+        echo "    -H 'Content-Type: application/json' \\"
+        echo "    -d '{\"username\": \"yourname\"}'"
+        echo
+        read -p "CEMS_API_URL (e.g., https://cems.example.com): " api_url
+        read -p "CEMS_API_KEY: " api_key
 
-            echo "" >> "$SHELL_RC"
-            echo "# CEMS Configuration" >> "$SHELL_RC"
-            echo "export CEMS_API_URL=\"$api_url\"" >> "$SHELL_RC"
-            echo "export CEMS_API_KEY=\"$api_key\"" >> "$SHELL_RC"
-
-            echo
-            echo -e "${GREEN}Added to $SHELL_RC${NC}"
-            echo "Run: source $SHELL_RC"
+        # Detect shell config file
+        if [ -n "$ZSH_VERSION" ] || [ -f "$HOME/.zshrc" ]; then
+            SHELL_RC="$HOME/.zshrc"
+        elif [ -f "$HOME/.bashrc" ]; then
+            SHELL_RC="$HOME/.bashrc"
+        else
+            SHELL_RC="$HOME/.profile"
         fi
+
+        echo "" >> "$SHELL_RC"
+        echo "# CEMS Configuration" >> "$SHELL_RC"
+        echo "export CEMS_API_URL=\"$api_url\"" >> "$SHELL_RC"
+        echo "export CEMS_API_KEY=\"$api_key\"" >> "$SHELL_RC"
+
+        echo
+        echo -e "${GREEN}Added to $SHELL_RC${NC}"
+        echo "Run: source $SHELL_RC"
+    else
+        echo
+        echo -e "${YELLOW}Remember to set CEMS_API_URL and CEMS_API_KEY before using the CLI.${NC}"
     fi
 fi
 
@@ -349,7 +366,7 @@ echo "========================================="
 echo
 
 echo "Installed components:"
-echo "  CEMS Python package: OK"
+echo -e "  CEMS CLI:            ${GREEN}OK${NC}"
 if [ "$INSTALLED_CLAUDE" = true ]; then
     echo -e "  Claude Code hooks:   ${GREEN}OK${NC}"
 fi
@@ -359,29 +376,34 @@ fi
 
 echo
 echo "Next steps:"
-echo "  1. Restart your terminal (or source your shell rc)"
+echo "  1. Source your shell config: source ~/.zshrc (or ~/.bashrc)"
+echo "  2. Set CEMS_API_URL and CEMS_API_KEY if not already set"
+echo "  3. Test connection: cems health"
 
 if [ "$INSTALLED_CLAUDE" = true ]; then
-    echo "  2. Restart Claude Code"
-    echo "     Test with: /remember I prefer TypeScript"
+    echo
+    echo "Claude Code:"
+    echo "  - Restart Claude Code"
+    echo "  - Test with: /remember I prefer TypeScript"
 fi
 
 if [ "$INSTALLED_CURSOR" = true ]; then
-    echo "  2. Restart Cursor"
-    echo "     Hooks will automatically inject memories at session start"
-    echo "     and analyze sessions when they end"
+    echo
+    echo "Cursor:"
+    echo "  - Restart Cursor"
+    echo "  - Hooks will inject memories at session start"
 fi
 
 echo
-echo "Configuration:"
-if [ "$INSTALLED_CLAUDE" = true ]; then
-    echo "  Claude Code config: ~/.claude"
-    echo "  Claude Code hooks:  ~/.claude/hooks/cems_*.py"
-fi
-if [ "$INSTALLED_CURSOR" = true ]; then
-    echo "  Cursor config:      ~/.cursor/hooks.json"
-    echo "  Cursor hooks:       ~/.cursor/hooks/cems_*.py"
-fi
-
+echo "CLI Commands:"
+echo "  cems status           - Check connection and config"
+echo "  cems health           - Check server health"
+echo "  cems add \"content\"    - Add a memory"
+echo "  cems search \"query\"   - Search memories"
 echo
-echo "For CLI usage, run: cems --help"
+echo "Admin Commands (requires admin privileges):"
+echo "  cems admin users list      - List all users"
+echo "  cems admin users create X  - Create user (shows API key)"
+echo "  cems admin teams list      - List all teams"
+echo
+echo "For full usage: cems --help"

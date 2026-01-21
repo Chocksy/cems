@@ -1,9 +1,13 @@
 """Configuration for CEMS.
 
-Environment Variables:
-    Only ONE API key is required - everything goes through OpenRouter:
+Environment Variables for CLI (client mode):
+    - CEMS_API_URL: URL of CEMS server (e.g., https://cems.example.com)
+    - CEMS_API_KEY: User API key for authentication
+    - CEMS_ADMIN_KEY: Admin key for user/team management (optional)
 
+Environment Variables for Server:
     - OPENROUTER_API_KEY: Required for all LLM and embedding operations
+    - CEMS_DATABASE_URL: PostgreSQL connection URL for user management
 
     Optional model configuration:
     - CEMS_MEM0_MODEL: Model for Mem0 (default: x-ai/grok-4.1-fast)
@@ -29,10 +33,22 @@ class CEMSConfig(BaseSettings):
         env_prefix="CEMS_",
         env_file=".env",
         env_file_encoding="utf-8",
-        extra="ignore",  # Ignore unknown env vars like CEMS_API_KEY
+        extra="ignore",
     )
 
-    # User identification
+    # =========================================================================
+    # Client Settings (for CLI and other HTTP clients)
+    # =========================================================================
+    api_url: str | None = Field(
+        default=None,
+        description="CEMS server URL (e.g., https://cems.example.com)",
+    )
+    api_key: str | None = Field(
+        default=None,
+        description="User API key for authentication",
+    )
+
+    # User identification (for server mode)
     user_id: str = Field(default="default", description="Current user ID")
     team_id: str | None = Field(default=None, description="Team ID for shared memory")
 

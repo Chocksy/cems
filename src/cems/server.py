@@ -525,27 +525,13 @@ def create_http_app():
         """
         try:
             memory = get_memory()
-            memories = memory.get_all(scope="personal")
-
-            if not memories:
-                return JSONResponse({
-                    "success": True,
-                    "total": 0,
-                    "categories": {},
-                })
-
-            # Group by category
-            categories: dict[str, int] = {}
-            for m in memories:
-                mem_id = m.get("id")
-                if mem_id:
-                    metadata = memory.get_metadata(mem_id)
-                    cat = metadata.category if metadata else "general"
-                    categories[cat] = categories.get(cat, 0) + 1
+            # Use efficient GROUP BY query instead of N+1 queries
+            categories = memory.get_category_counts(scope="personal")
+            total = sum(categories.values())
 
             return JSONResponse({
                 "success": True,
-                "total": len(memories),
+                "total": total,
                 "categories": categories,
             })
         except Exception as e:
@@ -568,28 +554,13 @@ def create_http_app():
                     "message": "No team configured",
                 })
 
-            memories = memory.get_all(scope="shared")
-
-            if not memories:
-                return JSONResponse({
-                    "success": True,
-                    "total": 0,
-                    "categories": {},
-                    "team_id": memory.config.team_id,
-                })
-
-            # Group by category
-            categories: dict[str, int] = {}
-            for m in memories:
-                mem_id = m.get("id")
-                if mem_id:
-                    metadata = memory.get_metadata(mem_id)
-                    cat = metadata.category if metadata else "general"
-                    categories[cat] = categories.get(cat, 0) + 1
+            # Use efficient GROUP BY query instead of N+1 queries
+            categories = memory.get_category_counts(scope="shared")
+            total = sum(categories.values())
 
             return JSONResponse({
                 "success": True,
-                "total": len(memories),
+                "total": total,
                 "categories": categories,
                 "team_id": memory.config.team_id,
             })
