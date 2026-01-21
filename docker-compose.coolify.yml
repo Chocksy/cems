@@ -1,0 +1,45 @@
+# docker-compose.coolify.yml
+# For Coolify deployment - connects to external PostgreSQL and Qdrant
+
+services:
+  # Python API (internal only)
+  cems-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      CEMS_DATABASE_URL: ${CEMS_DATABASE_URL}
+      CEMS_QDRANT_URL: ${CEMS_QDRANT_URL}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
+      CEMS_ADMIN_KEY: ${CEMS_ADMIN_KEY}
+      CEMS_MODE: server
+      CEMS_SERVER_HOST: 0.0.0.0
+      CEMS_SERVER_PORT: 8765
+    expose:
+      - "8765"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8765/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+
+  # Express MCP wrapper (public-facing)
+  cems-mcp:
+    build:
+      context: ./mcp-wrapper
+      dockerfile: Dockerfile
+    environment:
+      PYTHON_API_URL: http://cems-server:8765
+      PORT: 8766
+    ports:
+      - "8766:8766"
+    depends_on:
+      cems-server:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:8766/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped

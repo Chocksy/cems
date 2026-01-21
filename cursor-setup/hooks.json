@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "hooks": {
+    "sessionStart": [
+      {
+        "command": "./hooks/cems_session_start.py"
+      }
+    ],
+    "afterAgentResponse": [
+      {
+        "command": "./hooks/cems_agent_response.py"
+      }
+    ],
+    "stop": [
+      {
+        "command": "./hooks/cems_stop.py"
+      }
+    ]
+  }
+}

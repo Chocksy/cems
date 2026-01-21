@@ -1,31 +1,25 @@
-"""MCP server for CEMS using FastMCP.
+"""CEMS REST API Server.
 
-Supports two modes:
-1. stdio (default) - For local Claude Code usage, uses env vars for user/team
-2. http - For server deployment with per-user API keys from database
+Provides REST API endpoints for the CEMS memory system.
+MCP protocol is handled by the Express wrapper (mcp-wrapper/).
 
-Provides a simplified API with 5 essential tools:
-1. memory_add - Store memories (personal or shared)
-2. memory_search - Unified intelligent search with 5-stage pipeline
-3. memory_forget - Delete or archive memories
-4. memory_maintenance - Run background maintenance jobs
-5. memory_update - Update existing memory content
-
-And 3 resources:
-1. memory://status - System status
-2. memory://personal/summary - Personal memories overview
-3. memory://shared/summary - Shared memories overview
+REST API endpoints:
+- POST /api/memory/add - Store memories
+- POST /api/memory/search - Search memories
+- POST /api/memory/forget - Delete/archive memories
+- POST /api/memory/update - Update memory content
+- POST /api/memory/maintenance - Run maintenance jobs
+- GET /api/memory/status - System status
+- GET /api/memory/summary/personal - Personal summary
+- GET /api/memory/summary/shared - Shared summary
+- POST /api/session/analyze - Analyze session transcripts
 """
 
+import json
 import logging
 import os
-import json
-import time
 from contextvars import ContextVar
 from typing import Any
-
-from mcp.server.fastmcp import FastMCP
-from mcp.server.transport_security import TransportSecuritySettings
 
 from cems.config import CEMSConfig
 from cems.memory import CEMSMemory
@@ -33,31 +27,9 @@ from cems.scheduler import CEMSScheduler
 
 logger = logging.getLogger(__name__)
 
-# #region agent log
-_DEBUG_LOG_PATH = "/Users/razvan/Development/cems/.cursor/debug.log"
-def _debug_log(location: str, message: str, data: dict = None, hypothesis_id: str = ""):
-    try:
-        import os as _os
-        _os.makedirs(_os.path.dirname(_DEBUG_LOG_PATH), exist_ok=True)
-        entry = {"timestamp": int(time.time() * 1000), "location": location, "message": message, "data": data or {}, "hypothesisId": hypothesis_id, "sessionId": "debug-session"}
-        with open(_DEBUG_LOG_PATH, "a") as f:
-            f.write(json.dumps(entry) + "\n")
-    except: pass
-# #endregion
-
 # Context variables for per-request user identification (HTTP mode)
 _request_user_id: ContextVar[str | None] = ContextVar("request_user_id", default=None)
 _request_team_id: ContextVar[str | None] = ContextVar("request_team_id", default=None)
-
-# Initialize FastMCP server
-# Disable DNS rebinding protection for production deployment (auth handled by Bearer token)
-mcp = FastMCP(
-    "CEMS Memory Server",
-    host="0.0.0.0",  # Bind to all interfaces
-    stateless_http=True,  # Close connection after each request (Cloudflare compatible)
-    json_response=True,  # Return plain JSON instead of SSE (fixes Cursor red status issue)
-    transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False),
-)
 
 # Global memory instances per user (for HTTP mode)
 _memory_cache: dict[str, CEMSMemory] = {}
@@ -89,40 +61,28 @@ def get_memory() -> CEMSMemory:
         # HTTP mode: Create per-user memory instance
         cache_key = f"{user_id}:{team_id or 'none'}"
         if cache_key not in _memory_cache:
-            # #region agent log
-            _debug_log("server.py:get_memory", "Creating new memory instance", {"cache_key": cache_key, "total_cached": len(_memory_cache)}, "H3")
-            # #endregion
             # Create config with header values but inherit settings from base
             base = get_base_config()
             # Override user/team via environment for this instance
-            try:
-                config = CEMSConfig(
-                    user_id=user_id,
-                    team_id=team_id,
-                    # Inherit all other settings from base config
-                    storage_dir=base.storage_dir,
-                    memory_backend=base.memory_backend,
-                    mem0_model=base.mem0_model,
-                    embedding_model=base.embedding_model,
-                    llm_model=base.llm_model,
-                    vector_store=base.vector_store,
-                    qdrant_url=base.qdrant_url,
-                    enable_graph=base.enable_graph,
-                    graph_store=base.graph_store,
-                    enable_scheduler=False,  # Scheduler runs separately
-                    enable_query_synthesis=base.enable_query_synthesis,
-                    relevance_threshold=base.relevance_threshold,
-                    default_max_tokens=base.default_max_tokens,
-                )
-                _memory_cache[cache_key] = CEMSMemory(config)
-                # #region agent log
-                _debug_log("server.py:get_memory", "Memory instance created", {"cache_key": cache_key, "qdrant_url": base.qdrant_url}, "H5")
-                # #endregion
-            except Exception as e:
-                # #region agent log
-                _debug_log("server.py:get_memory", "Memory creation ERROR", {"cache_key": cache_key, "error": str(e)}, "H5")
-                # #endregion
-                raise
+            config = CEMSConfig(
+                user_id=user_id,
+                team_id=team_id,
+                # Inherit all other settings from base config
+                storage_dir=base.storage_dir,
+                memory_backend=base.memory_backend,
+                mem0_model=base.mem0_model,
+                embedding_model=base.embedding_model,
+                llm_model=base.llm_model,
+                vector_store=base.vector_store,
+                qdrant_url=base.qdrant_url,
+                enable_graph=base.enable_graph,
+                graph_store=base.graph_store,
+                enable_scheduler=False,  # Scheduler runs separately
+                enable_query_synthesis=base.enable_query_synthesis,
+                relevance_threshold=base.relevance_threshold,
+                default_max_tokens=base.default_max_tokens,
+            )
+            _memory_cache[cache_key] = CEMSMemory(config)
             logger.info(f"Created memory instance for user: {user_id}, team: {team_id}")
         return _memory_cache[cache_key]
     else:
@@ -144,445 +104,6 @@ def get_scheduler() -> CEMSScheduler:
         memory = CEMSMemory(config)
         _scheduler_cache[cache_key] = CEMSScheduler(memory)
     return _scheduler_cache[cache_key]
-
-
-# =============================================================================
-# MCP Tools (5 Essential Tools)
-# =============================================================================
-
-
-@mcp.tool()
-def memory_add(
-    content: str,
-    scope: str = "personal",
-    category: str = "general",
-    tags: list[str] | None = None,
-) -> dict[str, Any]:
-    """Store a memory in your personal or shared namespace.
-
-    Use this to remember important information, preferences, decisions,
-    or any context you want to persist across sessions.
-
-    Args:
-        content: What to remember (fact, preference, decision, etc.)
-        scope: "personal" for private memory, "shared" for team memory
-        category: Category for organization (preferences, decisions, patterns, etc.)
-        tags: Optional tags for additional organization
-
-    Returns:
-        Result dict with success status and memory IDs
-    """
-    memory = get_memory()
-
-    try:
-        result = memory.add(
-            content=content,
-            scope=scope,  # type: ignore
-            category=category,
-            tags=tags or [],
-        )
-
-        # Extract memory IDs from result
-        memory_ids = []
-        if result and "results" in result:
-            for r in result["results"]:
-                if r.get("id"):
-                    memory_ids.append(r["id"])
-
-        return {
-            "success": True,
-            "message": f"Memory added to {scope} namespace",
-            "memory_ids": memory_ids,
-        }
-    except Exception as e:
-        logger.error(f"Failed to add memory: {e}")
-        return {
-            "success": False,
-            "message": str(e),
-            "memory_ids": [],
-        }
-
-
-@mcp.tool()
-def memory_search(
-    query: str,
-    scope: str = "both",
-    max_results: int = 10,
-) -> dict[str, Any]:
-    """Search your memories for relevant information.
-
-    This is the primary search tool. It automatically:
-    - Expands your query for better matching
-    - Searches both vector similarity and knowledge graph
-    - Prioritizes recent and frequently-accessed memories
-    - Returns results within a reasonable token budget
-
-    Args:
-        query: What to search for (natural language)
-        scope: "personal", "shared", or "both" namespaces
-        max_results: Maximum memories to return (1-20)
-
-    Returns:
-        Dict with results, token count, and formatted context
-    """
-    # #region agent log
-    _debug_log("server.py:memory_search", "Tool called", {"query": query[:50], "scope": scope}, "H5")
-    # #endregion
-
-    memory = get_memory()
-
-    try:
-        # Use the 5-stage inference retrieval pipeline
-        result = memory.retrieve_for_inference(
-            query=query,
-            scope=scope,  # type: ignore
-            max_tokens=max(1, min(max_results, 20)) * 200,  # ~200 tokens per memory
-            enable_query_synthesis=True,
-            enable_graph=True,
-        )
-
-        # #region agent log
-        _debug_log("server.py:memory_search", "Search completed", {"result_count": len(result.get("results", []))}, "H5")
-        # #endregion
-
-        return {
-            "success": True,
-            "query": query,
-            **result,
-        }
-    except Exception as e:
-        # #region agent log
-        _debug_log("server.py:memory_search", "Search ERROR", {"error": str(e)}, "H5")
-        # #endregion
-        logger.error(f"Failed to search memories: {e}")
-        return {
-            "success": False,
-            "results": [],
-            "query": query,
-            "error": str(e),
-        }
-
-
-@mcp.tool()
-def memory_forget(
-    memory_id: str,
-    hard_delete: bool = False,
-) -> dict[str, Any]:
-    """Forget (delete or archive) a memory.
-
-    By default, memories are archived (soft delete) so they can be recovered.
-    Use hard_delete=True for permanent deletion.
-
-    Args:
-        memory_id: ID of memory to forget
-        hard_delete: If True, permanently delete. If False, archive (can recover).
-
-    Returns:
-        Result dict with success status
-    """
-    memory = get_memory()
-
-    try:
-        memory.delete(memory_id, hard=hard_delete)
-        action = "deleted" if hard_delete else "archived"
-        return {
-            "success": True,
-            "message": f"Memory {memory_id} {action}",
-            "memory_id": memory_id,
-        }
-    except Exception as e:
-        logger.error(f"Failed to forget memory: {e}")
-        return {
-            "success": False,
-            "message": str(e),
-            "memory_id": memory_id,
-        }
-
-
-@mcp.tool()
-def memory_update(
-    memory_id: str,
-    content: str,
-) -> dict[str, Any]:
-    """Update an existing memory's content.
-
-    Args:
-        memory_id: ID of the memory to update
-        content: New content for the memory
-
-    Returns:
-        Result dict with success status
-    """
-    memory = get_memory()
-
-    try:
-        memory.update(memory_id, content)
-        return {
-            "success": True,
-            "message": f"Memory {memory_id} updated",
-            "memory_id": memory_id,
-        }
-    except Exception as e:
-        logger.error(f"Failed to update memory: {e}")
-        return {
-            "success": False,
-            "message": str(e),
-            "memory_id": memory_id,
-        }
-
-
-@mcp.tool()
-def memory_maintenance(
-    job_type: str = "consolidation",
-) -> dict[str, Any]:
-    """Run a memory maintenance job.
-
-    Maintenance operations keep your memory system healthy:
-    - consolidation: Merge duplicate memories, promote frequently used ones
-    - summarization: Create category summaries, compress old memories
-    - reindex: Rebuild embeddings, archive dead memories
-    - all: Run all maintenance jobs
-
-    Args:
-        job_type: Type of maintenance to run
-
-    Returns:
-        Maintenance job results
-    """
-    scheduler = get_scheduler()
-
-    try:
-        if job_type == "all":
-            results = {}
-            for jt in ["consolidation", "summarization", "reindex"]:
-                results[jt] = scheduler.run_now(jt)
-            return {
-                "success": True,
-                "job_type": "all",
-                "results": results,
-            }
-        else:
-            result = scheduler.run_now(job_type)
-            return {
-                "success": True,
-                "job_type": job_type,
-                "results": result,
-            }
-    except Exception as e:
-        logger.error(f"Failed to run maintenance: {e}")
-        return {
-            "success": False,
-            "job_type": job_type,
-            "message": str(e),
-            "results": {},
-        }
-
-
-@mcp.tool()
-def session_analyze(
-    transcript: str,
-    session_id: str | None = None,
-    working_dir: str | None = None,
-) -> dict[str, Any]:
-    """Analyze a session transcript and extract learnings to remember.
-
-    Use this to extract and store significant learnings from a coding session.
-    The analysis identifies:
-    - Working solutions (code patterns that worked)
-    - Failed approaches (what didn't work and why)
-    - User preferences (stated preferences about tools/workflows)
-    - Error fixes (how errors were diagnosed and resolved)
-    - Decisions (architectural/design decisions made)
-
-    Args:
-        transcript: The session transcript (string or JSON array of messages)
-        session_id: Optional session identifier for reference
-        working_dir: Optional working directory for project context
-
-    Returns:
-        Dict with learnings_stored count and list of stored learnings
-    """
-    from cems.llm import extract_session_learnings
-
-    try:
-        # Parse transcript if it's a JSON string array
-        parsed_transcript = transcript
-        if transcript.strip().startswith("["):
-            try:
-                parsed_transcript = json.loads(transcript)
-            except json.JSONDecodeError:
-                pass  # Keep as string
-
-        # Run analysis
-        learnings = extract_session_learnings(
-            transcript=parsed_transcript,
-            working_dir=working_dir,
-        )
-
-        if not learnings:
-            return {
-                "success": True,
-                "learnings_stored": 0,
-                "learnings": [],
-                "message": "No significant learnings found in this session",
-            }
-
-        # Store each learning as a memory
-        memory = get_memory()
-        stored_learnings = []
-        sid = session_id or "unknown"
-
-        for learning in learnings:
-            try:
-                learning_type = learning.get("type", "GENERAL")
-                content = learning.get("content", "")
-                category = learning.get("category", "learnings")
-
-                # Format: [TYPE] Content (from session X)
-                formatted_content = f"[{learning_type}] {content}"
-                if sid != "unknown":
-                    formatted_content += f" (session: {sid[:8]})"
-
-                result = memory.add(
-                    content=formatted_content,
-                    scope="personal",
-                    category=category,
-                    tags=["session-learning", learning_type.lower()],
-                )
-
-                # Extract memory ID
-                memory_id = None
-                if result and "results" in result:
-                    for r in result["results"]:
-                        if r.get("id"):
-                            memory_id = r["id"]
-                            break
-
-                stored_learnings.append({
-                    "type": learning_type,
-                    "content": content,
-                    "memory_id": memory_id,
-                    "category": category,
-                })
-
-            except Exception as e:
-                logger.error(f"Failed to store learning: {e}")
-                continue
-
-        return {
-            "success": True,
-            "learnings_stored": len(stored_learnings),
-            "learnings": stored_learnings,
-        }
-
-    except Exception as e:
-        logger.error(f"Failed to analyze session: {e}")
-        return {
-            "success": False,
-            "learnings_stored": 0,
-            "learnings": [],
-            "error": str(e),
-        }
-
-
-# =============================================================================
-# MCP Resources (3 Essential Resources)
-# =============================================================================
-
-
-@mcp.resource("memory://status")
-def memory_status() -> str:
-    """Get the current status of the memory system."""
-    memory = get_memory()
-    config = memory.config
-
-    status = "CEMS Memory System Status\n"
-    status += "=" * 40 + "\n\n"
-    status += f"User ID: {config.user_id}\n"
-    status += f"Team ID: {config.team_id or '(not set)'}\n"
-    status += f"Storage: {config.storage_dir}\n"
-    status += f"Backend: {config.memory_backend}\n"
-    status += f"Vector Store: {config.vector_store}\n"
-    status += f"Graph Store: {config.graph_store if config.enable_graph else 'disabled'}\n"
-    status += f"Scheduler: {'enabled' if config.enable_scheduler else 'disabled'}\n"
-    status += f"\nRetrieval Settings:\n"
-    status += f"  Query Synthesis: {'enabled' if config.enable_query_synthesis else 'disabled'}\n"
-    status += f"  Relevance Threshold: {config.relevance_threshold}\n"
-    status += f"  Max Tokens: {config.default_max_tokens}\n"
-    status += "\nLLM Config (via OpenRouter):\n"
-    status += f"  Mem0: {config.get_mem0_model()}\n"
-    status += f"  Embeddings: {config.embedding_model}\n"
-    status += f"  Maintenance: {config.llm_model}\n"
-
-    # Add graph stats if enabled
-    if memory.graph_store:
-        stats = memory.get_graph_stats()
-        status += f"\nGraph Stats:\n"
-        for key, value in stats.items():
-            status += f"  {key}: {value}\n"
-
-    return status
-
-
-@mcp.resource("memory://personal/summary")
-def personal_summary() -> str:
-    """Get a summary of personal memories."""
-    memory = get_memory()
-    memories = memory.get_all(scope="personal")
-
-    if not memories:
-        return "No personal memories stored yet."
-
-    summary = "Personal Memory Summary:\n"
-    summary += f"- Total memories: {len(memories)}\n"
-
-    # Group by category (from metadata)
-    categories: dict[str, int] = {}
-    for m in memories:
-        mem_id = m.get("id")
-        if mem_id:
-            metadata = memory.get_metadata(mem_id)
-            cat = metadata.category if metadata else "general"
-            categories[cat] = categories.get(cat, 0) + 1
-
-    summary += "\nBy category:\n"
-    for cat, count in sorted(categories.items()):
-        summary += f"  - {cat}: {count}\n"
-
-    return summary
-
-
-@mcp.resource("memory://shared/summary")
-def shared_summary() -> str:
-    """Get a summary of shared team memories."""
-    memory = get_memory()
-
-    if not memory.config.team_id:
-        return "No team configured. Set CEMS_TEAM_ID to enable shared memory."
-
-    memories = memory.get_all(scope="shared")
-
-    if not memories:
-        return f"No shared memories for team '{memory.config.team_id}' yet."
-
-    summary = f"Shared Memory Summary (Team: {memory.config.team_id}):\n"
-    summary += f"- Total memories: {len(memories)}\n"
-
-    # Group by category
-    categories: dict[str, int] = {}
-    for m in memories:
-        mem_id = m.get("id")
-        if mem_id:
-            metadata = memory.get_metadata(mem_id)
-            cat = metadata.category if metadata else "general"
-            categories[cat] = categories.get(cat, 0) + 1
-
-    if categories:
-        summary += "\nBy category:\n"
-        for cat, count in sorted(categories.items()):
-            summary += f"  - {cat}: {count}\n"
-
-    return summary
 
 
 # =============================================================================
@@ -613,10 +134,6 @@ def create_http_app():
         """Middleware to extract user context and validate API key from headers."""
 
         async def dispatch(self, request: Request, call_next):
-            # #region agent log
-            _debug_log("server.py:middleware", "Request received", {"path": str(request.url.path), "method": request.method}, "H2")
-            # #endregion
-
             # Skip auth for health check
             if request.url.path == "/health":
                 return await call_next(request)
@@ -630,9 +147,6 @@ def create_http_app():
 
             # Validate user API key from database
             if not auth_header.startswith("Bearer "):
-                # #region agent log
-                _debug_log("server.py:middleware", "Auth failed - no Bearer", {"path": str(request.url.path)}, "H4")
-                # #endregion
                 return JSONResponse(
                     {"error": "Authorization: Bearer <api_key> header required"},
                     status_code=401,
@@ -644,9 +158,6 @@ def create_http_app():
             from cems.db.database import get_database, is_database_initialized
 
             if not is_database_initialized():
-                # #region agent log
-                _debug_log("server.py:middleware", "DB not initialized", {}, "H4")
-                # #endregion
                 return JSONResponse(
                     {"error": "Database not initialized"},
                     status_code=503,
@@ -659,18 +170,12 @@ def create_http_app():
                     user = service.get_user_by_api_key(provided_key)
 
                     if not user:
-                        # #region agent log
-                        _debug_log("server.py:middleware", "Invalid API key", {"key_prefix": provided_key[:10] + "..."}, "H4")
-                        # #endregion
                         return JSONResponse(
                             {"error": "Invalid API key"},
                             status_code=401,
                         )
 
                     if not user.is_active:
-                        # #region agent log
-                        _debug_log("server.py:middleware", "User deactivated", {"user": user.username}, "H4")
-                        # #endregion
                         return JSONResponse(
                             {"error": "User account is deactivated"},
                             status_code=403,
@@ -681,9 +186,6 @@ def create_http_app():
                     # Get team from header (optional, to select team context)
                     team_id = request.headers.get("x-team-id")
             except Exception as e:
-                # #region agent log
-                _debug_log("server.py:middleware", "DB session error", {"error": str(e)}, "H4")
-                # #endregion
                 return JSONResponse(
                     {"error": f"Database error: {e}"},
                     status_code=503,
@@ -693,20 +195,10 @@ def create_http_app():
             user_token = _request_user_id.set(user_id)
             team_token = _request_team_id.set(team_id)
 
-            # #region agent log
-            _debug_log("server.py:middleware", "Auth successful", {"user": user_id, "cache_size": len(_memory_cache)}, "H3")
-            # #endregion
-
             try:
                 response = await call_next(request)
-                # #region agent log
-                _debug_log("server.py:middleware", "Request completed", {"path": str(request.url.path), "status": response.status_code}, "H2")
-                # #endregion
                 return response
             except Exception as e:
-                # #region agent log
-                _debug_log("server.py:middleware", "Request handler error", {"path": str(request.url.path), "error": str(e)}, "H2")
-                # #endregion
                 raise
             finally:
                 # Reset context variables
@@ -725,22 +217,12 @@ def create_http_app():
         """Health check endpoint for Docker/Kubernetes."""
         from cems.db.database import get_database, is_database_initialized
 
-        # #region agent log
-        _debug_log("server.py:health_check", "Health check started", {"path": str(request.url.path)}, "H1")
-        # #endregion
-
         db_status = "not_configured"
         try:
             if is_database_initialized():
                 db = get_database()
                 db_status = "healthy" if db.health_check() else "unhealthy"
-            # #region agent log
-            _debug_log("server.py:health_check", "Health check DB result", {"db_status": db_status, "cache_size": len(_memory_cache)}, "H1")
-            # #endregion
         except Exception as e:
-            # #region agent log
-            _debug_log("server.py:health_check", "Health check DB ERROR", {"error": str(e)}, "H1")
-            # #endregion
             db_status = f"error: {e}"
 
         return JSONResponse({
@@ -906,34 +388,239 @@ def create_http_app():
             logger.error(f"API session_analyze error: {e}")
             return JSONResponse({"error": str(e)}, status_code=500)
 
-    # Get the base MCP app
-    app = mcp.streamable_http_app()
+    async def api_memory_forget(request: Request):
+        """REST API endpoint to forget (delete/archive) a memory.
 
-    # Remove FastMCP's restrictive TrustedHostMiddleware (allows only localhost)
-    # We'll add our own with wildcard hosts since auth is handled by Bearer token
+        POST /api/memory/forget
+        Body: {"memory_id": "...", "hard_delete": false}
+        """
+        try:
+            body = await request.json()
+            memory_id = body.get("memory_id")
+            if not memory_id:
+                return JSONResponse({"error": "memory_id is required"}, status_code=400)
+
+            hard_delete = body.get("hard_delete", False)
+
+            memory = get_memory()
+            memory.delete(memory_id, hard=hard_delete)
+
+            action = "deleted" if hard_delete else "archived"
+            return JSONResponse({
+                "success": True,
+                "message": f"Memory {memory_id} {action}",
+                "memory_id": memory_id,
+            })
+        except Exception as e:
+            logger.error(f"API memory_forget error: {e}")
+            return JSONResponse({"error": str(e)}, status_code=500)
+
+    async def api_memory_update(request: Request):
+        """REST API endpoint to update a memory.
+
+        POST /api/memory/update
+        Body: {"memory_id": "...", "content": "..."}
+        """
+        try:
+            body = await request.json()
+            memory_id = body.get("memory_id")
+            content = body.get("content")
+
+            if not memory_id:
+                return JSONResponse({"error": "memory_id is required"}, status_code=400)
+            if not content:
+                return JSONResponse({"error": "content is required"}, status_code=400)
+
+            memory = get_memory()
+            memory.update(memory_id, content)
+
+            return JSONResponse({
+                "success": True,
+                "message": f"Memory {memory_id} updated",
+                "memory_id": memory_id,
+            })
+        except Exception as e:
+            logger.error(f"API memory_update error: {e}")
+            return JSONResponse({"error": str(e)}, status_code=500)
+
+    async def api_memory_maintenance(request: Request):
+        """REST API endpoint to run maintenance jobs.
+
+        POST /api/memory/maintenance
+        Body: {"job_type": "consolidation|summarization|reindex|all"}
+        """
+        try:
+            body = await request.json()
+            job_type = body.get("job_type", "consolidation")
+
+            scheduler = get_scheduler()
+
+            if job_type == "all":
+                results = {}
+                for jt in ["consolidation", "summarization", "reindex"]:
+                    results[jt] = scheduler.run_now(jt)
+                return JSONResponse({
+                    "success": True,
+                    "job_type": "all",
+                    "results": results,
+                })
+            else:
+                result = scheduler.run_now(job_type)
+                return JSONResponse({
+                    "success": True,
+                    "job_type": job_type,
+                    "results": result,
+                })
+        except Exception as e:
+            logger.error(f"API memory_maintenance error: {e}")
+            return JSONResponse({
+                "success": False,
+                "job_type": job_type,
+                "error": str(e),
+            }, status_code=500)
+
+    async def api_memory_status(request: Request):
+        """REST API endpoint to get system status.
+
+        GET /api/memory/status
+        """
+        try:
+            memory = get_memory()
+            config = memory.config
+
+            status = {
+                "status": "healthy",
+                "user_id": config.user_id,
+                "team_id": config.team_id,
+                "storage_dir": config.storage_dir,
+                "backend": config.memory_backend,
+                "vector_store": config.vector_store,
+                "graph_store": config.graph_store if config.enable_graph else None,
+                "scheduler": config.enable_scheduler,
+                "query_synthesis": config.enable_query_synthesis,
+                "relevance_threshold": config.relevance_threshold,
+                "max_tokens": config.default_max_tokens,
+            }
+
+            # Add graph stats if enabled
+            if memory.graph_store:
+                stats = memory.get_graph_stats()
+                status["graph_stats"] = stats
+
+            return JSONResponse(status)
+        except Exception as e:
+            logger.error(f"API memory_status error: {e}")
+            return JSONResponse({"error": str(e)}, status_code=500)
+
+    async def api_memory_summary_personal(request: Request):
+        """REST API endpoint to get personal memory summary.
+
+        GET /api/memory/summary/personal
+        """
+        try:
+            memory = get_memory()
+            memories = memory.get_all(scope="personal")
+
+            if not memories:
+                return JSONResponse({
+                    "success": True,
+                    "total": 0,
+                    "categories": {},
+                })
+
+            # Group by category
+            categories: dict[str, int] = {}
+            for m in memories:
+                mem_id = m.get("id")
+                if mem_id:
+                    metadata = memory.get_metadata(mem_id)
+                    cat = metadata.category if metadata else "general"
+                    categories[cat] = categories.get(cat, 0) + 1
+
+            return JSONResponse({
+                "success": True,
+                "total": len(memories),
+                "categories": categories,
+            })
+        except Exception as e:
+            logger.error(f"API memory_summary_personal error: {e}")
+            return JSONResponse({"error": str(e)}, status_code=500)
+
+    async def api_memory_summary_shared(request: Request):
+        """REST API endpoint to get shared memory summary.
+
+        GET /api/memory/summary/shared
+        """
+        try:
+            memory = get_memory()
+
+            if not memory.config.team_id:
+                return JSONResponse({
+                    "success": True,
+                    "total": 0,
+                    "categories": {},
+                    "message": "No team configured",
+                })
+
+            memories = memory.get_all(scope="shared")
+
+            if not memories:
+                return JSONResponse({
+                    "success": True,
+                    "total": 0,
+                    "categories": {},
+                    "team_id": memory.config.team_id,
+                })
+
+            # Group by category
+            categories: dict[str, int] = {}
+            for m in memories:
+                mem_id = m.get("id")
+                if mem_id:
+                    metadata = memory.get_metadata(mem_id)
+                    cat = metadata.category if metadata else "general"
+                    categories[cat] = categories.get(cat, 0) + 1
+
+            return JSONResponse({
+                "success": True,
+                "total": len(memories),
+                "categories": categories,
+                "team_id": memory.config.team_id,
+            })
+        except Exception as e:
+            logger.error(f"API memory_summary_shared error: {e}")
+            return JSONResponse({"error": str(e)}, status_code=500)
+
+    # Create pure REST API app (MCP protocol handled by Express wrapper)
+    from starlette.applications import Starlette
     from starlette.middleware.trustedhost import TrustedHostMiddleware
-    app.user_middleware = [
-        m for m in app.user_middleware
-        if not (hasattr(m, 'cls') and getattr(m.cls, '__name__', '') == 'TrustedHostMiddleware')
+
+    routes = [
+        # Health check endpoints
+        Route("/ping", ping, methods=["GET"]),
+        Route("/health", health_check, methods=["GET"]),
+        # REST API routes
+        Route("/api/memory/add", api_memory_add, methods=["POST"]),
+        Route("/api/memory/search", api_memory_search, methods=["POST"]),
+        Route("/api/memory/forget", api_memory_forget, methods=["POST"]),
+        Route("/api/memory/update", api_memory_update, methods=["POST"]),
+        Route("/api/memory/maintenance", api_memory_maintenance, methods=["POST"]),
+        Route("/api/memory/status", api_memory_status, methods=["GET"]),
+        Route("/api/memory/summary/personal", api_memory_summary_personal, methods=["GET"]),
+        Route("/api/memory/summary/shared", api_memory_summary_shared, methods=["GET"]),
+        Route("/api/session/analyze", api_session_analyze, methods=["POST"]),
     ]
-
-    # Add health check and ping routes
-    app.routes.insert(0, Route("/ping", ping, methods=["GET"]))  # Ultra-fast for heartbeats
-    app.routes.insert(0, Route("/health", health_check, methods=["GET"]))
-
-    # Add REST API routes for hooks/CLI integration
-    app.routes.insert(0, Route("/api/memory/add", api_memory_add, methods=["POST"]))
-    app.routes.insert(0, Route("/api/memory/search", api_memory_search, methods=["POST"]))
-    app.routes.insert(0, Route("/api/session/analyze", api_session_analyze, methods=["POST"]))
     logger.info("REST API routes enabled (/api/memory/*, /api/session/*)")
 
     # Add admin routes (always available in HTTP mode with database)
     from cems.admin.routes import admin_routes
-    for route in admin_routes:
-        app.routes.insert(0, route)
+    routes.extend(admin_routes)
     logger.info("Admin API routes enabled (/admin/*)")
 
-    # Add our middlewares (order: last added = first executed)
+    # Create Starlette app
+    app = Starlette(routes=routes)
+
+    # Add middlewares (order: last added = first executed)
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=["*"])
     app.add_middleware(UserContextMiddleware)
 
@@ -1045,35 +732,15 @@ def run_http_server(host: str = "0.0.0.0", port: int = 8765) -> None:
 
 
 def run_server() -> None:
-    """Run the CEMS MCP server (stdio or http based on CEMS_MODE)."""
+    """Run the CEMS REST API server."""
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     )
 
-    mode = os.environ.get("CEMS_MODE", "stdio").lower()
-
-    if mode == "http" or mode == "server":
-        # HTTP mode - for Docker deployment
-        host = os.environ.get("CEMS_SERVER_HOST", "0.0.0.0")
-        port = int(os.environ.get("CEMS_SERVER_PORT", "8765"))
-        run_http_server(host=host, port=port)
-    else:
-        # stdio mode - for local Claude Code usage
-        # Initialize memory on startup
-        memory = get_memory()
-        config = memory.config
-
-        logger.info(f"Starting CEMS MCP server (stdio) for user: {config.user_id}")
-
-        # Start scheduler if enabled
-        if config.enable_scheduler:
-            scheduler = get_scheduler()
-            scheduler.start()
-            logger.info("Background scheduler started")
-
-        # Run the MCP server in stdio mode
-        mcp.run()
+    host = os.environ.get("CEMS_SERVER_HOST", "0.0.0.0")
+    port = int(os.environ.get("CEMS_SERVER_PORT", "8765"))
+    run_http_server(host=host, port=port)
 
 
 if __name__ == "__main__":

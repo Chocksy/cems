@@ -1,6 +1,6 @@
 #!/bin/bash
 # CEMS Installation Script
-# Installs CEMS and configures Claude Code integration
+# Installs CEMS and configures Claude Code and/or Cursor integration
 
 set -e
 
@@ -13,7 +13,12 @@ echo
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
 NC='\033[0m' # No Color
+
+# Track what was installed
+INSTALLED_CLAUDE=false
+INSTALLED_CURSOR=false
 
 # 1. Check prerequisites
 echo "Checking prerequisites..."
@@ -47,54 +52,76 @@ echo "Installing CEMS package..."
 uv pip install -e . 2>&1 | grep -v "^Resolved\|^Prepared\|^Installed" || true
 echo -e "${GREEN}CEMS package installed${NC}"
 
-# 3. Check for existing ~/.claude
+# =============================================================================
+# IDE Selection
+# =============================================================================
 echo
-CLAUDE_DIR="$HOME/.claude"
+echo "========================================="
+echo "IDE Configuration"
+echo "========================================="
+echo
+echo "Which IDE(s) would you like to configure?"
+echo "  1) Claude Code only"
+echo "  2) Cursor only"
+echo "  3) Both Claude Code and Cursor"
+echo "  4) Skip IDE configuration"
+echo
+read -p "Choose [1/2/3/4]: " ide_choice
 
-if [ -d "$CLAUDE_DIR" ]; then
-    echo -e "${YELLOW}Existing ~/.claude folder detected!${NC}"
+# =============================================================================
+# Claude Code Installation Function
+# =============================================================================
+install_claude_code() {
     echo
-    echo "Options:"
-    echo "  1) Fresh install (backup existing to ~/.claude.backup)"
-    echo "  2) Merge (add CEMS hooks/skills to existing config)"
-    echo "  3) Cancel"
-    echo
-    read -p "Choose [1/2/3]: " choice
+    echo -e "${BLUE}Configuring Claude Code...${NC}"
+    
+    CLAUDE_DIR="$HOME/.claude"
 
-    case $choice in
-        1)
-            echo
-            echo "Backing up existing config to ~/.claude.backup..."
-            if [ -d "$HOME/.claude.backup" ]; then
-                rm -rf "$HOME/.claude.backup"
-            fi
-            mv "$CLAUDE_DIR" "$HOME/.claude.backup"
-            echo "Installing fresh CEMS config..."
-            cp -r claude-setup "$CLAUDE_DIR"
-            echo -e "${GREEN}Fresh install complete${NC}"
-            ;;
-        2)
-            echo
-            echo "Merging CEMS into existing config..."
+    if [ -d "$CLAUDE_DIR" ]; then
+        echo -e "${YELLOW}Existing ~/.claude folder detected!${NC}"
+        echo
+        echo "Options:"
+        echo "  1) Fresh install (backup existing to ~/.claude.backup)"
+        echo "  2) Merge (add CEMS hooks/skills to existing config)"
+        echo "  3) Skip Claude Code"
+        echo
+        read -p "Choose [1/2/3]: " choice
 
-            # Create directories if needed
-            mkdir -p "$CLAUDE_DIR/hooks"
-            mkdir -p "$CLAUDE_DIR/skills/cems"
+        case $choice in
+            1)
+                echo
+                echo "Backing up existing config to ~/.claude.backup..."
+                if [ -d "$HOME/.claude.backup" ]; then
+                    rm -rf "$HOME/.claude.backup"
+                fi
+                mv "$CLAUDE_DIR" "$HOME/.claude.backup"
+                echo "Installing fresh CEMS config..."
+                cp -r claude-setup "$CLAUDE_DIR"
+                echo -e "${GREEN}Claude Code: Fresh install complete${NC}"
+                INSTALLED_CLAUDE=true
+                ;;
+            2)
+                echo
+                echo "Merging CEMS into existing config..."
 
-            # Copy hooks
-            cp claude-setup/hooks/cems_*.py "$CLAUDE_DIR/hooks/"
-            echo "  Copied CEMS hooks to ~/.claude/hooks/"
+                # Create directories if needed
+                mkdir -p "$CLAUDE_DIR/hooks"
+                mkdir -p "$CLAUDE_DIR/skills/cems"
 
-            # Copy skills
-            cp -r claude-setup/skills/cems/* "$CLAUDE_DIR/skills/cems/"
-            echo "  Copied CEMS skills to ~/.claude/skills/cems/"
+                # Copy hooks
+                cp claude-setup/hooks/cems_*.py "$CLAUDE_DIR/hooks/"
+                echo "  Copied CEMS hooks to ~/.claude/hooks/"
 
-            echo
-            echo -e "${YELLOW}IMPORTANT: You need to manually add hooks to ~/.claude/settings.json${NC}"
-            echo
-            echo "Add these entries to your settings.json 'hooks' section:"
-            echo
-            cat << 'HOOKS'
+                # Copy skills
+                cp -r claude-setup/skills/cems/* "$CLAUDE_DIR/skills/cems/"
+                echo "  Copied CEMS skills to ~/.claude/skills/cems/"
+
+                echo
+                echo -e "${YELLOW}IMPORTANT: You need to manually add hooks to ~/.claude/settings.json${NC}"
+                echo
+                echo "Add these entries to your settings.json 'hooks' section:"
+                echo
+                cat << 'HOOKS'
 {
   "hooks": {
     "UserPromptSubmit": [
@@ -122,75 +149,225 @@ if [ -d "$CLAUDE_DIR" ]; then
   }
 }
 HOOKS
-            echo
-            echo -e "${GREEN}Merge complete${NC}"
-            ;;
-        3)
-            echo "Cancelled."
-            exit 0
-            ;;
-        *)
-            echo "Invalid choice. Exiting."
-            exit 1
-            ;;
-    esac
-else
-    echo "No existing ~/.claude config found."
-    echo "Installing fresh CEMS config..."
-    cp -r claude-setup "$CLAUDE_DIR"
-    echo -e "${GREEN}Fresh install complete${NC}"
-fi
-
-# 4. Environment setup
-echo
-echo "========================================="
-echo "Environment Variables"
-echo "========================================="
-echo
-echo "CEMS requires these environment variables:"
-echo "  CEMS_API_URL - Your CEMS server URL"
-echo "  CEMS_API_KEY - Your CEMS API key"
-echo
-read -p "Add to shell profile now? [y/N]: " add_env
-
-if [[ "$add_env" =~ ^[Yy]$ ]]; then
-    echo
-    read -p "CEMS_API_URL (e.g., https://cems.example.com): " api_url
-    read -p "CEMS_API_KEY: " api_key
-
-    # Detect shell config file
-    if [ -n "$ZSH_VERSION" ] || [ -f "$HOME/.zshrc" ]; then
-        SHELL_RC="$HOME/.zshrc"
-    elif [ -f "$HOME/.bashrc" ]; then
-        SHELL_RC="$HOME/.bashrc"
+                echo
+                echo -e "${GREEN}Claude Code: Merge complete${NC}"
+                INSTALLED_CLAUDE=true
+                ;;
+            3)
+                echo "Skipping Claude Code configuration."
+                ;;
+            *)
+                echo "Invalid choice. Skipping Claude Code."
+                ;;
+        esac
     else
-        SHELL_RC="$HOME/.profile"
+        echo "No existing ~/.claude config found."
+        echo "Installing fresh CEMS config..."
+        cp -r claude-setup "$CLAUDE_DIR"
+        echo -e "${GREEN}Claude Code: Fresh install complete${NC}"
+        INSTALLED_CLAUDE=true
+    fi
+}
+
+# =============================================================================
+# Cursor Installation Function
+# =============================================================================
+install_cursor() {
+    echo
+    echo -e "${BLUE}Configuring Cursor...${NC}"
+    
+    CURSOR_DIR="$HOME/.cursor"
+    CURSOR_HOOKS_JSON="$CURSOR_DIR/hooks.json"
+
+    # Check if Cursor directory exists
+    if [ ! -d "$CURSOR_DIR" ]; then
+        echo -e "${YELLOW}~/.cursor directory not found. Creating it...${NC}"
+        mkdir -p "$CURSOR_DIR"
     fi
 
-    echo "" >> "$SHELL_RC"
-    echo "# CEMS Configuration" >> "$SHELL_RC"
-    echo "export CEMS_API_URL=\"$api_url\"" >> "$SHELL_RC"
-    echo "export CEMS_API_KEY=\"$api_key\"" >> "$SHELL_RC"
+    # Check for existing hooks
+    if [ -d "$CURSOR_DIR/hooks" ] || [ -f "$CURSOR_HOOKS_JSON" ]; then
+        echo -e "${YELLOW}Existing Cursor hooks detected!${NC}"
+        echo
+        echo "Options:"
+        echo "  1) Fresh install (backup existing to ~/.cursor/hooks.backup)"
+        echo "  2) Merge (add CEMS hooks to existing config)"
+        echo "  3) Skip Cursor"
+        echo
+        read -p "Choose [1/2/3]: " choice
 
+        case $choice in
+            1)
+                echo
+                echo "Backing up existing hooks..."
+                if [ -d "$CURSOR_DIR/hooks" ]; then
+                    if [ -d "$CURSOR_DIR/hooks.backup" ]; then
+                        rm -rf "$CURSOR_DIR/hooks.backup"
+                    fi
+                    mv "$CURSOR_DIR/hooks" "$CURSOR_DIR/hooks.backup"
+                fi
+                if [ -f "$CURSOR_HOOKS_JSON" ]; then
+                    mv "$CURSOR_HOOKS_JSON" "$CURSOR_DIR/hooks.json.backup"
+                fi
+                
+                echo "Installing CEMS hooks..."
+                cp -r cursor-setup/hooks "$CURSOR_DIR/"
+                cp cursor-setup/hooks.json "$CURSOR_HOOKS_JSON"
+                echo -e "${GREEN}Cursor: Fresh install complete${NC}"
+                INSTALLED_CURSOR=true
+                ;;
+            2)
+                echo
+                echo "Merging CEMS hooks..."
+
+                # Create hooks directory if needed
+                mkdir -p "$CURSOR_DIR/hooks"
+
+                # Copy hook scripts
+                cp cursor-setup/hooks/cems_*.py "$CURSOR_DIR/hooks/"
+                echo "  Copied CEMS hooks to ~/.cursor/hooks/"
+
+                echo
+                echo -e "${YELLOW}IMPORTANT: You need to manually merge hooks into ~/.cursor/hooks.json${NC}"
+                echo
+                echo "Add these entries to your hooks.json:"
+                echo
+                cat cursor-setup/hooks.json
+                echo
+                echo -e "${GREEN}Cursor: Merge complete${NC}"
+                INSTALLED_CURSOR=true
+                ;;
+            3)
+                echo "Skipping Cursor configuration."
+                ;;
+            *)
+                echo "Invalid choice. Skipping Cursor."
+                ;;
+        esac
+    else
+        echo "No existing Cursor hooks found."
+        echo "Installing CEMS hooks..."
+        mkdir -p "$CURSOR_DIR/hooks"
+        cp -r cursor-setup/hooks "$CURSOR_DIR/"
+        cp cursor-setup/hooks.json "$CURSOR_HOOKS_JSON"
+        echo -e "${GREEN}Cursor: Fresh install complete${NC}"
+        INSTALLED_CURSOR=true
+    fi
+}
+
+# =============================================================================
+# Execute IDE Installation Based on Choice
+# =============================================================================
+case $ide_choice in
+    1)
+        install_claude_code
+        ;;
+    2)
+        install_cursor
+        ;;
+    3)
+        install_claude_code
+        install_cursor
+        ;;
+    4)
+        echo "Skipping IDE configuration."
+        ;;
+    *)
+        echo "Invalid choice. Skipping IDE configuration."
+        ;;
+esac
+
+# =============================================================================
+# Environment Variables Setup
+# =============================================================================
+if [ "$INSTALLED_CLAUDE" = true ] || [ "$INSTALLED_CURSOR" = true ]; then
     echo
-    echo -e "${GREEN}Added to $SHELL_RC${NC}"
-    echo "Run: source $SHELL_RC"
+    echo "========================================="
+    echo "Environment Variables"
+    echo "========================================="
+    echo
+    echo "CEMS requires these environment variables:"
+    echo "  CEMS_API_URL - Your CEMS server URL"
+    echo "  CEMS_API_KEY - Your CEMS API key"
+    echo
+    
+    # Check if already set
+    if [ -n "$CEMS_API_URL" ] && [ -n "$CEMS_API_KEY" ]; then
+        echo -e "${GREEN}Environment variables already set!${NC}"
+        echo "  CEMS_API_URL=$CEMS_API_URL"
+        echo "  CEMS_API_KEY=****${CEMS_API_KEY: -4}"
+    else
+        read -p "Add to shell profile now? [y/N]: " add_env
+
+        if [[ "$add_env" =~ ^[Yy]$ ]]; then
+            echo
+            read -p "CEMS_API_URL (e.g., https://cems.example.com): " api_url
+            read -p "CEMS_API_KEY: " api_key
+
+            # Detect shell config file
+            if [ -n "$ZSH_VERSION" ] || [ -f "$HOME/.zshrc" ]; then
+                SHELL_RC="$HOME/.zshrc"
+            elif [ -f "$HOME/.bashrc" ]; then
+                SHELL_RC="$HOME/.bashrc"
+            else
+                SHELL_RC="$HOME/.profile"
+            fi
+
+            echo "" >> "$SHELL_RC"
+            echo "# CEMS Configuration" >> "$SHELL_RC"
+            echo "export CEMS_API_URL=\"$api_url\"" >> "$SHELL_RC"
+            echo "export CEMS_API_KEY=\"$api_key\"" >> "$SHELL_RC"
+
+            echo
+            echo -e "${GREEN}Added to $SHELL_RC${NC}"
+            echo "Run: source $SHELL_RC"
+        fi
+    fi
 fi
 
-# 5. Summary
+# =============================================================================
+# Summary
+# =============================================================================
 echo
 echo "========================================="
 echo -e "${GREEN}Installation Complete!${NC}"
 echo "========================================="
 echo
+
+echo "Installed components:"
+echo "  CEMS Python package: OK"
+if [ "$INSTALLED_CLAUDE" = true ]; then
+    echo -e "  Claude Code hooks:   ${GREEN}OK${NC}"
+fi
+if [ "$INSTALLED_CURSOR" = true ]; then
+    echo -e "  Cursor hooks:        ${GREEN}OK${NC}"
+fi
+
+echo
 echo "Next steps:"
 echo "  1. Restart your terminal (or source your shell rc)"
-echo "  2. Restart Claude Code"
-echo "  3. Test with: /remember I prefer TypeScript"
+
+if [ "$INSTALLED_CLAUDE" = true ]; then
+    echo "  2. Restart Claude Code"
+    echo "     Test with: /remember I prefer TypeScript"
+fi
+
+if [ "$INSTALLED_CURSOR" = true ]; then
+    echo "  2. Restart Cursor"
+    echo "     Hooks will automatically inject memories at session start"
+    echo "     and analyze sessions when they end"
+fi
+
 echo
 echo "Configuration:"
-echo "  Claude config: $CLAUDE_DIR"
-echo "  CEMS skills:   $CLAUDE_DIR/skills/cems/"
-echo "  CEMS hooks:    $CLAUDE_DIR/hooks/cems_*.py"
+if [ "$INSTALLED_CLAUDE" = true ]; then
+    echo "  Claude Code config: ~/.claude"
+    echo "  Claude Code hooks:  ~/.claude/hooks/cems_*.py"
+fi
+if [ "$INSTALLED_CURSOR" = true ]; then
+    echo "  Cursor config:      ~/.cursor/hooks.json"
+    echo "  Cursor hooks:       ~/.cursor/hooks/cems_*.py"
+fi
+
 echo
 echo "For CLI usage, run: cems --help"
