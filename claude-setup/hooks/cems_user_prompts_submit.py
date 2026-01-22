@@ -14,7 +14,7 @@ This hook runs on every user prompt and:
 2. Appends ultrathink instruction if -u flag is present
 
 Configuration (environment variables):
-  CEMS_API_URL - CEMS server URL (defaults to https://cems.chocksy.com)
+  CEMS_API_URL - CEMS server URL (required)
   CEMS_API_KEY - Your CEMS API key (required)
 """
 
