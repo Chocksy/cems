@@ -435,8 +435,16 @@ app.post("/mcp", async (req: Request, res: Response) => {
   }
 });
 
-// GET and DELETE endpoints removed - not needed in stateless mode
-// All requests are handled via POST with immediate JSON responses
+// GET /mcp - Return 405 to signal stateless mode (no SSE streaming)
+// MCP spec: stateless servers MUST return 405 Method Not Allowed for GET requests
+app.get("/mcp", (_req: Request, res: Response) => {
+  res.status(405).set('Allow', 'POST').send('Method Not Allowed - This is a stateless MCP server. Use POST requests only.');
+});
+
+// DELETE /mcp - Return 405 for stateless mode (no session management)
+app.delete("/mcp", (_req: Request, res: Response) => {
+  res.status(405).set('Allow', 'POST').send('Method Not Allowed - This is a stateless MCP server. No session management.');
+});
 
 // Start server
 app.listen(PORT, "0.0.0.0", () => {
