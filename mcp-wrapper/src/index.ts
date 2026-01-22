@@ -5,17 +5,15 @@
  * all tool calls to the Python REST API server.
  *
  * Key features:
- * - Streamable HTTP transport (MCP spec recommended, introduced March 2025)
- * - Heartbeat every 30 seconds to prevent proxy timeouts
+ * - Stateless Streamable HTTP transport (no session management)
+ * - JSON response mode (no SSE streaming)
  * - Proxies all MCP tool calls to Python REST API endpoints
- * - Session-aware auth headers (updated on each request for token refresh)
+ * - Auth headers extracted from each request (no session caching)
  */
 
 import express, { Request, Response } from "express";
-import { randomUUID } from "node:crypto";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 
 const PYTHON_API_URL = process.env.PYTHON_API_URL || "http://cems-server:8765";
@@ -25,18 +23,6 @@ const app = express();
 
 // Middleware to parse JSON bodies
 app.use(express.json());
-
-// Store active transports by session ID
-const transports: Record<string, StreamableHTTPServerTransport> = {};
-
-// Store session auth headers (updated on each request to support token refresh)
-const sessionHeaders: Record<string, { authorization?: string; teamId?: string }> = {};
-
-// Store active SSE heartbeat intervals
-const heartbeatIntervals: Record<string, NodeJS.Timeout> = {};
-
-// SSE heartbeat interval (30 seconds - well under Cloudflare's 100s timeout)
-const HEARTBEAT_INTERVAL_MS = 30000;
 
 // Health check endpoint (for Docker/Kubernetes)
 app.get("/health", async (_req: Request, res: Response) => {
@@ -61,71 +47,19 @@ app.get("/ping", (_req: Request, res: Response) => {
   res.json({ status: "ok" });
 });
 
-// MCP endpoint - handles POST (initialize and requests)
-app.post("/mcp", async (req: Request, res: Response) => {
-  const sessionId = req.headers["mcp-session-id"] as string | undefined;
-  let transport: StreamableHTTPServerTransport;
+// Helper function to create and configure MCP server with all tools/resources
+function createMcpServer(authHeaders: { authorization?: string; teamId?: string }) {
+  const server = new McpServer({
+    name: "cems-mcp-wrapper",
+    version: "1.0.0",
+  });
 
-  if (sessionId && transports[sessionId]) {
-    // Reuse existing session - update auth headers (supports token refresh)
-    transport = transports[sessionId];
-    sessionHeaders[sessionId] = {
-      authorization: req.headers.authorization as string | undefined,
-      teamId: req.headers["x-team-id"] as string | undefined,
-    };
-  } else if (isInitializeRequest(req.body)) {
-    // New session initialization OR re-initialization with stale/missing session
-    // This handles the case where Cursor has a cached session ID from before server restart
-    if (sessionId) {
-      console.log(`Stale session detected (${sessionId}), creating new session`);
-    }
-    transport = new StreamableHTTPServerTransport({
-      sessionIdGenerator: () => randomUUID(),
-      onsessioninitialized: (id) => {
-        transports[id] = transport;
-        // Store initial auth headers for this session
-        sessionHeaders[id] = {
-          authorization: req.headers.authorization as string | undefined,
-          teamId: req.headers["x-team-id"] as string | undefined,
-        };
-        console.log("Session initialized:", id);
-      },
-      onsessionclosed: (id) => {
-        delete transports[id];
-        delete sessionHeaders[id];
-        console.log("Session closed:", id);
-      },
-    });
+  // Helper to get auth headers (always from request, no session caching)
+  const getAuthHeaders = () => authHeaders;
 
-    transport.onclose = () => {
-      if (transport.sessionId) {
-        delete transports[transport.sessionId];
-        delete sessionHeaders[transport.sessionId];
-      }
-    };
-
-    // Helper to get current session's auth headers
-    const getAuthHeaders = () => {
-      const sid = transport.sessionId;
-      if (sid && sessionHeaders[sid]) {
-        return sessionHeaders[sid];
-      }
-      // Fallback to request headers (during initialization)
-      return {
-        authorization: req.headers.authorization as string | undefined,
-        teamId: req.headers["x-team-id"] as string | undefined,
-      };
-    };
-
-    // Create MCP server instance
-    const server = new McpServer({
-      name: "cems-mcp-wrapper",
-      version: "1.0.0",
-    });
-
-    // Register tool handlers that proxy to Python REST API
-    server.registerTool(
-      "memory_add",
+  // Register tool handlers that proxy to Python REST API
+  server.registerTool(
+    "memory_add",
       {
         title: "Add Memory",
         description: "Store a memory in personal or shared namespace. Set infer=false for bulk imports (much faster).",
@@ -137,32 +71,32 @@ app.post("/mcp", async (req: Request, res: Response) => {
           infer: z.boolean().default(true).describe("Use LLM for fact extraction (true) or store raw (false). Use false for bulk imports."),
         },
       },
-      async (args) => {
-        const auth = getAuthHeaders();
-        const response = await fetch(`${PYTHON_API_URL}/api/memory/add`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            ...(auth.authorization && { Authorization: auth.authorization }),
-            ...(auth.teamId && { "x-team-id": auth.teamId }),
-          },
-          body: JSON.stringify(args),
-        });
+    async (args) => {
+      const auth = getAuthHeaders();
+      const response = await fetch(`${PYTHON_API_URL}/api/memory/add`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(auth.authorization && { Authorization: auth.authorization }),
+          ...(auth.teamId && { "x-team-id": auth.teamId }),
+        },
+        body: JSON.stringify(args),
+      });
 
-        if (!response.ok) {
-          const error = await response.text();
-          throw new Error(`Python API error: ${error}`);
-        }
-
-        const result = await response.json();
-        return {
-          content: [{ type: "text", text: JSON.stringify(result) }],
-        };
+      if (!response.ok) {
+        const error = await response.text();
+        throw new Error(`Python API error: ${error}`);
       }
-    );
 
-    server.registerTool(
-      "memory_search",
+      const result = await response.json();
+      return {
+        content: [{ type: "text", text: JSON.stringify(result) }],
+      };
+    }
+  );
+
+  server.registerTool(
+    "memory_search",
       {
         title: "Search Memories",
         description:
@@ -222,10 +156,10 @@ app.post("/mcp", async (req: Request, res: Response) => {
           content: [{ type: "text", text: JSON.stringify(result) }],
         };
       }
-    );
+  );
 
-    server.registerTool(
-      "memory_forget",
+  server.registerTool(
+    "memory_forget",
       {
         title: "Forget Memory",
         description: "Delete or archive a memory",
@@ -255,10 +189,10 @@ app.post("/mcp", async (req: Request, res: Response) => {
           content: [{ type: "text", text: JSON.stringify(result) }],
         };
       }
-    );
+  );
 
-    server.registerTool(
-      "memory_update",
+  server.registerTool(
+    "memory_update",
       {
         title: "Update Memory",
         description: "Update an existing memory's content",
@@ -288,10 +222,10 @@ app.post("/mcp", async (req: Request, res: Response) => {
           content: [{ type: "text", text: JSON.stringify(result) }],
         };
       }
-    );
+  );
 
-    server.registerTool(
-      "memory_maintenance",
+  server.registerTool(
+    "memory_maintenance",
       {
         title: "Run Maintenance",
         description: "Run memory maintenance jobs",
@@ -320,10 +254,10 @@ app.post("/mcp", async (req: Request, res: Response) => {
           content: [{ type: "text", text: JSON.stringify(result) }],
         };
       }
-    );
+  );
 
-    server.registerTool(
-      "session_analyze",
+  server.registerTool(
+    "session_analyze",
       {
         title: "Analyze Session",
         description: "Analyze session content and extract learnings to remember. Works with any format: raw transcripts, summaries, or notes.",
@@ -354,11 +288,11 @@ app.post("/mcp", async (req: Request, res: Response) => {
           content: [{ type: "text", text: JSON.stringify(result) }],
         };
       }
-    );
+  );
 
-    // Register resources
-    server.registerResource(
-      "memory_status",
+  // Register resources
+  server.registerResource(
+    "memory_status",
       "memory://status",
       {
         title: "Memory System Status",
@@ -389,10 +323,10 @@ app.post("/mcp", async (req: Request, res: Response) => {
           ],
         };
       }
-    );
+  );
 
-    server.registerResource(
-      "memory_personal_summary",
+  server.registerResource(
+    "memory_personal_summary",
       "memory://personal/summary",
       {
         title: "Personal Memory Summary",
@@ -423,10 +357,10 @@ app.post("/mcp", async (req: Request, res: Response) => {
           ],
         };
       }
-    );
+  );
 
-    server.registerResource(
-      "memory_shared_summary",
+  server.registerResource(
+    "memory_shared_summary",
       "memory://shared/summary",
       {
         title: "Shared Memory Summary",
@@ -460,87 +394,49 @@ app.post("/mcp", async (req: Request, res: Response) => {
       }
     );
 
+  return server;
+}
+
+// MCP endpoint - handles POST (stateless mode - all requests)
+app.post("/mcp", async (req: Request, res: Response) => {
+  try {
+    // Extract auth headers from request (no session caching)
+    const authHeaders = {
+      authorization: req.headers.authorization as string | undefined,
+      teamId: req.headers["x-team-id"] as string | undefined,
+    };
+
+    // Create stateless transport for each request
+    const transport = new StreamableHTTPServerTransport({
+      sessionIdGenerator: undefined, // Stateless mode - no session tracking
+      enableJsonResponse: true, // JSON response, no SSE streaming
+    });
+
+    // Create server and register all tools/resources
+    const server = createMcpServer(authHeaders);
+
     // Connect server to transport
     await server.connect(transport);
-  } else {
-    // Non-initialize request with invalid/missing session
-    // This prompts the client to re-initialize
-    const msg = sessionId
-      ? `Session expired or invalid (${sessionId.slice(0, 8)}...). Please re-initialize.`
-      : "No session. Send initialize request first.";
-    console.log(`Invalid session request: ${msg}`);
-    res.status(400).json({
-      jsonrpc: "2.0",
-      error: { code: -32000, message: msg },
-      id: null,
-    });
-    return;
-  }
 
-  // Handle the request
-  await transport.handleRequest(req, res, req.body);
-});
-
-// MCP endpoint - handles GET (SSE stream) with heartbeat to prevent Cloudflare timeout
-app.get("/mcp", async (req: Request, res: Response) => {
-  const sessionId = req.headers["mcp-session-id"] as string;
-  const transport = transports[sessionId];
-
-  if (transport) {
-    // Set up SSE heartbeat to prevent Cloudflare's 100s idle timeout
-    // Send SSE comment (: ping) every 30 seconds
-    const heartbeatId = `${sessionId}-${Date.now()}`;
-    
-    // Start heartbeat interval
-    heartbeatIntervals[heartbeatId] = setInterval(() => {
-      try {
-        if (!res.writableEnded && !res.destroyed) {
-          // SSE comment format - doesn't trigger client event but keeps connection alive
-          res.write(": ping\n\n");
-        } else {
-          // Connection closed, clean up
-          clearInterval(heartbeatIntervals[heartbeatId]);
-          delete heartbeatIntervals[heartbeatId];
-        }
-      } catch (err) {
-        // Connection likely closed
-        clearInterval(heartbeatIntervals[heartbeatId]);
-        delete heartbeatIntervals[heartbeatId];
-      }
-    }, HEARTBEAT_INTERVAL_MS);
-
-    // Clean up heartbeat when response ends
-    res.on("close", () => {
-      if (heartbeatIntervals[heartbeatId]) {
-        clearInterval(heartbeatIntervals[heartbeatId]);
-        delete heartbeatIntervals[heartbeatId];
-      }
-    });
-
-    res.on("finish", () => {
-      if (heartbeatIntervals[heartbeatId]) {
-        clearInterval(heartbeatIntervals[heartbeatId]);
-        delete heartbeatIntervals[heartbeatId];
-      }
-    });
-
-    await transport.handleRequest(req, res);
-  } else {
-    res.status(400).send("Invalid session");
+    // Handle the request
+    await transport.handleRequest(req, res, req.body);
+  } catch (error) {
+    console.error("Error handling MCP request:", error);
+    if (!res.headersSent) {
+      res.status(500).json({
+        jsonrpc: "2.0",
+        error: {
+          code: -32603,
+          message: "Internal server error",
+        },
+        id: null,
+      });
+    }
   }
 });
 
-// MCP endpoint - handles DELETE (close session)
-app.delete("/mcp", async (req: Request, res: Response) => {
-  const sessionId = req.headers["mcp-session-id"] as string;
-  const transport = transports[sessionId];
-
-  if (transport) {
-    await transport.handleRequest(req, res);
-  } else {
-    res.status(400).send("Invalid session");
-  }
-});
+// GET and DELETE endpoints removed - not needed in stateless mode
+// All requests are handled via POST with immediate JSON responses
 
 // Start server
 app.listen(PORT, "0.0.0.0", () => {
