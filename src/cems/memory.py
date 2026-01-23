@@ -188,6 +188,7 @@ Return JSON: {"facts": ["specific actionable fact 1", "specific actionable fact 
         source: str | None = None,
         tags: list[str] | None = None,
         infer: bool = True,
+        source_ref: str | None = None,
     ) -> dict[str, Any]:
         """Add a memory to the specified namespace.
 
@@ -200,6 +201,7 @@ Return JSON: {"facts": ["specific actionable fact 1", "specific actionable fact 
             infer: If True (default), use LLM for fact extraction and deduplication.
                    If False, store raw content directly (100-200ms vs 1-10s per memory).
                    Use infer=False for bulk imports where speed matters.
+            source_ref: Optional project reference for scoped recall (e.g., "project:org/repo")
 
         Returns:
             Dict with memory operation results
@@ -215,6 +217,7 @@ Return JSON: {"facts": ["specific actionable fact 1", "specific actionable fact 
             metadata={
                 "category": category,
                 "source": source,
+                "source_ref": source_ref,
                 "tags": tags or [],
             },
             infer=infer,
@@ -232,6 +235,7 @@ Return JSON: {"facts": ["specific actionable fact 1", "specific actionable fact 
                             scope=memory_scope,
                             category=category,
                             source=source,
+                            source_ref=source_ref,
                             tags=tags or [],
                         )
                         self._metadata.save_metadata(metadata)
@@ -723,15 +727,17 @@ Return JSON: {"facts": ["specific actionable fact 1", "specific actionable fact 
         max_tokens: int = 2000,
         enable_query_synthesis: bool = True,
         enable_graph: bool = True,
+        project: str | None = None,
     ) -> dict[str, Any]:
         """The definitive inference retrieval pipeline.
 
-        Implements 5 stages:
+        Implements 6 stages:
         1. Query synthesis (LLM expansion)
         2. Candidate retrieval (vector + graph)
         3. Relevance filtering (threshold)
         4. Temporal ranking (time decay)
-        5. Token-budgeted assembly
+        5. Project-scoped scoring (boost same-project, penalize other-project)
+        6. Token-budgeted assembly
 
         This is the primary search method for LLM context injection.
 
@@ -741,6 +747,7 @@ Return JSON: {"facts": ["specific actionable fact 1", "specific actionable fact 
             max_tokens: Token budget for results
             enable_query_synthesis: Use LLM to expand query
             enable_graph: Include graph traversal
+            project: Optional project ID (e.g., "org/repo") for project-scoped scoring
 
         Returns:
             {
@@ -813,10 +820,28 @@ Return JSON: {"facts": ["specific actionable fact 1", "specific actionable fact 
         # Re-sort by final score
         candidates.sort(key=lambda x: x.score, reverse=True)
 
+        # Stage 5: Project-scoped scoring
+        if project:
+            for candidate in candidates:
+                source_ref = None
+                if candidate.metadata and hasattr(candidate.metadata, 'source_ref'):
+                    source_ref = candidate.metadata.source_ref
+
+                if source_ref and source_ref.startswith(f"project:{project}"):
+                    # +30% boost for same project
+                    candidate.score *= 1.3
+                elif source_ref and source_ref.startswith("project:"):
+                    # -20% penalty for different project
+                    candidate.score *= 0.8
+                # No change for memories without project (global)
+
+            # Re-sort after project scoring
+            candidates.sort(key=lambda x: x.score, reverse=True)
+
         total_before_filter = len(all_candidates)
         filtered_count = len(candidates)
 
-        # Stage 5: Token-budgeted assembly
+        # Stage 6: Token-budgeted assembly
         selected, tokens_used = assemble_context(candidates, max_tokens)
 
         return {

@@ -42,6 +42,34 @@ You can add categories and tags for better organization:
 - `scope`: "personal"
 - `category`: Default "general" or specified
 - `tags`: As specified
+- `source_ref`: Project reference (see below)
+
+## Project Context
+
+When running in a git repository, **always include the project reference** for project-scoped recall:
+
+1. Get git remote: `git remote get-url origin`
+2. Extract org/repo from URL:
+   - SSH: `git@github.com:org/repo.git` → `org/repo`
+   - HTTPS: `https://github.com/org/repo.git` → `org/repo`
+3. Pass as source_ref: `source_ref: "project:org/repo"`
+
+This enables project-scoped memory recall - memories created in a project will be boosted when searching from that same project, and deprioritized when searching from other projects.
+
+**Example:**
+```
+/remember --category decisions We use PostgreSQL for the main database
+```
+
+If running in the `myorg/webapp` repo, Claude should automatically add:
+```json
+{
+  "content": "We use PostgreSQL for the main database",
+  "scope": "personal",
+  "category": "decisions",
+  "source_ref": "project:myorg/webapp"
+}
+```
 
 ## Related Skills
 

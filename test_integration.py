@@ -271,10 +271,87 @@ def test_maintenance() -> tuple[bool, str]:
         result = call_api("POST", "/api/memory/maintenance", {
             "job_type": "consolidation",
         })
-        
+
         if result.get("success"):
             consolidated = result.get("consolidated", 0)
             return True, f"consolidated {consolidated} memories"
+        return False, f"failed: {result.get('error', 'unknown error')}"
+    except Exception as e:
+        return False, str(e)
+
+
+def test_memory_add_with_source_ref() -> tuple[bool, str]:
+    """Test POST /api/memory/add with source_ref for project-scoped recall."""
+    import time
+    timestamp = int(time.time())
+
+    try:
+        result = call_api("POST", "/api/memory/add", {
+            "content": f"Project-scoped test memory at {timestamp}",
+            "category": "test",
+            "infer": False,
+            "source_ref": "project:testorg/testrepo",
+        })
+
+        if not result.get("success"):
+            return False, f"add failed: {result.get('error', 'unknown error')}"
+
+        mem_result = result.get("result", {})
+        results = mem_result.get("results", [])
+
+        if not results:
+            return False, "success=True but empty results"
+
+        memory_id = results[0].get("id", "")
+        if not memory_id:
+            return False, "no memory_id returned"
+
+        # Clean up
+        call_api("POST", "/api/memory/forget", {
+            "memory_id": memory_id,
+            "hard_delete": True,
+        })
+
+        return True, f"created with source_ref: {memory_id[:12]}..."
+    except Exception as e:
+        return False, str(e)
+
+
+def test_memory_search_with_project() -> tuple[bool, str]:
+    """Test POST /api/memory/search with project parameter for scoped boost."""
+    try:
+        # First create a project-scoped memory
+        add_result = call_api("POST", "/api/memory/add", {
+            "content": "Project-specific preference: use pytest for testing",
+            "category": "test",
+            "infer": False,
+            "source_ref": "project:testorg/testrepo",
+        })
+
+        if not add_result.get("success"):
+            return False, f"add failed: {add_result.get('error')}"
+
+        memory_id = add_result.get("result", {}).get("results", [{}])[0].get("id")
+
+        # Search with project parameter
+        result = call_api("POST", "/api/memory/search", {
+            "query": "pytest testing",
+            "limit": 5,
+            "scope": "personal",
+            "project": "testorg/testrepo",
+        })
+
+        # Clean up
+        if memory_id:
+            call_api("POST", "/api/memory/forget", {
+                "memory_id": memory_id,
+                "hard_delete": True,
+            })
+
+        if result.get("success"):
+            results = result.get("results", [])
+            mode = result.get("mode", "unknown")
+            return True, f"found {len(results)} results with project boost (mode: {mode})"
         return False, f"failed: {result.get('error', 'unknown error')}"
     except Exception as e:
         return False, str(e)
@@ -296,8 +373,10 @@ def run_all_tests():
         ("Status", test_status),
         ("Add Memory (LLM)", test_memory_add_with_llm),
         ("Add Memory (Fast)", test_memory_add_fast),
+        ("Add Memory (source_ref)", test_memory_add_with_source_ref),
         ("Search", test_memory_search),
         ("Search Raw", test_memory_search_raw),
+        ("Search (project)", test_memory_search_with_project),
         ("Summary", test_memory_summary),
         ("Forget", test_memory_forget),
         ("Maintenance", test_maintenance),

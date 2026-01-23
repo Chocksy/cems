@@ -241,9 +241,10 @@ def create_http_app():
             "content": "...",
             "category": "...",
             "scope": "personal|shared",
-            "infer": true/false  (optional, default true)
+            "infer": true/false  (optional, default true),
+            "source_ref": "project:org/repo"  (optional, for project-scoped recall)
         }
-        
+
         Note: Set infer=false for bulk imports (100-200ms vs 1-10s per memory).
         With infer=false, content is stored raw without LLM fact extraction.
         """
@@ -256,9 +257,10 @@ def create_http_app():
             category = body.get("category", "general")
             scope = body.get("scope", "personal")
             infer = body.get("infer", True)  # Default to True for backwards compatibility
+            source_ref = body.get("source_ref")  # e.g., "project:org/repo"
 
             memory = get_memory()
-            result = memory.add(content, scope=scope, category=category, infer=infer)
+            result = memory.add(content, scope=scope, category=category, infer=infer, source_ref=source_ref)
 
             return JSONResponse({
                 "success": True,
@@ -279,7 +281,8 @@ def create_http_app():
             "max_tokens": 2000,           # Token budget for results
             "enable_graph": true,         # Include graph traversal
             "enable_query_synthesis": true,  # LLM query expansion
-            "raw": false                  # Bypass filtering (debug mode)
+            "raw": false,                 # Bypass filtering (debug mode)
+            "project": "org/repo"         # Project ID for scoped boost
         }
 
         The unified pipeline (retrieve_for_inference) implements 5 stages:
@@ -288,6 +291,7 @@ def create_http_app():
         3. Relevance filtering (threshold-based)
         4. Temporal ranking (time decay + priority)
         5. Token-budgeted assembly
+        6. Project-scoped scoring (boost same-project, penalize other-project)
 
         Use raw=true for debugging to see all results without filtering.
         """
@@ -303,6 +307,7 @@ def create_http_app():
             enable_graph = body.get("enable_graph", True)
             enable_query_synthesis = body.get("enable_query_synthesis", True)
             raw_mode = body.get("raw", False)
+            project = body.get("project")  # e.g., "org/repo"
 
             memory = get_memory()
 
@@ -324,6 +329,7 @@ def create_http_app():
                 max_tokens=max_tokens,
                 enable_query_synthesis=enable_query_synthesis,
                 enable_graph=enable_graph,
+                project=project,
             )
 
             # Apply limit to results

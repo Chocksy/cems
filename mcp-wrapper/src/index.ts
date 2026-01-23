@@ -69,6 +69,7 @@ function createMcpServer(authHeaders: { authorization?: string; teamId?: string 
           category: z.string().default("general").describe("Category for organization"),
           tags: z.array(z.string()).default([]).describe("Optional tags"),
           infer: z.boolean().default(true).describe("Use LLM for fact extraction (true) or store raw (false). Use false for bulk imports."),
+          source_ref: z.string().optional().describe("Project reference for scoped recall (e.g., 'project:org/repo')"),
         },
       },
     async (args) => {
@@ -124,6 +125,10 @@ function createMcpServer(authHeaders: { authorization?: string; teamId?: string 
             .boolean()
             .default(false)
             .describe("Debug mode: bypass filtering to see all results"),
+          project: z
+            .string()
+            .optional()
+            .describe("Project ID (e.g., 'org/repo') to boost project-scoped memories"),
         },
       },
       async (args) => {
@@ -143,6 +148,7 @@ function createMcpServer(authHeaders: { authorization?: string; teamId?: string 
             enable_graph: args.enable_graph,
             enable_query_synthesis: args.enable_query_synthesis,
             raw: args.raw,
+            project: args.project,
           }),
         });
 

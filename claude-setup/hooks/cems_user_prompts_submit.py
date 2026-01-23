@@ -21,6 +21,7 @@ Configuration (environment variables):
 import json
 import os
 import re
+import subprocess
 import sys
 
 import httpx
@@ -78,10 +79,49 @@ def extract_keywords(prompt: str) -> str:
     return ' '.join(list(dict.fromkeys(keywords))[:5])
 
 
-def search_cems(query: str) -> str | None:
+def get_project_id(cwd: str) -> str | None:
+    """Extract project ID from git remote (e.g., 'org/repo').
+
+    Parses the git remote origin URL to extract the org/repo identifier.
+    Works with both SSH and HTTPS formats.
+
+    Args:
+        cwd: Current working directory (project root)
+
+    Returns:
+        Project ID like 'org/repo' or None if not a git repo
+    """
+    if not cwd:
+        return None
+
+    try:
+        result = subprocess.run(
+            ["git", "-C", cwd, "remote", "get-url", "origin"],
+            capture_output=True, text=True, timeout=2
+        )
+        if result.returncode == 0:
+            url = result.stdout.strip()
+            # SSH: git@github.com:org/repo.git → org/repo
+            if url.startswith("git@"):
+                match = re.search(r":(.+?)(?:\.git)?$", url)
+            else:
+                # HTTPS: https://github.com/org/repo.git → org/repo
+                match = re.search(r"[:/]([^/]+/[^/]+?)(?:\.git)?$", url)
+            if match:
+                return match.group(1).rstrip('.git')
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        pass
+    return None
+
+
+def search_cems(query: str, project: str | None = None) -> str | None:
     """
     Search CEMS for relevant memories.
     Returns formatted string or None if search fails.
+
+    Args:
+        query: Search query string
+        project: Optional project ID (e.g., 'org/repo') to boost project-scoped memories
 
     Note: No limit imposed here - the API handles relevance filtering and limits.
     """
@@ -92,9 +132,13 @@ def search_cems(query: str) -> str | None:
         return None
 
     try:
+        payload = {"query": query, "scope": "both"}
+        if project:
+            payload["project"] = project  # Will filter/boost by source_ref prefix
+
         response = httpx.post(
             f"{CEMS_API_URL}/api/memory/search",
-            json={"query": query, "scope": "both"},
+            json=payload,
             headers={"Authorization": f"Bearer {CEMS_API_KEY}"},
             timeout=5.0,
         )
@@ -129,6 +173,7 @@ def main():
         # Read input from stdin
         input_data = json.load(sys.stdin)
         prompt = input_data.get('prompt', '')
+        cwd = input_data.get('cwd', '')
 
         # Skip for subagents
         if os.environ.get('CLAUDE_AGENT_ID'):
@@ -147,10 +192,13 @@ def main():
 
         output_parts = []
 
+        # Extract project ID from git remote for project-scoped search
+        project = get_project_id(cwd) if cwd else None
+
         # 1. Memory awareness - search CEMS
         intent = extract_intent(prompt)
         if intent and len(intent) >= 3:
-            memories = search_cems(intent)
+            memories = search_cems(intent, project=project)
             if memories:
                 memory_context = f"""<memory-recall>
 RELEVANT MEMORIES found for "{intent}":
