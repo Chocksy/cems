@@ -242,11 +242,14 @@ def create_http_app():
             "category": "...",
             "scope": "personal|shared",
             "infer": true/false  (optional, default true),
-            "source_ref": "project:org/repo"  (optional, for project-scoped recall)
+            "source_ref": "project:org/repo"  (optional, for project-scoped recall),
+            "ttl_hours": 24  (optional, memory expires after this many hours)
         }
 
         Note: Set infer=false for bulk imports (100-200ms vs 1-10s per memory).
         With infer=false, content is stored raw without LLM fact extraction.
+        
+        Use ttl_hours for short-term session memories that should auto-expire.
         """
         try:
             body = await request.json()
@@ -258,9 +261,17 @@ def create_http_app():
             scope = body.get("scope", "personal")
             infer = body.get("infer", True)  # Default to True for backwards compatibility
             source_ref = body.get("source_ref")  # e.g., "project:org/repo"
+            ttl_hours = body.get("ttl_hours")  # Optional: memory expires after N hours
 
             memory = get_memory()
-            result = memory.add(content, scope=scope, category=category, infer=infer, source_ref=source_ref)
+            result = memory.add(
+                content,
+                scope=scope,
+                category=category,
+                infer=infer,
+                source_ref=source_ref,
+                ttl_hours=ttl_hours,
+            )
 
             return JSONResponse({
                 "success": True,
@@ -271,27 +282,38 @@ def create_http_app():
             return JSONResponse({"error": str(e)}, status_code=500)
 
     async def api_memory_search(request: Request):
-        """REST API endpoint to search memories using unified retrieval pipeline.
+        """REST API endpoint to search memories using enhanced retrieval pipeline.
 
         POST /api/memory/search
         Body: {
             "query": "...",
             "limit": 10,
             "scope": "personal|shared|both",
-            "max_tokens": 2000,           # Token budget for results
-            "enable_graph": true,         # Include graph traversal
+            "max_tokens": 2000,              # Token budget for results
+            "enable_graph": true,            # Include graph traversal
             "enable_query_synthesis": true,  # LLM query expansion
-            "raw": false,                 # Bypass filtering (debug mode)
-            "project": "org/repo"         # Project ID for scoped boost
+            "raw": false,                    # Bypass filtering (debug mode)
+            "project": "org/repo",           # Project ID for scoped boost
+            "mode": "auto|vector|hybrid",    # NEW: Retrieval mode
+            "enable_hyde": true,             # NEW: Use HyDE for better matching
+            "enable_rerank": true            # NEW: Use LLM re-ranking
         }
 
-        The unified pipeline (retrieve_for_inference) implements 5 stages:
-        1. Query synthesis (LLM expands query for better retrieval)
-        2. Candidate retrieval (vector + graph search)
-        3. Relevance filtering (threshold-based)
-        4. Temporal ranking (time decay + priority)
-        5. Token-budgeted assembly
-        6. Project-scoped scoring (boost same-project, penalize other-project)
+        The enhanced pipeline (retrieve_for_inference) implements 9 stages:
+        1. Query understanding (intent, domains, entities) - NEW
+        2. Query synthesis (LLM expands query for better retrieval)
+        3. HyDE (hypothetical document generation) - NEW
+        4. Candidate retrieval (vector + graph search)
+        5. RRF fusion (combine multi-query results) - NEW
+        6. LLM re-ranking (smarter relevance) - NEW
+        7. Relevance filtering (threshold-based)
+        8. Unified scoring (time decay + priority + project)
+        9. Token-budgeted assembly
+
+        Modes:
+        - "auto": Smart routing based on query analysis (default)
+        - "vector": Fast path, minimal LLM calls
+        - "hybrid": Full pipeline with HyDE + RRF + re-ranking
 
         Use raw=true for debugging to see all results without filtering.
         """
@@ -308,6 +330,12 @@ def create_http_app():
             enable_query_synthesis = body.get("enable_query_synthesis", True)
             raw_mode = body.get("raw", False)
             project = body.get("project")  # e.g., "org/repo"
+            # NEW parameters
+            mode = body.get("mode", "auto")  # auto, vector, hybrid
+            enable_hyde = body.get("enable_hyde", True)
+            enable_rerank = body.get("enable_rerank", True)
+
+            logger.info(f"[API] Search request: query='{query[:50]}...', mode={mode}, raw={raw_mode}")
 
             memory = get_memory()
 
@@ -315,6 +343,7 @@ def create_http_app():
                 # Debug mode: use raw search without filtering
                 results = memory.search(query, scope=scope, limit=limit)
                 serialized_results = [r.model_dump(mode="json") for r in results]
+                logger.info(f"[API] Raw search: {len(serialized_results)} results")
                 return JSONResponse({
                     "success": True,
                     "results": serialized_results,
@@ -322,7 +351,7 @@ def create_http_app():
                     "mode": "raw",
                 })
 
-            # Production mode: use unified retrieval pipeline
+            # Production mode: use enhanced retrieval pipeline
             result = memory.retrieve_for_inference(
                 query=query,
                 scope=scope,
@@ -330,23 +359,29 @@ def create_http_app():
                 enable_query_synthesis=enable_query_synthesis,
                 enable_graph=enable_graph,
                 project=project,
+                mode=mode,
+                enable_hyde=enable_hyde,
+                enable_rerank=enable_rerank,
             )
 
             # Apply limit to results
             limited_results = result["results"][:limit]
 
+            logger.info(f"[API] Search complete: {len(limited_results)} results, mode={result.get('mode')}")
+
             return JSONResponse({
                 "success": True,
                 "results": limited_results,
                 "count": len(limited_results),
-                "mode": "unified",
+                "mode": result.get("mode", "unified"),
                 "tokens_used": result["tokens_used"],
                 "queries_used": result["queries_used"],
                 "total_candidates": result["total_candidates"],
                 "filtered_count": result["filtered_count"],
+                "intent": result.get("intent"),  # NEW: Return query intent for debugging
             })
         except Exception as e:
-            logger.error(f"API memory_search error: {e}")
+            logger.error(f"API memory_search error: {e}", exc_info=True)
             return JSONResponse({"error": str(e)}, status_code=500)
 
     async def api_session_analyze(request: Request):

@@ -347,8 +347,14 @@ class PostgresMetadataStore:
             ).scalars().all()
             return set(rows)
 
-    def get_metadata_batch(self, memory_ids: list[str]) -> dict[str, MemoryMetadata]:
+    def get_metadata_batch(
+        self, memory_ids: list[str], exclude_expired: bool = True
+    ) -> dict[str, MemoryMetadata]:
         """Get metadata for multiple memories in a single query.
+        
+        Args:
+            memory_ids: List of memory IDs to fetch
+            exclude_expired: If True, excludes memories past their expires_at time
         
         Returns:
             Dict mapping memory_id to MemoryMetadata
@@ -357,12 +363,63 @@ class PostgresMetadataStore:
             return {}
         
         with self._db.session() as session:
+            query = select(PgMemoryMetadata).where(
+                PgMemoryMetadata.memory_id.in_(memory_ids)
+            )
+            # Filter out expired memories (TTL enforcement)
+            if exclude_expired:
+                query = query.where(
+                    (PgMemoryMetadata.expires_at == None) |  # noqa: E711
+                    (PgMemoryMetadata.expires_at > datetime.now(UTC))
+                )
+            rows = session.execute(query).scalars().all()
+            return {row.memory_id: self._pg_to_metadata(row) for row in rows}
+
+    def get_expired_memories(self) -> list[str]:
+        """Get all expired memory IDs (past their expires_at time).
+        
+        Returns:
+            List of expired memory IDs
+        """
+        with self._db.session() as session:
             rows = session.execute(
-                select(PgMemoryMetadata).where(
-                    PgMemoryMetadata.memory_id.in_(memory_ids)
+                select(PgMemoryMetadata.memory_id).where(
+                    PgMemoryMetadata.expires_at != None,  # noqa: E711
+                    PgMemoryMetadata.expires_at <= datetime.now(UTC),
+                    PgMemoryMetadata.archived == False,  # noqa: E712
                 )
             ).scalars().all()
-            return {row.memory_id: self._pg_to_metadata(row) for row in rows}
+            return list(rows)
+
+    def set_memory_ttl(self, memory_id: str, hours: int) -> None:
+        """Set TTL (time-to-live) for a memory.
+        
+        Args:
+            memory_id: Memory to set TTL for
+            hours: Number of hours until expiration
+        """
+        from datetime import timedelta
+        
+        expires_at = datetime.now(UTC) + timedelta(hours=hours)
+        with self._db.session() as session:
+            session.execute(
+                update(PgMemoryMetadata)
+                .where(PgMemoryMetadata.memory_id == memory_id)
+                .values(expires_at=expires_at)
+            )
+
+    def clear_memory_ttl(self, memory_id: str) -> None:
+        """Remove TTL from a memory (make it permanent).
+        
+        Args:
+            memory_id: Memory to clear TTL for
+        """
+        with self._db.session() as session:
+            session.execute(
+                update(PgMemoryMetadata)
+                .where(PgMemoryMetadata.memory_id == memory_id)
+                .values(expires_at=None)
+            )
 
     def record_access_batch(self, memory_ids: list[str]) -> None:
         """Record access for multiple memories in a single query."""

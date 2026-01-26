@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Literal
@@ -189,6 +190,7 @@ Return JSON: {"facts": ["specific actionable fact 1", "specific actionable fact 
         tags: list[str] | None = None,
         infer: bool = True,
         source_ref: str | None = None,
+        ttl_hours: int | None = None,
     ) -> dict[str, Any]:
         """Add a memory to the specified namespace.
 
@@ -202,6 +204,8 @@ Return JSON: {"facts": ["specific actionable fact 1", "specific actionable fact 
                    If False, store raw content directly (100-200ms vs 1-10s per memory).
                    Use infer=False for bulk imports where speed matters.
             source_ref: Optional project reference for scoped recall (e.g., "project:org/repo")
+            ttl_hours: Optional TTL in hours. If set, memory expires after this time.
+                       Use for short-term session memories. None = permanent memory.
 
         Returns:
             Dict with memory operation results
@@ -229,6 +233,12 @@ Return JSON: {"facts": ["specific actionable fact 1", "specific actionable fact 
                 if mem_result.get("event") in ("ADD", "UPDATE"):
                     memory_id = mem_result.get("id")
                     if memory_id:
+                        # Calculate expires_at if TTL is set
+                        expires_at = None
+                        if ttl_hours:
+                            from datetime import timedelta
+                            expires_at = datetime.now(UTC) + timedelta(hours=ttl_hours)
+
                         metadata = MemoryMetadata(
                             memory_id=memory_id,
                             user_id=self.config.user_id,
@@ -237,11 +247,31 @@ Return JSON: {"facts": ["specific actionable fact 1", "specific actionable fact 
                             source=source,
                             source_ref=source_ref,
                             tags=tags or [],
+                            expires_at=expires_at,
                         )
                         self._metadata.save_metadata(metadata)
 
                         # Add to graph store if enabled
                         if self._graph:
+                            # Find similar memories for RELATES_TO edges
+                            # This is the FIX: we now auto-populate graph relationships!
+                            similar_memories: list[tuple[str, float]] = []
+                            try:
+                                # Search for similar memories using the content
+                                similar_results = self._memory.search(
+                                    content[:500],  # Use first 500 chars for similarity search
+                                    user_id=user_id,
+                                    limit=5,
+                                )
+                                for sim_mem in similar_results.get("results", []):
+                                    sim_id = sim_mem.get("id")
+                                    sim_score = sim_mem.get("score", 0.0)
+                                    if sim_id and sim_id != memory_id:
+                                        similar_memories.append((sim_id, sim_score))
+                            except Exception as e:
+                                import logging
+                                logging.getLogger(__name__).debug(f"Similar memory search failed: {e}")
+
                             self._graph.process_memory(
                                 memory_id=memory_id,
                                 content=content,
@@ -249,6 +279,7 @@ Return JSON: {"facts": ["specific actionable fact 1", "specific actionable fact 
                                 user_id=self.config.user_id,
                                 category=category,
                                 tags=tags,
+                                similar_memories=similar_memories,  # Pass similar memories for RELATES_TO edges
                             )
 
         return result
@@ -728,16 +759,22 @@ Return JSON: {"facts": ["specific actionable fact 1", "specific actionable fact 
         enable_query_synthesis: bool = True,
         enable_graph: bool = True,
         project: str | None = None,
+        mode: Literal["auto", "vector", "hybrid"] = "auto",
+        enable_hyde: bool = True,
+        enable_rerank: bool = True,
     ) -> dict[str, Any]:
-        """The definitive inference retrieval pipeline.
+        """The enhanced inference retrieval pipeline.
 
-        Implements 6 stages:
-        1. Query synthesis (LLM expansion)
-        2. Candidate retrieval (vector + graph)
-        3. Relevance filtering (threshold)
-        4. Temporal ranking (time decay)
-        5. Project-scoped scoring (boost same-project, penalize other-project)
-        6. Token-budgeted assembly
+        Implements 9 stages:
+        1. Query understanding (intent, domains, entities) - NEW
+        2. Query synthesis (LLM expansion)
+        3. HyDE (hypothetical document generation) - NEW
+        4. Candidate retrieval (vector + graph)
+        5. RRF fusion (combine multi-query results) - NEW
+        6. LLM re-ranking (smarter relevance) - NEW
+        7. Relevance filtering (threshold)
+        8. Scoring adjustments (unified: time decay, priority, project)
+        9. Token-budgeted assembly
 
         This is the primary search method for LLM context injection.
 
@@ -747,59 +784,139 @@ Return JSON: {"facts": ["specific actionable fact 1", "specific actionable fact 
             max_tokens: Token budget for results
             enable_query_synthesis: Use LLM to expand query
             enable_graph: Include graph traversal
-            project: Optional project ID (e.g., "org/repo") for project-scoped scoring
+            project: Optional project ID for project-scoped scoring
+            mode: Retrieval mode - "auto" (smart routing), "vector" (fast), "hybrid" (full)
+            enable_hyde: Use HyDE for better vector matching
+            enable_rerank: Use LLM re-ranking for smarter results
 
         Returns:
-            {
-                "results": [...],
-                "tokens_used": int,
-                "formatted_context": str,
-                "queries_used": [...],
-                "total_candidates": int,
-                "filtered_count": int,
-            }
+            Dict with results, tokens_used, metadata
         """
+        import logging
+        log = logging.getLogger(__name__)
+        
         from cems.retrieval import (
+            apply_score_adjustments,
             assemble_context,
             deduplicate_results,
+            extract_query_intent,
             format_memory_context,
+            generate_hypothetical_memory,
+            reciprocal_rank_fusion,
+            rerank_with_llm,
+            route_to_strategy,
             synthesize_query,
         )
 
-        # Stage 1: Query synthesis
-        queries_to_search = [query]
-        if enable_query_synthesis and self.config.enable_query_synthesis:
+        log.info(f"[RETRIEVAL] Starting retrieve_for_inference: query='{query[:50]}...', mode={mode}")
+
+        # Get LLM client for advanced features
+        client = None
+        try:
+            from cems.llm import get_client
+            client = get_client()
+        except Exception as e:
+            log.warning(f"[RETRIEVAL] Could not get LLM client: {e}")
+
+        # Stage 1: Query understanding (for auto mode routing)
+        intent = None
+        selected_mode = mode
+        if mode == "auto" and client:
             try:
-                from cems.llm import get_client
+                intent = extract_query_intent(query, client)
+                selected_mode = route_to_strategy(intent)
+                log.info(f"[RETRIEVAL] Auto mode selected: {selected_mode} (intent={intent.get('primary_intent')}, complexity={intent.get('complexity')})")
+            except Exception as e:
+                log.warning(f"[RETRIEVAL] Query understanding failed: {e}")
+                selected_mode = "hybrid"
 
-                client = get_client()
+        # Infer category from query for scoring
+        inferred_category = self._infer_category_from_query(query)
+        log.debug(f"[RETRIEVAL] Inferred category: {inferred_category}")
+
+        # Stage 2: Query synthesis
+        queries_to_search = [query]
+        if enable_query_synthesis and self.config.enable_query_synthesis and client:
+            try:
                 expanded = synthesize_query(query, client)
-                queries_to_search = [query] + expanded[:3]  # Original + up to 3 expansions
-            except Exception:
-                pass  # Fallback to original query
+                queries_to_search = [query] + expanded[:3]
+                log.info(f"[RETRIEVAL] Query synthesis: {len(queries_to_search)} queries")
+            except Exception as e:
+                log.warning(f"[RETRIEVAL] Query synthesis failed: {e}")
 
-        # Stage 2: Candidate retrieval (top_k=20 per query)
-        all_candidates: list[SearchResult] = []
+        # Stage 3: HyDE (if enabled and in hybrid mode)
+        if enable_hyde and selected_mode == "hybrid" and client:
+            try:
+                hypothetical = generate_hypothetical_memory(query, client)
+                if hypothetical:
+                    queries_to_search.append(hypothetical)
+                    log.info(f"[RETRIEVAL] HyDE generated: '{hypothetical[:50]}...'")
+            except Exception as e:
+                log.warning(f"[RETRIEVAL] HyDE generation failed: {e}")
+
+        # Stage 4: Candidate retrieval (collect per-query results for RRF)
+        query_results: list[list[SearchResult]] = []
 
         for search_query in queries_to_search:
-            # Vector search via existing method
-            vector_results = self.search(search_query, scope, limit=20)
-            all_candidates.extend(vector_results)
+            # Vector search - use raw search to get base scores
+            vector_results = self._search_raw(search_query, scope, limit=20)
+            query_results.append(vector_results)
+            log.debug(f"[RETRIEVAL] Vector search for '{search_query[:30]}...': {len(vector_results)} results")
 
-            # Graph traversal (if enabled)
-            if enable_graph and self._graph and vector_results:
-                for top_result in vector_results[:3]:
+        # Category summaries integration - use summaries to find relevant categories
+        # then boost memories from those categories
+        category_boost_map: dict[str, float] = {}
+        if selected_mode == "hybrid" and client:
+            try:
+                summaries = self.get_all_category_summaries(scope=scope)
+                if summaries:
+                    # Find categories whose summaries are relevant to the query
+                    summary_text = "\n".join([
+                        f"- {s.category}: {s.summary[:100]}..."
+                        for s in summaries[:20]  # Top 20 categories
+                    ])
+                    cat_prompt = f"""Given this search query, which categories are most relevant?
+
+Query: {query}
+
+Available categories:
+{summary_text}
+
+Return a JSON object with category names as keys and relevance scores (0.0-1.0) as values.
+Only include categories with relevance >= 0.3.
+Example: {{"debugging": 0.9, "deployment": 0.5}}
+
+JSON:"""
+                    response = client.complete(cat_prompt, max_tokens=200, temperature=0.1)
+                    response = response.strip()
+                    if response.startswith("```"):
+                        import re
+                        match = re.search(r"```(?:json)?\s*([\s\S]*?)```", response)
+                        if match:
+                            response = match.group(1).strip()
+                    category_boost_map = json.loads(response)
+                    log.info(f"[RETRIEVAL] Category summaries matched: {list(category_boost_map.keys())}")
+            except Exception as e:
+                log.debug(f"[RETRIEVAL] Category summary matching failed: {e}")
+
+        # Graph traversal (if enabled) - add as separate result list for RRF
+        if enable_graph and self._graph and query_results and query_results[0]:
+            graph_results: list[SearchResult] = []
+            for top_result in query_results[0][:3]:  # Top 3 from primary query
+                try:
                     related = self._graph.get_related_memories(
                         top_result.memory_id, max_depth=2, limit=5
                     )
-                    # Convert graph results to SearchResult objects
                     for rel in related:
                         mem = self.get(rel["id"])
                         if mem:
                             metadata = self._metadata.get_metadata(rel["id"])
-                            # Assign moderate base score for graph-discovered memories
-                            base_score = 0.5
-                            all_candidates.append(
+                            # Use actual edge similarity instead of fixed 0.5
+                            base_score = rel.get("similarity", 0.5)
+                            # Apply distance penalty
+                            distance = rel.get("distance", 1)
+                            base_score *= 1.0 / distance
+                            graph_results.append(
                                 SearchResult(
                                     memory_id=rel["id"],
                                     content=mem.get("memory", ""),
@@ -808,41 +925,62 @@ Return JSON: {"facts": ["specific actionable fact 1", "specific actionable fact 
                                     metadata=metadata,
                                 )
                             )
+                except Exception as e:
+                    log.debug(f"[RETRIEVAL] Graph traversal error: {e}")
+            
+            if graph_results:
+                query_results.append(graph_results)
+                log.info(f"[RETRIEVAL] Graph traversal: {len(graph_results)} results")
 
-        # Deduplicate candidates
-        candidates = deduplicate_results(all_candidates)
+        # Stage 5: RRF Fusion (combine all query results)
+        if len(query_results) > 1:
+            candidates = reciprocal_rank_fusion(query_results)
+            log.info(f"[RETRIEVAL] RRF fusion: {sum(len(r) for r in query_results)} -> {len(candidates)} results")
+        else:
+            candidates = query_results[0] if query_results else []
 
-        # Stage 3: Relevance filtering (threshold)
+        # Deduplicate
+        candidates = deduplicate_results(candidates)
+
+        # Stage 6: LLM Re-ranking (if enabled and in hybrid mode)
+        if enable_rerank and selected_mode == "hybrid" and client and len(candidates) > 3:
+            try:
+                candidates = rerank_with_llm(query, candidates, client, top_k=15)
+                log.info(f"[RETRIEVAL] LLM reranking complete: {len(candidates)} results")
+            except Exception as e:
+                log.warning(f"[RETRIEVAL] LLM reranking failed: {e}")
+
+        # Stage 7: Relevance filtering
         threshold = self.config.relevance_threshold
+        before_filter = len(candidates)
         candidates = [c for c in candidates if c.score >= threshold]
+        log.debug(f"[RETRIEVAL] Relevance filter (threshold={threshold}): {before_filter} -> {len(candidates)}")
 
-        # Stage 4: Temporal ranking (already applied in search() method)
-        # Re-sort by final score
+        # Stage 8: Apply unified scoring adjustments
+        for candidate in candidates:
+            candidate.score = apply_score_adjustments(
+                candidate,
+                inferred_category=inferred_category,
+                project=project,
+            )
+            # Apply category boost from summary matching
+            if category_boost_map and candidate.metadata:
+                cat = candidate.metadata.category
+                if cat and cat.lower() in category_boost_map:
+                    boost = 1.0 + (category_boost_map[cat.lower()] * 0.3)  # Up to 30% boost
+                    candidate.score *= boost
+                    log.debug(f"[RETRIEVAL] Category boost for '{cat}': {boost:.2f}")
+
+        # Re-sort by adjusted score
         candidates.sort(key=lambda x: x.score, reverse=True)
 
-        # Stage 5: Project-scoped scoring
-        if project:
-            for candidate in candidates:
-                source_ref = None
-                if candidate.metadata and hasattr(candidate.metadata, 'source_ref'):
-                    source_ref = candidate.metadata.source_ref
-
-                if source_ref and source_ref.startswith(f"project:{project}"):
-                    # +30% boost for same project
-                    candidate.score *= 1.3
-                elif source_ref and source_ref.startswith("project:"):
-                    # -20% penalty for different project
-                    candidate.score *= 0.8
-                # No change for memories without project (global)
-
-            # Re-sort after project scoring
-            candidates.sort(key=lambda x: x.score, reverse=True)
-
-        total_before_filter = len(all_candidates)
+        total_candidates = sum(len(r) for r in query_results)
         filtered_count = len(candidates)
 
-        # Stage 6: Token-budgeted assembly
+        # Stage 9: Token-budgeted assembly
         selected, tokens_used = assemble_context(candidates, max_tokens)
+
+        log.info(f"[RETRIEVAL] Final: {filtered_count} candidates -> {len(selected)} selected, {tokens_used} tokens")
 
         return {
             "results": [
@@ -858,6 +996,79 @@ Return JSON: {"facts": ["specific actionable fact 1", "specific actionable fact 
             "tokens_used": tokens_used,
             "formatted_context": format_memory_context(selected),
             "queries_used": queries_to_search,
-            "total_candidates": total_before_filter,
+            "total_candidates": total_candidates,
             "filtered_count": filtered_count,
+            "mode": selected_mode,
+            "intent": intent,
         }
+
+    def _search_raw(
+        self,
+        query: str,
+        scope: Literal["personal", "shared", "both"] = "both",
+        category: str | None = None,
+        limit: int = 5,
+    ) -> list[SearchResult]:
+        """Raw search without score adjustments - for use in retrieve_for_inference.
+
+        This returns base vector scores only, allowing unified scoring later.
+
+        Args:
+            query: Search query
+            scope: Which namespace(s) to search
+            category: Optional category filter
+            limit: Maximum results
+
+        Returns:
+            List of SearchResult with base vector scores
+        """
+        results: list[SearchResult] = []
+
+        # Determine which scopes to search
+        scopes_to_search = []
+        if scope in ("personal", "both"):
+            scopes_to_search.append(MemoryScope.PERSONAL)
+        if scope in ("shared", "both") and self.config.team_id:
+            scopes_to_search.append(MemoryScope.SHARED)
+
+        # Collect raw results
+        raw_results: list[tuple[dict, MemoryScope]] = []
+
+        for memory_scope in scopes_to_search:
+            user_id = self._get_mem0_user_id(memory_scope)
+            mem0_results = self._memory.search(query, user_id=user_id, limit=limit)
+            for mem in mem0_results.get("results", []):
+                raw_results.append((mem, memory_scope))
+
+        # Batch fetch metadata
+        memory_ids = [mem.get("id") for mem, _ in raw_results if mem.get("id")]
+        metadata_map: dict[str, MemoryMetadata] = {}
+        if memory_ids:
+            metadata_map = self._metadata.get_metadata_batch(memory_ids)
+
+        # Build results with RAW scores (no adjustments here!)
+        for mem, memory_scope in raw_results:
+            memory_id = mem.get("id")
+            metadata = metadata_map.get(memory_id) if memory_id else None
+
+            # Skip expired memories (not in metadata_map due to TTL filtering)
+            if memory_id and memory_id not in metadata_map:
+                continue
+
+            # Apply category filter if provided
+            if category and metadata and metadata.category != category:
+                continue
+
+            results.append(
+                SearchResult(
+                    memory_id=memory_id or "",
+                    content=mem.get("memory", ""),
+                    score=mem.get("score", 0.0),  # Raw vector score!
+                    scope=memory_scope,
+                    metadata=metadata,
+                )
+            )
+
+        # Sort by raw score
+        results.sort(key=lambda x: x.score, reverse=True)
+        return results[:limit]

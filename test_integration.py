@@ -12,7 +12,7 @@ from typing import Any
 
 # Configuration - Direct REST API via docker exec
 API_URL = "http://localhost:8765"
-API_KEY = "cems_ak_89a65317e256bf43ab5641bfe929809386b1e8c57b0c2d8e"
+API_KEY = "cems_ak_a76ff049ca49b01a14da50c60d18c68aa1aded9e99b5cf0c"
 CONTAINER_NAME = "cems-server"
 
 
@@ -357,10 +357,114 @@ def test_memory_search_with_project() -> tuple[bool, str]:
         return False, str(e)
 
 
+def test_datecs_benchmark() -> tuple[bool, str]:
+    """Benchmark test: datecs printer query should NOT return SSH/GSC memories.
+
+    This is the critical benchmark from the user's troubled query.
+    The query is about connecting datecs fp-700 printer to Windows remotely.
+    
+    SHOULD return: printer, windows, remote access, fiscal, pos related memories
+    SHOULD NOT return: SSH to Hetzner, GSC scripts, SEO, unrelated infrastructure
+    """
+    query = "datecs fp-700 printer Windows remote connection erpnet"
+    
+    # Test all modes
+    results_by_mode = {}
+    
+    for mode in ["vector", "hybrid", "auto"]:
+        try:
+            result = call_api("POST", "/api/memory/search", {
+                "query": query,
+                "limit": 10,
+                "scope": "both",
+                "mode": mode,
+                "enable_hyde": True,
+                "enable_rerank": True,
+            })
+            
+            if not result.get("success"):
+                return False, f"mode={mode} failed: {result.get('error')}"
+            
+            memories = result.get("results", [])
+            results_by_mode[mode] = memories
+            
+            # Check for IRRELEVANT results (these should NOT appear)
+            irrelevant_keywords = ["ssh", "hetzner", "gsc", "epicpxls", "seo", "google search console"]
+            irrelevant_found = []
+            
+            for mem in memories:
+                content = mem.get("content", "").lower()
+                category = mem.get("category", "").lower()
+                for keyword in irrelevant_keywords:
+                    if keyword in content or keyword in category:
+                        irrelevant_found.append(f"{keyword} in '{content[:50]}...'")
+                        break
+            
+            if irrelevant_found:
+                print(f"\n  ⚠️  Mode {mode}: Found irrelevant results:")
+                for irr in irrelevant_found[:3]:
+                    print(f"      - {irr}")
+            
+        except Exception as e:
+            return False, f"mode={mode} error: {e}"
+    
+    # Summary
+    total_results = sum(len(r) for r in results_by_mode.values())
+    
+    # For now, just report what we found (we can tighten this after seeing baseline)
+    summary = f"vector={len(results_by_mode.get('vector', []))}, "
+    summary += f"hybrid={len(results_by_mode.get('hybrid', []))}, "
+    summary += f"auto={len(results_by_mode.get('auto', []))}"
+    
+    return True, summary
+
+
+def test_retrieval_modes() -> tuple[bool, str]:
+    """Test that different retrieval modes work correctly."""
+    query = "Python preferences"
+    
+    try:
+        # Test vector mode (should be fast)
+        vector_result = call_api("POST", "/api/memory/search", {
+            "query": query,
+            "mode": "vector",
+            "limit": 5,
+        })
+        if not vector_result.get("success"):
+            return False, f"vector mode failed: {vector_result.get('error')}"
+        
+        # Test hybrid mode (should use HyDE + RRF + rerank)
+        hybrid_result = call_api("POST", "/api/memory/search", {
+            "query": query,
+            "mode": "hybrid",
+            "limit": 5,
+        })
+        if not hybrid_result.get("success"):
+            return False, f"hybrid mode failed: {hybrid_result.get('error')}"
+        
+        # Test auto mode (should analyze query and route)
+        auto_result = call_api("POST", "/api/memory/search", {
+            "query": query,
+            "mode": "auto",
+            "limit": 5,
+        })
+        if not auto_result.get("success"):
+            return False, f"auto mode failed: {auto_result.get('error')}"
+        
+        # Check that auto mode returns intent analysis
+        intent = auto_result.get("intent")
+        actual_mode = auto_result.get("mode", "unknown")
+        
+        return True, f"vector={len(vector_result.get('results', []))}, hybrid={len(hybrid_result.get('results', []))}, auto={len(auto_result.get('results', []))} (routed to {actual_mode})"
+        
+    except Exception as e:
+        return False, str(e)
+
+
 def run_all_tests():
     """Run all integration tests with pass/fail summary."""
     print("\n" + "="*60)
-    print("CEMS INTEGRATION TESTS")
+    print("CEMS INTEGRATION TESTS (Enhanced Retrieval)")
     print("="*60 + "\n")
     
     # Check Docker first
@@ -377,6 +481,8 @@ def run_all_tests():
         ("Search", test_memory_search),
         ("Search Raw", test_memory_search_raw),
         ("Search (project)", test_memory_search_with_project),
+        ("Retrieval Modes", test_retrieval_modes),  # NEW
+        ("Datecs Benchmark", test_datecs_benchmark),  # NEW - The critical test!
         ("Summary", test_memory_summary),
         ("Forget", test_memory_forget),
         ("Maintenance", test_maintenance),

@@ -403,31 +403,73 @@ class KuzuGraphStore:
             limit: Maximum results
 
         Returns:
-            List of related memories with paths
+            List of related memories with paths and similarity scores
         """
-        result = self._conn.execute(
-            f"""
-            MATCH (m1:Memory {{id: $memory_id}})-[r:RELATES_TO*1..{max_depth}]-(m2:Memory)
-            WHERE m1.id <> m2.id
-            RETURN m2.id, m2.content, m2.scope, length(r) AS distance
-            ORDER BY distance ASC
-            LIMIT $limit
-            """,
-            {"memory_id": memory_id, "limit": limit},
-        )
-
-        memories = []
-        while result.has_next():
-            row = result.get_next()
-            memories.append(
-                {
-                    "id": row[0],
-                    "content": row[1],
-                    "scope": row[2],
-                    "distance": row[3],
-                }
+        # First try to get direct relations with similarity scores
+        try:
+            result = self._conn.execute(
+                f"""
+                MATCH (m1:Memory {{id: $memory_id}})-[r:RELATES_TO*1..{max_depth}]-(m2:Memory)
+                WHERE m1.id <> m2.id
+                RETURN m2.id, m2.content, m2.scope, length(r) AS distance
+                ORDER BY distance ASC
+                LIMIT $limit
+                """,
+                {"memory_id": memory_id, "limit": limit},
             )
-        return memories
+
+            memories = []
+            while result.has_next():
+                row = result.get_next()
+                memories.append(
+                    {
+                        "id": row[0],
+                        "content": row[1],
+                        "scope": row[2],
+                        "distance": row[3],
+                    }
+                )
+            
+            # Enrich with direct edge similarities where available
+            for mem in memories:
+                sim = self.get_edge_similarity(memory_id, mem["id"])
+                mem["similarity"] = sim if sim else 0.5  # Fallback to 0.5 if no direct edge
+            
+            return memories
+        except Exception as e:
+            logger.debug(f"get_related_memories failed for {memory_id}: {e}")
+            return []
+
+    def get_edge_similarity(
+        self,
+        source_id: str,
+        target_id: str,
+    ) -> float | None:
+        """Get the similarity score from a RELATES_TO edge between two memories.
+
+        Args:
+            source_id: Source memory ID
+            target_id: Target memory ID
+
+        Returns:
+            Similarity score (0-1) or None if no direct edge exists
+        """
+        try:
+            result = self._conn.execute(
+                """
+                MATCH (m1:Memory {id: $source_id})-[r:RELATES_TO]-(m2:Memory {id: $target_id})
+                RETURN r.similarity
+                LIMIT 1
+                """,
+                {"source_id": source_id, "target_id": target_id},
+            )
+            if result.has_next():
+                row = result.get_next()
+                return row[0] if row[0] is not None else None
+            return None
+        except Exception as e:
+            logger.debug(f"get_edge_similarity failed: {e}")
+            return None
 
     def get_memories_by_entity(
         self,
@@ -653,6 +695,7 @@ class KuzuGraphStore:
         user_id: str,
         category: str | None = None,
         tags: list[str] | None = None,
+        similar_memories: list[tuple[str, float]] | None = None,
     ) -> None:
         """Process a memory and add it to the graph with relationships.
 
@@ -666,6 +709,8 @@ class KuzuGraphStore:
             user_id: User ID
             category: Optional category
             tags: Optional tags
+            similar_memories: Optional list of (memory_id, similarity_score) tuples
+                             for creating RELATES_TO edges
         """
         # Add memory node
         self.add_memory_node(memory_id, content, scope, user_id)
@@ -688,6 +733,16 @@ class KuzuGraphStore:
         for entity in entities:
             self.add_entity(entity["id"], entity["name"], entity["type"])
             self.add_memory_entity_mention(memory_id, entity["id"])
+
+        # Create RELATES_TO edges from similar memories (FIX: was never called before!)
+        if similar_memories:
+            for related_id, similarity in similar_memories:
+                if related_id != memory_id and similarity >= 0.7:
+                    try:
+                        self.add_memory_relation(memory_id, related_id, similarity)
+                        logger.debug(f"Created RELATES_TO edge: {memory_id[:8]} -> {related_id[:8]} (sim={similarity:.2f})")
+                    except Exception as e:
+                        logger.debug(f"Failed to create relation {memory_id[:8]} -> {related_id[:8]}: {e}")
 
     def close(self) -> None:
         """Close the database connection."""
