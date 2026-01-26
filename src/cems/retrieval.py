@@ -324,14 +324,20 @@ Hypothetical memory:"""
 def reciprocal_rank_fusion(
     result_lists: list[list["SearchResult"]],
     k: int = 60,
+    rrf_weight: float = 0.3,
 ) -> list["SearchResult"]:
     """Combine results from multiple retrievers using RRF.
 
     RRF Formula: score = sum(1 / (k + rank_i)) for each retriever i
 
+    The RRF scores are normalized to 0-1 range before blending with
+    original vector scores to preserve meaningful score magnitudes.
+
     Args:
         result_lists: List of result lists from different retrievers/queries
         k: Ranking constant (default 60, standard in literature)
+        rrf_weight: Weight for normalized RRF score in final blend (default 0.3)
+                    Final = rrf_weight * norm_rrf + (1-rrf_weight) * vector_score
 
     Returns:
         Fused and re-ranked list of SearchResults
@@ -347,12 +353,28 @@ def reciprocal_rank_fusion(
             if result.memory_id not in result_map or result.score > result_map[result.memory_id].score:
                 result_map[result.memory_id] = result
 
-    # Update scores with RRF scores and sort
+    if not rrf_scores:
+        return []
+
+    # Normalize RRF scores to 0-1 range
+    min_rrf = min(rrf_scores.values())
+    max_rrf = max(rrf_scores.values())
+    rrf_range = max_rrf - min_rrf
+
+    # Update scores with normalized RRF scores and sort
     fused = []
     for memory_id, rrf_score in rrf_scores.items():
         result = result_map[memory_id]
-        # Blend: 60% RRF, 40% original vector score (preserves some semantic signal)
-        result.score = 0.6 * rrf_score + 0.4 * result.score
+        
+        # Normalize RRF score to 0-1 range
+        if rrf_range > 0:
+            norm_rrf = (rrf_score - min_rrf) / rrf_range
+        else:
+            norm_rrf = 1.0  # All same score = all top rank
+        
+        # Blend: 30% normalized RRF (for ranking fusion), 70% original vector score
+        # This preserves meaningful score magnitudes while still benefiting from RRF
+        result.score = rrf_weight * norm_rrf + (1 - rrf_weight) * result.score
         fused.append(result)
 
     return sorted(fused, key=lambda x: x.score, reverse=True)

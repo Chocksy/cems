@@ -12,7 +12,7 @@ from typing import Any
 
 # Configuration - Direct REST API via docker exec
 API_URL = "http://localhost:8765"
-API_KEY = "cems_ak_a76ff049ca49b01a14da50c60d18c68aa1aded9e99b5cf0c"
+API_KEY = "cems_ak_32c8653281f754fb4e4de3c0fa1440ec27eba968675a7e55"
 CONTAINER_NAME = "cems-server"
 
 
@@ -179,7 +179,11 @@ def test_memory_add_fast() -> tuple[bool, str]:
 
 
 def test_memory_search() -> tuple[bool, str]:
-    """Test POST /api/memory/search endpoint."""
+    """Test POST /api/memory/search endpoint - MUST return results.
+    
+    This tests the enhanced search pipeline. If it returns 0 results
+    when we know memories exist, something is wrong with the pipeline.
+    """
     try:
         result = call_api("POST", "/api/memory/search", {
             "query": "Python preferences",
@@ -187,11 +191,19 @@ def test_memory_search() -> tuple[bool, str]:
             "scope": "personal",
         })
         
-        if result.get("success"):
-            results = result.get("results", [])
-            mode = result.get("mode", "unknown")
-            return True, f"found {len(results)} results (mode: {mode})"
-        return False, f"failed: {result.get('error', 'unknown error')}"
+        if not result.get("success"):
+            return False, f"failed: {result.get('error', 'unknown error')}"
+        
+        results = result.get("results", [])
+        mode = result.get("mode", "unknown")
+        total_candidates = result.get("total_candidates", 0)
+        filtered_count = result.get("filtered_count", 0)
+        
+        # Enhanced search MUST return results if candidates exist
+        if total_candidates > 0 and len(results) == 0:
+            return False, f"BUG: {total_candidates} candidates found but 0 returned after filtering ({filtered_count} passed filter). Check threshold/scoring."
+        
+        return True, f"found {len(results)} results (mode: {mode}, candidates: {total_candidates})"
     except Exception as e:
         return False, str(e)
 
@@ -358,18 +370,26 @@ def test_memory_search_with_project() -> tuple[bool, str]:
 
 
 def test_datecs_benchmark() -> tuple[bool, str]:
-    """Benchmark test: datecs printer query should NOT return SSH/GSC memories.
+    """Benchmark test: datecs printer query should NOT return SSH/GSC memories in smart modes.
 
     This is the critical benchmark from the user's troubled query.
     The query is about connecting datecs fp-700 printer to Windows remotely.
     
     SHOULD return: printer, windows, remote access, fiscal, pos related memories
     SHOULD NOT return: SSH to Hetzner, GSC scripts, SEO, unrelated infrastructure
+    
+    NOTE: 
+    - Vector mode may return some irrelevant results (expected - no LLM reranking)
+    - Hybrid/auto modes should either return 0 (no relevant memories) or relevant results only
+    - If NO datecs-related memories exist, getting 0 results from hybrid/auto is CORRECT
     """
     query = "datecs fp-700 printer Windows remote connection erpnet"
     
     # Test all modes
     results_by_mode = {}
+    irrelevant_by_mode = {}
+    
+    irrelevant_keywords = ["ssh", "hetzner", "gsc", "epicpxls", "seo", "google search console"]
     
     for mode in ["vector", "hybrid", "auto"]:
         try:
@@ -388,8 +408,7 @@ def test_datecs_benchmark() -> tuple[bool, str]:
             memories = result.get("results", [])
             results_by_mode[mode] = memories
             
-            # Check for IRRELEVANT results (these should NOT appear)
-            irrelevant_keywords = ["ssh", "hetzner", "gsc", "epicpxls", "seo", "google search console"]
+            # Check for IRRELEVANT results
             irrelevant_found = []
             
             for mem in memories:
@@ -400,8 +419,11 @@ def test_datecs_benchmark() -> tuple[bool, str]:
                         irrelevant_found.append(f"{keyword} in '{content[:50]}...'")
                         break
             
-            if irrelevant_found:
-                print(f"\n  ⚠️  Mode {mode}: Found irrelevant results:")
+            irrelevant_by_mode[mode] = irrelevant_found
+            
+            if irrelevant_found and mode != "vector":
+                # Only warn for vector mode (expected), but note for hybrid/auto
+                print(f"\n  ⚠️  Mode {mode}: Found irrelevant results (should not happen!):")
                 for irr in irrelevant_found[:3]:
                     print(f"      - {irr}")
             
@@ -409,18 +431,114 @@ def test_datecs_benchmark() -> tuple[bool, str]:
             return False, f"mode={mode} error: {e}"
     
     # Summary
-    total_results = sum(len(r) for r in results_by_mode.values())
-    
-    # For now, just report what we found (we can tighten this after seeing baseline)
     summary = f"vector={len(results_by_mode.get('vector', []))}, "
     summary += f"hybrid={len(results_by_mode.get('hybrid', []))}, "
     summary += f"auto={len(results_by_mode.get('auto', []))}"
     
+    # FAIL only if hybrid or auto modes return irrelevant results
+    # Vector mode is allowed to return irrelevant results (no LLM reranking)
+    hybrid_irrelevant = len(irrelevant_by_mode.get("hybrid", []))
+    auto_irrelevant = len(irrelevant_by_mode.get("auto", []))
+    
+    if hybrid_irrelevant > 0 or auto_irrelevant > 0:
+        return False, f"{summary} - SMART MODES RETURNED IRRELEVANT RESULTS!"
+    
+    # Check that vector mode at least found something (proves search works)
+    vector_count = len(results_by_mode.get("vector", []))
+    if vector_count == 0:
+        # Raw check to see if there's data
+        raw_result = call_api("POST", "/api/memory/search", {
+            "query": query,
+            "limit": 3,
+            "raw": True,
+        })
+        raw_count = len(raw_result.get("results", []))
+        if raw_count > 0:
+            return False, f"{summary} - vector mode found 0 but raw found {raw_count}"
+    
+    # Note if vector mode has irrelevant results (expected behavior, not a failure)
+    vector_irrelevant = len(irrelevant_by_mode.get("vector", []))
+    if vector_irrelevant > 0:
+        summary += f" (vector has {vector_irrelevant} irrelevant - expected)"
+    
     return True, summary
 
 
+def test_enhanced_search_returns_results() -> tuple[bool, str]:
+    """Critical test: Enhanced search MUST return results for existing memories.
+    
+    First creates a known memory, then searches for it using enhanced search.
+    This validates the full pipeline works end-to-end.
+    """
+    import time
+    timestamp = int(time.time())
+    unique_term = f"xyztest{timestamp}"
+    test_content = f"Test memory with unique term {unique_term} for search validation"
+    
+    try:
+        # Step 1: Add a memory with a unique searchable term
+        add_result = call_api("POST", "/api/memory/add", {
+            "content": test_content,
+            "category": "test",
+            "infer": False,  # Fast mode
+        })
+        
+        if not add_result.get("success"):
+            return False, f"failed to add test memory: {add_result.get('error')}"
+        
+        memory_id = add_result.get("result", {}).get("results", [{}])[0].get("id")
+        if not memory_id:
+            return False, "no memory_id returned from add"
+        
+        # Give vector store a moment to index
+        import time as t
+        t.sleep(0.5)
+        
+        # Step 2: Search for it using ENHANCED search (not raw)
+        search_result = call_api("POST", "/api/memory/search", {
+            "query": unique_term,
+            "limit": 5,
+            "scope": "personal",
+            # Don't set raw=True - we want enhanced search!
+        })
+        
+        # Step 3: Clean up
+        call_api("POST", "/api/memory/forget", {
+            "memory_id": memory_id,
+            "hard_delete": True,
+        })
+        
+        if not search_result.get("success"):
+            return False, f"search failed: {search_result.get('error')}"
+        
+        results = search_result.get("results", [])
+        mode = search_result.get("mode", "unknown")
+        total_candidates = search_result.get("total_candidates", 0)
+        filtered_count = search_result.get("filtered_count", 0)
+        
+        # The memory we just added MUST be found
+        if len(results) == 0:
+            if total_candidates > 0:
+                return False, f"BUG: {total_candidates} candidates but 0 results after filtering. Check RRF/threshold."
+            return False, f"No results found at all (mode: {mode})"
+        
+        # Check that our memory is in the results
+        found_our_memory = any(unique_term in r.get("content", "") for r in results)
+        if not found_our_memory:
+            return False, f"Found {len(results)} results but not our test memory"
+        
+        return True, f"found test memory (mode: {mode}, {len(results)} results)"
+        
+    except Exception as e:
+        return False, str(e)
+
+
 def test_retrieval_modes() -> tuple[bool, str]:
-    """Test that different retrieval modes work correctly."""
+    """Test that different retrieval modes work correctly and return results.
+    
+    All modes MUST return results when searching for common terms that
+    we know exist in the memory database (like "Python", "preferences").
+    """
     query = "Python preferences"
     
     try:
@@ -451,11 +569,28 @@ def test_retrieval_modes() -> tuple[bool, str]:
         if not auto_result.get("success"):
             return False, f"auto mode failed: {auto_result.get('error')}"
         
-        # Check that auto mode returns intent analysis
-        intent = auto_result.get("intent")
+        # Get result counts
+        vector_count = len(vector_result.get("results", []))
+        hybrid_count = len(hybrid_result.get("results", []))
+        auto_count = len(auto_result.get("results", []))
         actual_mode = auto_result.get("mode", "unknown")
         
-        return True, f"vector={len(vector_result.get('results', []))}, hybrid={len(hybrid_result.get('results', []))}, auto={len(auto_result.get('results', []))} (routed to {actual_mode})"
+        # All modes MUST return results for this common query
+        # If we get 0 results across all modes, something is broken
+        total_results = vector_count + hybrid_count + auto_count
+        if total_results == 0:
+            # Check if raw mode finds anything
+            raw_result = call_api("POST", "/api/memory/search", {
+                "query": query,
+                "limit": 5,
+                "raw": True,
+            })
+            raw_count = len(raw_result.get("results", []))
+            if raw_count > 0:
+                return False, f"BUG: raw mode found {raw_count} results but enhanced modes found 0. Check RRF scoring or thresholds."
+            return False, f"No memories found at all - database may be empty"
+        
+        return True, f"vector={vector_count}, hybrid={hybrid_count}, auto={auto_count} (routed to {actual_mode})"
         
     except Exception as e:
         return False, str(e)
@@ -481,8 +616,9 @@ def run_all_tests():
         ("Search", test_memory_search),
         ("Search Raw", test_memory_search_raw),
         ("Search (project)", test_memory_search_with_project),
-        ("Retrieval Modes", test_retrieval_modes),  # NEW
-        ("Datecs Benchmark", test_datecs_benchmark),  # NEW - The critical test!
+        ("Enhanced Search E2E", test_enhanced_search_returns_results),  # Critical validation!
+        ("Retrieval Modes", test_retrieval_modes),
+        ("Datecs Benchmark", test_datecs_benchmark),
         ("Summary", test_memory_summary),
         ("Forget", test_memory_forget),
         ("Maintenance", test_maintenance),
