@@ -152,6 +152,9 @@ class CEMSClient:
         category: str = "general",
         scope: Literal["personal", "shared"] = "personal",
         tags: list[str] | None = None,
+        source_ref: str | None = None,
+        pinned: bool = False,
+        pin_reason: str | None = None,
     ) -> dict[str, Any]:
         """Add a memory.
 
@@ -160,20 +163,27 @@ class CEMSClient:
             category: Category for organization
             scope: "personal" or "shared"
             tags: Optional tags
+            source_ref: Project reference (e.g., "project:org/repo")
+            pinned: If True, memory is pinned and never auto-pruned
+            pin_reason: Reason for pinning
 
         Returns:
             API response with result
         """
-        return self._request(
-            "POST",
-            "/api/memory/add",
-            json={
-                "content": content,
-                "category": category,
-                "scope": scope,
-                "tags": tags or [],
-            },
-        )
+        payload: dict[str, Any] = {
+            "content": content,
+            "category": category,
+            "scope": scope,
+            "tags": tags or [],
+        }
+        if source_ref:
+            payload["source_ref"] = source_ref
+        if pinned:
+            payload["pinned"] = pinned
+        if pin_reason:
+            payload["pin_reason"] = pin_reason
+
+        return self._request("POST", "/api/memory/add", json=payload)
 
     def search(
         self,

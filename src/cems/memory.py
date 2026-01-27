@@ -191,6 +191,8 @@ Return JSON: {"facts": ["specific actionable fact 1", "specific actionable fact 
         infer: bool = True,
         source_ref: str | None = None,
         ttl_hours: int | None = None,
+        pinned: bool = False,
+        pin_reason: str | None = None,
     ) -> dict[str, Any]:
         """Add a memory to the specified namespace.
 
@@ -206,6 +208,9 @@ Return JSON: {"facts": ["specific actionable fact 1", "specific actionable fact 
             source_ref: Optional project reference for scoped recall (e.g., "project:org/repo")
             ttl_hours: Optional TTL in hours. If set, memory expires after this time.
                        Use for short-term session memories. None = permanent memory.
+            pinned: If True, memory is pinned and never auto-pruned. Useful for
+                    important guidelines or gate rules.
+            pin_reason: Optional reason for pinning the memory.
 
         Returns:
             Dict with memory operation results
@@ -248,6 +253,8 @@ Return JSON: {"facts": ["specific actionable fact 1", "specific actionable fact 
                             source_ref=source_ref,
                             tags=tags or [],
                             expires_at=expires_at,
+                            pinned=pinned,
+                            pin_reason=pin_reason,
                         )
                         self._metadata.save_metadata(metadata)
 

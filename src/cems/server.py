@@ -243,13 +243,16 @@ def create_http_app():
             "scope": "personal|shared",
             "infer": true/false  (optional, default true),
             "source_ref": "project:org/repo"  (optional, for project-scoped recall),
-            "ttl_hours": 24  (optional, memory expires after this many hours)
+            "ttl_hours": 24  (optional, memory expires after this many hours),
+            "pinned": true/false  (optional, default false - pinned memories never auto-prune),
+            "pin_reason": "..."  (optional, reason for pinning)
         }
 
         Note: Set infer=false for bulk imports (100-200ms vs 1-10s per memory).
         With infer=false, content is stored raw without LLM fact extraction.
-        
+
         Use ttl_hours for short-term session memories that should auto-expire.
+        Use pinned=true for important memories like gate rules or guidelines.
         """
         try:
             body = await request.json()
@@ -262,6 +265,8 @@ def create_http_app():
             infer = body.get("infer", True)  # Default to True for backwards compatibility
             source_ref = body.get("source_ref")  # e.g., "project:org/repo"
             ttl_hours = body.get("ttl_hours")  # Optional: memory expires after N hours
+            pinned = body.get("pinned", False)  # Optional: pin memory (never auto-prune)
+            pin_reason = body.get("pin_reason")  # Optional: reason for pinning
 
             memory = get_memory()
             result = memory.add(
@@ -271,6 +276,8 @@ def create_http_app():
                 infer=infer,
                 source_ref=source_ref,
                 ttl_hours=ttl_hours,
+                pinned=pinned,
+                pin_reason=pin_reason,
             )
 
             return JSONResponse({

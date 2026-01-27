@@ -27,6 +27,7 @@ class MemoryCategory(str, Enum):
     CONTEXT = "context"
     LEARNINGS = "learnings"
     GENERAL = "general"
+    GATE_RULES = "gate-rules"  # Tool-blocking rules for PreToolUse hooks
 
 
 class PinCategory(str, Enum):

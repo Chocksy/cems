@@ -132,21 +132,47 @@ def status(ctx: click.Context) -> None:
 @click.option("--scope", "-s", default="personal", type=click.Choice(["personal", "shared"]))
 @click.option("--category", "-c", default="general", help="Memory category")
 @click.option("--tags", "-t", multiple=True, help="Tags for the memory")
+@click.option("--source-ref", help="Project reference (e.g., project:org/repo)")
+@click.option("--pin", is_flag=True, help="Pin memory (never auto-pruned)")
+@click.option("--pin-reason", help="Reason for pinning")
 @click.pass_context
-def add(ctx: click.Context, content: str, scope: str, category: str, tags: tuple) -> None:
+def add(
+    ctx: click.Context,
+    content: str,
+    scope: str,
+    category: str,
+    tags: tuple,
+    source_ref: str | None,
+    pin: bool,
+    pin_reason: str | None,
+) -> None:
     """Add a memory.
 
-    Example:
+    Examples:
         cems add "Always use TypeScript for new projects" -c preferences
+
+        # Add a gate rule (for PreToolUse hook blocking)
+        cems add "Bash: coolify deploy — Never use CLI for production" \\
+            -c gate-rules --pin --source-ref "project:EpicCoders/pxls"
     """
     try:
         client = get_client(ctx)
 
         with console.status("Adding memory..."):
-            result = client.add(content, category=category, scope=scope, tags=list(tags))
+            result = client.add(
+                content,
+                category=category,
+                scope=scope,
+                tags=list(tags),
+                source_ref=source_ref,
+                pinned=pin,
+                pin_reason=pin_reason,
+            )
 
         if result.get("success"):
             console.print("[green]Memory added successfully[/green]")
+            if pin:
+                console.print("[dim]Memory is pinned (will not be auto-pruned)[/dim]")
             if ctx.obj["verbose"]:
                 console.print(json.dumps(result, indent=2, default=str))
         else:
