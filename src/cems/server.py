@@ -393,6 +393,81 @@ def create_http_app():
             logger.error(f"API memory_search error: {e}", exc_info=True)
             return JSONResponse({"error": str(e)}, status_code=500)
 
+    async def api_memory_gate_rules(request: Request):
+        """REST API endpoint to fetch gate rules by category.
+
+        GET /api/memory/gate-rules?project=org/repo
+
+        Returns all memories with category='gate-rules', optionally filtered by project.
+        This bypasses semantic search and queries the metadata store directly.
+
+        Response: {
+            "success": true,
+            "rules": [
+                {
+                    "memory_id": "...",
+                    "content": "Bash: coolify deploy — reason",
+                    "category": "gate-rules",
+                    "source_ref": "project:org/repo",
+                    "pinned": true,
+                    "tags": ["block", "coolify"]
+                }
+            ],
+            "count": 1
+        }
+        """
+        try:
+            project = request.query_params.get("project")  # e.g., "org/repo"
+
+            memory = get_memory()
+
+            # Get all gate rules from metadata store
+            gate_rules = []
+            all_metadata = memory._metadata.get_all_memories_metadata(memory.config.user_id)
+
+            for meta in all_metadata:
+                if meta.category != "gate-rules":
+                    continue
+                if meta.archived:
+                    continue
+
+                # Filter by project if specified
+                if project:
+                    source_ref = meta.source_ref or ""
+                    # Match if source_ref is "project:org/repo" or starts with "project:"
+                    if source_ref and source_ref != f"project:{project}":
+                        # Check if it's a global rule (no source_ref) - include those too
+                        if source_ref.startswith("project:"):
+                            continue
+
+                # Get the memory content from Mem0
+                try:
+                    mem_data = memory._memory.get(meta.memory_id)
+                    content = mem_data.get("memory", "") if mem_data else ""
+                except Exception:
+                    content = ""
+
+                gate_rules.append({
+                    "memory_id": meta.memory_id,
+                    "content": content,
+                    "category": meta.category,
+                    "source_ref": meta.source_ref,
+                    "pinned": meta.pinned,
+                    "pin_reason": meta.pin_reason,
+                    "tags": meta.tags or [],
+                })
+
+            logger.info(f"[API] Gate rules: found {len(gate_rules)} rules for project={project}")
+
+            return JSONResponse({
+                "success": True,
+                "rules": gate_rules,
+                "count": len(gate_rules),
+            })
+        except Exception as e:
+            logger.error(f"API memory_gate_rules error: {e}", exc_info=True)
+            return JSONResponse({"error": str(e)}, status_code=500)
+
     async def api_session_analyze(request: Request):
         """REST API endpoint to analyze a session transcript and extract learnings.
 
@@ -699,6 +774,7 @@ def create_http_app():
         Route("/api/memory/update", api_memory_update, methods=["POST"]),
         Route("/api/memory/maintenance", api_memory_maintenance, methods=["POST"]),
         Route("/api/memory/status", api_memory_status, methods=["GET"]),
+        Route("/api/memory/gate-rules", api_memory_gate_rules, methods=["GET"]),
         Route("/api/memory/summary/personal", api_memory_summary_personal, methods=["GET"]),
         Route("/api/memory/summary/shared", api_memory_summary_shared, methods=["GET"]),
         Route("/api/session/analyze", api_session_analyze, methods=["POST"]),
