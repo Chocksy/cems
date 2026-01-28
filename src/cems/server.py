@@ -262,7 +262,9 @@ def create_http_app():
 
             category = body.get("category", "general")
             scope = body.get("scope", "personal")
-            infer = body.get("infer", True)  # Default to True for backwards compatibility
+            # Gate rules must preserve exact pattern format, so disable LLM inference
+            default_infer = category != "gate-rules"
+            infer = body.get("infer", default_infer)
             source_ref = body.get("source_ref")  # e.g., "project:org/repo"
             ttl_hours = body.get("ttl_hours")  # Optional: memory expires after N hours
             pinned = body.get("pinned", False)  # Optional: pin memory (never auto-prune)
