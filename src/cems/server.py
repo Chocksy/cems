@@ -262,6 +262,7 @@ def create_http_app():
 
             category = body.get("category", "general")
             scope = body.get("scope", "personal")
+            tags = body.get("tags", [])  # Optional: tags for organization
             # Gate rules must preserve exact pattern format, so disable LLM inference
             default_infer = category != "gate-rules"
             infer = body.get("infer", default_infer)
@@ -275,6 +276,7 @@ def create_http_app():
                 content,
                 scope=scope,
                 category=category,
+                tags=tags,
                 infer=infer,
                 source_ref=source_ref,
                 ttl_hours=ttl_hours,
