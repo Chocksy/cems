@@ -421,34 +421,45 @@ def create_http_app():
 
             memory = get_memory()
 
-            # Get all gate rules from metadata store
-            gate_rules = []
-            all_metadata = memory._metadata.get_all_memories_metadata(memory.config.user_id)
+            # Get gate-rules memory IDs from metadata store
+            memory_ids = memory._metadata.get_memories_by_category(
+                memory.config.user_id, "gate-rules"
+            )
 
-            for meta in all_metadata:
-                if meta.category != "gate-rules":
-                    continue
-                if meta.archived:
+            if not memory_ids:
+                return JSONResponse({
+                    "success": True,
+                    "rules": [],
+                    "count": 0,
+                })
+
+            # Get metadata for all gate rules
+            metadata_map = memory._metadata.get_metadata_batch(memory_ids)
+
+            gate_rules = []
+            for memory_id in memory_ids:
+                meta = metadata_map.get(memory_id)
+                if not meta:
                     continue
 
                 # Filter by project if specified
                 if project:
                     source_ref = meta.source_ref or ""
-                    # Match if source_ref is "project:org/repo" or starts with "project:"
-                    if source_ref and source_ref != f"project:{project}":
-                        # Check if it's a global rule (no source_ref) - include those too
-                        if source_ref.startswith("project:"):
+                    # Skip if source_ref is for a different project
+                    if source_ref and source_ref.startswith("project:"):
+                        if source_ref != f"project:{project}":
                             continue
+                    # Global rules (no source_ref) are included for all projects
 
                 # Get the memory content from Mem0
                 try:
-                    mem_data = memory._memory.get(meta.memory_id)
+                    mem_data = memory._memory.get(memory_id)
                     content = mem_data.get("memory", "") if mem_data else ""
                 except Exception:
                     content = ""
 
                 gate_rules.append({
-                    "memory_id": meta.memory_id,
+                    "memory_id": memory_id,
                     "content": content,
                     "category": meta.category,
                     "source_ref": meta.source_ref,
