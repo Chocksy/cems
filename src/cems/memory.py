@@ -866,7 +866,7 @@ Return JSON: {"facts": ["specific actionable fact 1", "specific actionable fact 
 
         for search_query in queries_to_search:
             # Vector search - use raw search to get base scores
-            vector_results = self._search_raw(search_query, scope, limit=20)
+            vector_results = self._search_raw(search_query, scope, limit=self.config.max_candidates_per_query)
             query_results.append(vector_results)
             log.debug(f"[RETRIEVAL] Vector search for '{search_query[:30]}...': {len(vector_results)} results")
 
@@ -909,10 +909,10 @@ JSON:"""
         # Graph traversal (if enabled) - add as separate result list for RRF
         if enable_graph and self._graph and query_results and query_results[0]:
             graph_results: list[SearchResult] = []
-            for top_result in query_results[0][:3]:  # Top 3 from primary query
+            for top_result in query_results[0][:5]:  # Top 5 from primary query for graph seeds
                 try:
                     related = self._graph.get_related_memories(
-                        top_result.memory_id, max_depth=2, limit=5
+                        top_result.memory_id, max_depth=2, limit=8
                     )
                     for rel in related:
                         mem = self.get(rel["id"])
@@ -952,7 +952,7 @@ JSON:"""
         # Stage 6: LLM Re-ranking (if enabled and in hybrid mode)
         if enable_rerank and selected_mode == "hybrid" and client and len(candidates) > 3:
             try:
-                candidates = rerank_with_llm(query, candidates, client, top_k=15)
+                candidates = rerank_with_llm(query, candidates, client, top_k=self.config.rerank_output_limit, config=self.config)
                 log.info(f"[RETRIEVAL] LLM reranking complete: {len(candidates)} results")
             except Exception as e:
                 log.warning(f"[RETRIEVAL] LLM reranking failed: {e}")

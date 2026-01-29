@@ -187,7 +187,7 @@ def add(
 @click.argument("query")
 @click.option("--scope", "-s", default="both", type=click.Choice(["personal", "shared", "both"]))
 @click.option("--limit", "-l", default=10, help="Maximum results")
-@click.option("--max-tokens", "-t", default=2000, help="Token budget for results")
+@click.option("--max-tokens", "-t", default=4000, help="Token budget for results")
 @click.option("--no-graph", is_flag=True, help="Disable graph traversal")
 @click.option("--no-synthesis", is_flag=True, help="Disable LLM query expansion")
 @click.option("--raw", is_flag=True, help="Debug mode: bypass filtering to see all results")

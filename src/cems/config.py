@@ -144,8 +144,20 @@ class CEMSConfig(BaseSettings):
         description="Minimum similarity score to include in results (Stage 3)",
     )
     default_max_tokens: int = Field(
-        default=2000,
+        default=4000,
         description="Default token budget for retrieval results (Stage 5)",
+    )
+    max_candidates_per_query: int = Field(
+        default=50,
+        description="Max candidates per vector search query",
+    )
+    rerank_input_limit: int = Field(
+        default=40,
+        description="Max candidates to send to LLM for reranking",
+    )
+    rerank_output_limit: int = Field(
+        default=25,
+        description="Max results to return from LLM reranking",
     )
 
     # =========================================================================

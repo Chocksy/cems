@@ -24,6 +24,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from cems.config import CEMSConfig
     from cems.llm import OpenRouterClient
     from cems.models import MemoryMetadata, SearchResult
 
@@ -390,6 +391,7 @@ def rerank_with_llm(
     candidates: list["SearchResult"],
     client: "OpenRouterClient",
     top_k: int = 10,
+    config: "CEMSConfig | None" = None,
 ) -> list["SearchResult"]:
     """Use LLM to re-rank candidates by actual relevance.
 
@@ -401,6 +403,7 @@ def rerank_with_llm(
         candidates: List of candidates to re-rank
         client: OpenRouter client
         top_k: Number of results to return
+        config: Optional CEMS config for limits
 
     Returns:
         Re-ranked list of SearchResults
@@ -408,8 +411,9 @@ def rerank_with_llm(
     if not candidates:
         return []
 
-    # Limit input to top 20 for cost/speed
-    candidates_to_rank = candidates[:20]
+    # Limit input for cost/speed (configurable)
+    rerank_input_limit = config.rerank_input_limit if config else 40
+    candidates_to_rank = candidates[:rerank_input_limit]
 
     # Format candidates for LLM
     candidate_text = "\n".join([

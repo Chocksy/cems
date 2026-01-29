@@ -270,15 +270,23 @@ def merge_memory_contents(
 2. **Resolve conflicts** - If memories contradict, prefer the more specific or recent-sounding version
 3. **Remove redundancy** - Don't repeat the same information twice
 4. **Preserve specifics** - Keep exact names, numbers, versions, URLs
-5. **Keep it atomic** - Output should be a single fact/preference, not a list
+5. **Allow appropriate length** - Simple facts should be 1-2 sentences, but detailed guidelines, workflows, or multi-step procedures can be 1-2 paragraphs
 
-## Example Input
+## Example Input (simple fact)
 Memory 1: "User prefers Python for backend work"
 Memory 2: "User likes Python, especially FastAPI framework"
 Memory 3: "User prefers Python over JavaScript for server-side code"
 
-## Example Output
+## Example Output (simple fact)
 User prefers Python for backend/server-side development, especially using the FastAPI framework (over JavaScript)
+
+## Example Input (detailed guideline)
+Memory 1: "For RSpec tests, always use 'its' helper instead of standalone 'it' blocks"
+Memory 2: "RSpec preference: use is_expected.to instead of explicit expect() calls"
+Memory 3: "In RSpec, prefer subject-based testing with its_block for complex assertions"
+
+## Example Output (detailed guideline)
+RSpec testing conventions: Always use 'its', 'its_block', and 'its_call' helpers instead of standalone 'it' blocks. Prefer is_expected.to over explicit expect() calls. For complex assertions, use subject-based testing with its_block helper.
 
 ## Example Input (with conflict)
 Memory 1: "User works at Google"

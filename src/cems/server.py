@@ -336,7 +336,7 @@ def create_http_app():
 
             limit = body.get("limit", 10)
             scope = body.get("scope", "both")
-            max_tokens = body.get("max_tokens", 2000)
+            max_tokens = body.get("max_tokens", 4000)
             enable_graph = body.get("enable_graph", True)
             enable_query_synthesis = body.get("enable_query_synthesis", True)
             raw_mode = body.get("raw", False)
