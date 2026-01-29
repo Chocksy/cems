@@ -192,7 +192,125 @@ Optional:
   - Nightly: Merge duplicates, promote frequent memories
   - Weekly: Compress old memories, prune stale ones
   - Monthly: Rebuild embeddings, archive dead memories
-- **5-Stage Retrieval**: Query synthesis, vector search, graph traversal, relevance filtering, token-budgeted assembly
+- **9-Stage Retrieval Pipeline**: See [Search Architecture](#search-architecture) below
+
+## Search Architecture
+
+CEMS implements a sophisticated 9-stage retrieval pipeline that **fuses** results from multiple search methods using Reciprocal Rank Fusion (RRF). This is a funnel approach where results are combined, not filtered separately.
+
+### Pipeline Overview
+
+```
+User Query
+    ↓
+┌─────────────────────────────────────────────────────────────────┐
+│ Stage 1: Query Understanding (auto mode)                        │
+│ LLM analyzes intent, complexity, domains → routes to strategy   │
+│ File: retrieval.py:480-538                                      │
+└─────────────────────────────────────────────────────────────────┘
+    ↓
+┌─────────────────────────────────────────────────────────────────┐
+│ Stage 2: Query Synthesis (hybrid mode)                          │
+│ LLM expands query into 2-3 related search terms                 │
+│ File: retrieval.py:36-68                                        │
+└─────────────────────────────────────────────────────────────────┘
+    ↓
+┌─────────────────────────────────────────────────────────────────┐
+│ Stage 3: HyDE - Hypothetical Document Embeddings (hybrid mode)  │
+│ LLM generates what an ideal answer would look like              │
+│ File: retrieval.py:287-317                                      │
+└─────────────────────────────────────────────────────────────────┘
+    ↓
+┌─────────────────────────────────────────────────────────────────┐
+│ Stage 4: Parallel Candidate Retrieval                           │
+│                                                                  │
+│  ┌──────────────────┐  ┌──────────────────┐  ┌───────────────┐ │
+│  │ Vector Search    │  │ Graph Traversal  │  │ Category      │ │
+│  │ (Qdrant/Mem0)    │  │ (Kuzu)           │  │ Summaries     │ │
+│  │                  │  │                  │  │ (LLM match)   │ │
+│  │ 5 queries ×      │  │ Top-3 seeds →    │  │               │ │
+│  │ 20 results each  │  │ 2-hop traversal  │  │ Category      │ │
+│  └────────┬─────────┘  └────────┬─────────┘  │ boost map     │ │
+│           │                     │            └───────┬───────┘ │
+│           └──────────┬──────────┘                    │         │
+│                      ↓                               │         │
+│              Collect all results                     │         │
+└──────────────────────┼───────────────────────────────┼─────────┘
+                       ↓                               │
+┌──────────────────────┴───────────────────────────────┘
+│
+↓
+┌─────────────────────────────────────────────────────────────────┐
+│ Stage 5: RRF Fusion                                             │
+│ Reciprocal Rank Fusion combines all result lists                │
+│ Formula: score = Σ(1 / (60 + rank_i)) across all retrievers    │
+│ Blend: 30% RRF + 70% original vector score                      │
+│ File: retrieval.py:324-380                                      │
+└─────────────────────────────────────────────────────────────────┘
+    ↓
+┌─────────────────────────────────────────────────────────────────┐
+│ Stage 6: LLM Re-ranking (hybrid mode, >3 candidates)            │
+│ LLM evaluates ACTUAL relevance, not just similarity             │
+│ Blend: 70% LLM rank + 30% previous score                        │
+│ File: retrieval.py:388-473                                      │
+└─────────────────────────────────────────────────────────────────┘
+    ↓
+┌─────────────────────────────────────────────────────────────────┐
+│ Stage 7: Relevance Filtering                                    │
+│ Filter results below threshold (default: 0.4)                   │
+│ File: memory.py:960-964                                         │
+└─────────────────────────────────────────────────────────────────┘
+    ↓
+┌─────────────────────────────────────────────────────────────────┐
+│ Stage 8: Unified Scoring Adjustments                            │
+│ • Priority boost (1.0-2.0x)                                     │
+│ • Time decay (50% per month)                                    │
+│ • Pinned memory boost (+10%)                                    │
+│ • Cross-category penalty (-20%)                                 │
+│ • Project-scoped boost (+30% same, -20% different)             │
+│ • Category summary boost (up to +30%)                           │
+│ File: retrieval.py:230-279                                      │
+└─────────────────────────────────────────────────────────────────┘
+    ↓
+┌─────────────────────────────────────────────────────────────────┐
+│ Stage 9: Token-Budgeted Assembly                                │
+│ Greedily select results until token budget exhausted            │
+│ Default: 2000 tokens                                            │
+│ File: retrieval.py:107-156                                      │
+└─────────────────────────────────────────────────────────────────┘
+    ↓
+Final Results (formatted context for LLM injection)
+```
+
+### Search Modes
+
+| Mode | Stages Active | LLM Calls | Use Case |
+|------|---------------|-----------|----------|
+| `vector` | 4, 7, 8, 9 | 0 | Simple queries, speed-critical |
+| `hybrid` | All (1-9) | 4-5 | Complex queries, accuracy-critical |
+| `auto` | 1 → routes | 1+ | Default - smart routing based on query |
+
+### API Configuration
+
+```json
+POST /api/memory/search
+{
+  "query": "deployment process",
+  "mode": "auto",                    // auto, vector, hybrid
+  "enable_query_synthesis": true,   // Stage 2
+  "enable_hyde": true,              // Stage 3
+  "enable_rerank": true,            // Stage 6
+  "enable_graph": true,             // Graph traversal in Stage 4
+  "max_tokens": 2000,               // Token budget
+  "raw": false                      // Bypass filtering (debug)
+}
+```
+
+### Cost Characteristics
+
+- **Vector mode**: ~100-300ms, 0 LLM tokens
+- **Hybrid mode**: ~2-5s, ~1,200 tokens per query
+- **Estimated annual cost**: ~$82/year at 1,000 searches/day (GPT-4o-mini pricing)
 
 ## Environment Variables Reference
 
