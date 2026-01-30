@@ -211,22 +211,22 @@ CREATE TABLE IF NOT EXISTS index_patterns (
 );
 
 -- Insert default index patterns
-INSERT INTO index_patterns (id, team_id, name, description, file_patterns, extract_type, pin_category) VALUES
+INSERT INTO index_patterns (id, team_id, name, description, file_patterns, extract_type, pin_category, is_active) VALUES
     (uuid_generate_v4(), NULL, 'rspec_conventions', 'Extract RSpec testing patterns',
      ARRAY['spec/**/*_spec.rb', 'spec/spec_helper.rb', 'spec/rails_helper.rb'],
-     'rspec_conventions', 'guideline'),
+     'rspec_conventions', 'guideline', true),
     (uuid_generate_v4(), NULL, 'readme_docs', 'Extract README documentation',
      ARRAY['README.md', 'README.rst', 'docs/**/*.md'],
-     'readme', 'documentation'),
+     'readme', 'documentation', true),
     (uuid_generate_v4(), NULL, 'architecture_docs', 'Extract architecture decisions',
      ARRAY['docs/architecture/**/*', 'ADR/**/*.md', 'doc/adr/**/*.md'],
-     'architecture', 'architecture'),
+     'architecture', 'architecture', true),
     (uuid_generate_v4(), NULL, 'contributing_guide', 'Extract contribution guidelines',
      ARRAY['CONTRIBUTING.md', '.github/CONTRIBUTING.md', 'docs/contributing.md'],
-     'readme', 'guideline'),
+     'readme', 'guideline', true),
     (uuid_generate_v4(), NULL, 'ci_config', 'Extract CI/CD configuration patterns',
      ARRAY['.github/workflows/*.yml', '.gitlab-ci.yml', 'Jenkinsfile', '.circleci/config.yml'],
-     'ci_config', 'convention')
+     'ci_config', 'convention', true)
 ON CONFLICT DO NOTHING;
 
 -- API keys for external integrations
