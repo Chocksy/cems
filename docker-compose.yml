@@ -19,7 +19,63 @@ services:
       retries: 5
     restart: unless-stopped
 
-  # CEMS Python API Server (internal only)
+  # llama.cpp server for embeddings (768-dim) - Embedding Gemma 300M
+  llama-embed:
+    image: ghcr.io/ggml-org/llama.cpp:server
+    container_name: cems-llama-embed
+    command:
+      - --model
+      - /models/embeddinggemma-300M-Q8_0.gguf
+      - --embeddings
+      - --host
+      - "0.0.0.0"
+      - --port
+      - "8081"
+      - --ctx-size
+      - "8192"
+      - --batch-size
+      - "4096"
+      - --ubatch-size
+      - "4096"
+    volumes:
+      - llama_models:/models
+    ports:
+      - "8081:8081"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    restart: unless-stopped
+
+  # llama.cpp server for reranking
+  llama-rerank:
+    image: ghcr.io/ggml-org/llama.cpp:server
+    container_name: cems-llama-rerank
+    command:
+      - --model
+      - /models/Qwen3-Reranker-0.6B.Q8_0.gguf
+      - --rerank
+      - --host
+      - "0.0.0.0"
+      - --port
+      - "8082"
+      - --ctx-size
+      - "512"
+    volumes:
+      - llama_models:/models
+    ports:
+      - "8082:8082"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8082/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    restart: unless-stopped
+
+  # CEMS Python API Server
   cems-server:
     build:
       context: .
@@ -36,11 +92,24 @@ services:
       CEMS_SERVER_PORT: 8765
       # Admin API key (for user management)
       CEMS_ADMIN_KEY: ${CEMS_ADMIN_KEY}
+      # llama.cpp server for embeddings (768-dim)
+      CEMS_EMBEDDING_BACKEND: llamacpp_server
+      CEMS_EMBEDDING_DIMENSION: 768
+      # Use native embedding server for 210x speedup over Docker
+      CEMS_LLAMACPP_BASE_URL: http://host.docker.internal:8084
+      CEMS_LLAMACPP_EMBED_MODEL: embeddinggemma-300M-Q8_0.gguf
+      # Reranker: llm (OpenRouter API), llamacpp_server, or disabled
+      # BOTH RERANKERS HURT PERFORMANCE SIGNIFICANTLY:
+      # - LLM reranker (2026-02-04): 88% → 81% (-7%)
+      # - llamacpp_server reranker (2026-02-05): 86% → 28% (-58%)
+      CEMS_RERANKER_BACKEND: disabled
     ports:
       - "8765:8765"
     depends_on:
       postgres:
         condition: service_healthy
+      # llama-embed and llama-rerank run NATIVELY on Mac for 210x speedup
+      # Start them with: ./scripts/start-native-embedder.sh & ./scripts/start-native-reranker.sh
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8765/health"]
       interval: 30s
@@ -69,7 +138,6 @@ services:
       retries: 3
     restart: unless-stopped
 
-  # NOTE: Worker service removed - scheduler runs in cems-server background
-
 volumes:
   postgres_data:
+  llama_models:

@@ -1,12 +1,13 @@
-"""Embedding client for CEMS using OpenRouter API.
+"""Embedding clients for CEMS.
 
-This module provides the EmbeddingClient class for generating vector embeddings
-from text using the OpenRouter API. It replaces Mem0's embedded embedder with
-direct API calls for better control and performance.
+Supports two backends:
+1. OpenRouter API - Uses OpenAI text-embedding-3-small via OpenRouter
+2. llama.cpp server - Uses local llama.cpp server via HTTP (see llamacpp_server.py)
 
 Environment Variables:
-    OPENROUTER_API_KEY: Required. Your OpenRouter API key.
-    CEMS_EMBEDDING_MODEL: Optional. Embedding model (default: openai/text-embedding-3-small)
+    OPENROUTER_API_KEY: Required for OpenRouter API calls.
+    CEMS_EMBEDDING_MODEL: Override default OpenRouter model (optional).
+    CEMS_EMBEDDING_BACKEND: "openrouter" or "llamacpp_server"
 """
 
 from __future__ import annotations
@@ -182,7 +183,6 @@ class EmbeddingClient:
         self.close()
 
 
-# Async version for use with asyncpg
 class AsyncEmbeddingClient:
     """Async client for generating embeddings via OpenRouter API.
 
@@ -347,7 +347,10 @@ class AsyncEmbeddingClient:
         await self.close()
 
 
+# =============================================================================
 # Module-level instances (lazy initialization)
+# =============================================================================
+
 _client: EmbeddingClient | None = None
 _async_client: AsyncEmbeddingClient | None = None
 

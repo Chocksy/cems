@@ -10,7 +10,7 @@ class TestOpenRouterClient:
     """Tests for OpenRouterClient class."""
 
     @patch.dict(os.environ, {"OPENROUTER_API_KEY": "test-key"})
-    @patch("cems.llm.OpenAI")
+    @patch("cems.llm.client.OpenAI")
     def test_client_initialization(self, mock_openai_class):
         """Test client initializes with OpenRouter configuration."""
         from cems.llm import OpenRouterClient, OPENROUTER_BASE_URL
@@ -36,7 +36,7 @@ class TestOpenRouterClient:
             OpenRouterClient()
 
     @patch.dict(os.environ, {"OPENROUTER_API_KEY": "test-key"})
-    @patch("cems.llm.OpenAI")
+    @patch("cems.llm.client.OpenAI")
     def test_client_custom_model(self, mock_openai_class):
         """Test client with custom model."""
         from cems.llm import OpenRouterClient
@@ -49,7 +49,7 @@ class TestOpenRouterClient:
         assert client.model == "openai/gpt-4o"
 
     @patch.dict(os.environ, {"OPENROUTER_API_KEY": "test-key"})
-    @patch("cems.llm.OpenAI")
+    @patch("cems.llm.client.OpenAI")
     def test_client_attribution_headers(self, mock_openai_class):
         """Test client includes attribution headers."""
         from cems.llm import OpenRouterClient
@@ -71,7 +71,7 @@ class TestModelResolution:
     """Tests for model name resolution."""
 
     @patch.dict(os.environ, {"OPENROUTER_API_KEY": "test-key"})
-    @patch("cems.llm.OpenAI")
+    @patch("cems.llm.client.OpenAI")
     def test_resolve_none_model(self, mock_openai_class):
         """Test resolving None returns default."""
         from cems.llm import OpenRouterClient, OPENROUTER_MODELS
@@ -82,7 +82,7 @@ class TestModelResolution:
         assert client.model == OPENROUTER_MODELS["default"]
 
     @patch.dict(os.environ, {"OPENROUTER_API_KEY": "test-key"})
-    @patch("cems.llm.OpenAI")
+    @patch("cems.llm.client.OpenAI")
     def test_resolve_already_openrouter_format(self, mock_openai_class):
         """Test models already in OpenRouter format pass through."""
         from cems.llm import OpenRouterClient
@@ -93,7 +93,7 @@ class TestModelResolution:
         assert client.model == "anthropic/claude-3-haiku"
 
     @patch.dict(os.environ, {"OPENROUTER_API_KEY": "test-key"})
-    @patch("cems.llm.OpenAI")
+    @patch("cems.llm.client.OpenAI")
     def test_resolve_known_model(self, mock_openai_class):
         """Test known model names are mapped."""
         from cems.llm import OpenRouterClient
@@ -104,7 +104,7 @@ class TestModelResolution:
         assert client.model == "openai/gpt-4o-mini"
 
     @patch.dict(os.environ, {"OPENROUTER_API_KEY": "test-key"})
-    @patch("cems.llm.OpenAI")
+    @patch("cems.llm.client.OpenAI")
     def test_resolve_unknown_model(self, mock_openai_class):
         """Test unknown models pass through."""
         from cems.llm import OpenRouterClient
@@ -119,7 +119,7 @@ class TestClientComplete:
     """Tests for the complete method."""
 
     @patch.dict(os.environ, {"OPENROUTER_API_KEY": "test-key"})
-    @patch("cems.llm.OpenAI")
+    @patch("cems.llm.client.OpenAI")
     def test_complete_basic(self, mock_openai_class):
         """Test basic completion."""
         from cems.llm import OpenRouterClient
@@ -138,7 +138,7 @@ class TestClientComplete:
         mock_client.chat.completions.create.assert_called_once()
 
     @patch.dict(os.environ, {"OPENROUTER_API_KEY": "test-key"})
-    @patch("cems.llm.OpenAI")
+    @patch("cems.llm.client.OpenAI")
     def test_complete_with_system(self, mock_openai_class):
         """Test completion with system prompt."""
         from cems.llm import OpenRouterClient
@@ -164,14 +164,14 @@ class TestSummarizeMemories:
     """Tests for summarize_memories function."""
 
     @patch.dict(os.environ, {"OPENROUTER_API_KEY": "test-key"})
-    @patch("cems.llm.OpenAI")
+    @patch("cems.llm.client.OpenAI")
     def test_summarize_memories(self, mock_openai_class):
         """Test summarization."""
         from cems.llm import summarize_memories
 
         # Reset global client
         import cems.llm
-        cems.llm._client = None
+        cems.llm.client._client = None
 
         mock_client = MagicMock()
         mock_response = MagicMock()
@@ -190,7 +190,7 @@ class TestSummarizeMemories:
         assert result == "This is a summary."
 
         # Cleanup
-        cems.llm._client = None
+        cems.llm.client._client = None
 
     def test_summarize_empty_memories(self):
         """Test summarization with empty memories."""
@@ -200,14 +200,14 @@ class TestSummarizeMemories:
         assert "No memories" in result
 
     @patch.dict(os.environ, {"OPENROUTER_API_KEY": "test-key"})
-    @patch("cems.llm.OpenAI")
+    @patch("cems.llm.client.OpenAI")
     def test_summarize_fallback_on_error(self, mock_openai_class):
         """Test fallback when LLM fails."""
         from cems.llm import summarize_memories
 
         # Reset global client
         import cems.llm
-        cems.llm._client = None
+        cems.llm.client._client = None
 
         mock_client = MagicMock()
         mock_client.chat.completions.create.side_effect = Exception("API error")
@@ -222,21 +222,21 @@ class TestSummarizeMemories:
         assert "2 memories" in result
 
         # Cleanup
-        cems.llm._client = None
+        cems.llm.client._client = None
 
 
 class TestMergeMemoryContents:
     """Tests for merge_memory_contents function."""
 
     @patch.dict(os.environ, {"OPENROUTER_API_KEY": "test-key"})
-    @patch("cems.llm.OpenAI")
+    @patch("cems.llm.client.OpenAI")
     def test_merge_memory_contents(self, mock_openai_class):
         """Test merging duplicate memories."""
         from cems.llm import merge_memory_contents
 
         # Reset global client
         import cems.llm
-        cems.llm._client = None
+        cems.llm.client._client = None
 
         mock_client = MagicMock()
         mock_response = MagicMock()
@@ -255,7 +255,7 @@ class TestMergeMemoryContents:
         assert result == "Merged content."
 
         # Cleanup
-        cems.llm._client = None
+        cems.llm.client._client = None
 
     def test_merge_single_memory(self):
         """Test merging single memory returns as-is."""
@@ -275,14 +275,14 @@ class TestMergeMemoryContents:
         assert result == ""
 
     @patch.dict(os.environ, {"OPENROUTER_API_KEY": "test-key"})
-    @patch("cems.llm.OpenAI")
+    @patch("cems.llm.client.OpenAI")
     def test_merge_fallback_on_error(self, mock_openai_class):
         """Test fallback when LLM fails."""
         from cems.llm import merge_memory_contents
 
         # Reset global client
         import cems.llm
-        cems.llm._client = None
+        cems.llm.client._client = None
 
         mock_client = MagicMock()
         mock_client.chat.completions.create.side_effect = Exception("API error")
@@ -299,7 +299,7 @@ class TestMergeMemoryContents:
         assert result == "First memory"
 
         # Cleanup
-        cems.llm._client = None
+        cems.llm.client._client = None
 
 
 class TestFallbackSummary:
@@ -307,7 +307,7 @@ class TestFallbackSummary:
 
     def test_fallback_summary(self):
         """Test fallback summary generation."""
-        from cems.llm import _fallback_summary
+        from cems.llm.summarization import _fallback_summary
 
         memories = [
             "Memory one content",
@@ -326,7 +326,7 @@ class TestFallbackSummary:
 
     def test_fallback_summary_short_list(self):
         """Test fallback summary with short list."""
-        from cems.llm import _fallback_summary
+        from cems.llm.summarization import _fallback_summary
 
         memories = ["Memory one", "Memory two"]
 
@@ -341,14 +341,14 @@ class TestGetClient:
     """Tests for get_client function."""
 
     @patch.dict(os.environ, {"OPENROUTER_API_KEY": "test-key"})
-    @patch("cems.llm.OpenAI")
+    @patch("cems.llm.client.OpenAI")
     def test_get_client_singleton(self, mock_openai_class):
         """Test get_client returns singleton."""
         from cems.llm import get_client
 
         # Reset global client
         import cems.llm
-        cems.llm._client = None
+        cems.llm.client._client = None
 
         mock_openai_class.return_value = MagicMock()
 
@@ -358,21 +358,21 @@ class TestGetClient:
         assert client1 is client2
 
         # Cleanup
-        cems.llm._client = None
+        cems.llm.client._client = None
 
 
 class TestBackwardsCompatibility:
     """Tests for deprecated backwards compatibility functions."""
 
     @patch.dict(os.environ, {"OPENROUTER_API_KEY": "test-key"})
-    @patch("cems.llm.OpenAI")
+    @patch("cems.llm.client.OpenAI")
     def test_get_llm_client_deprecated(self, mock_openai_class):
         """Test deprecated get_llm_client still works."""
         from cems.llm import get_llm_client
 
         # Reset global client
         import cems.llm
-        cems.llm._client = None
+        cems.llm.client._client = None
 
         mock_openai_class.return_value = MagicMock()
 
@@ -383,11 +383,11 @@ class TestBackwardsCompatibility:
             get_llm_client("openai")  # Provider ignored
 
         # Cleanup
-        cems.llm._client = None
+        cems.llm.client._client = None
 
     def test_resolve_openrouter_model_deprecated(self):
         """Test deprecated model resolution."""
-        from cems.llm import _resolve_openrouter_model
+        from cems.llm.client import _resolve_openrouter_model
 
         result = _resolve_openrouter_model("gpt-4o-mini")
         assert result == "openai/gpt-4o-mini"

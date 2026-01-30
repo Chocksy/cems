@@ -13,10 +13,11 @@ The fact extraction prompt is optimized for developer workflows, extracting:
 
 from __future__ import annotations
 
-import json
 import logging
 import re
 from typing import TYPE_CHECKING
+
+from cems.lib.json_parsing import extract_json_from_response
 
 if TYPE_CHECKING:
     from cems.llm import OpenRouterClient
@@ -100,7 +101,6 @@ class FactExtractor:
             response = self._client.complete(
                 prompt=user_prompt,
                 system=self._prompt,
-                max_tokens=500,
                 temperature=0.2,
             )
 
@@ -163,16 +163,13 @@ class FactExtractor:
         Returns:
             List of fact strings
         """
-        response = response.strip()
+        import json
 
-        # Remove markdown code blocks if present
-        if response.startswith("```"):
-            match = re.search(r"```(?:json)?\s*([\s\S]*?)```", response)
-            if match:
-                response = match.group(1).strip()
+        # Use shared utility to extract JSON from markdown
+        cleaned = extract_json_from_response(response)
 
         try:
-            data = json.loads(response)
+            data = json.loads(cleaned)
 
             if isinstance(data, dict) and "facts" in data:
                 facts = data["facts"]

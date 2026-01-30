@@ -21,6 +21,8 @@ import os
 
 from openai import OpenAI
 
+from cems.lib.json_parsing import parse_json_list
+
 logger = logging.getLogger(__name__)
 
 # OpenRouter configuration
@@ -777,47 +779,27 @@ def _parse_learnings_response(response: str) -> list[dict]:
     Returns:
         List of validated learning dicts
     """
-    import json
-    import re
+    # Parse JSON using shared utility
+    learnings = parse_json_list(response, fallback=[])
 
-    # Try to extract JSON from response
-    response = response.strip()
+    # Validate each learning
+    valid_learnings = []
+    for learning in learnings:
+        if not isinstance(learning, dict):
+            continue
+        if learning.get("type") not in LEARNING_TYPES:
+            continue
+        if not learning.get("content"):
+            continue
 
-    # Remove markdown code blocks if present
-    if response.startswith("```"):
-        # Find the end of the code block
-        match = re.search(r"```(?:json)?\s*([\s\S]*?)```", response)
-        if match:
-            response = match.group(1).strip()
+        valid_learnings.append({
+            "type": learning["type"],
+            "content": str(learning["content"])[:500],  # Limit content length
+            "confidence": float(learning.get("confidence", 0.5)),
+            "category": str(learning.get("category", "general"))[:50],
+        })
 
-    # Try to parse as JSON
-    try:
-        learnings = json.loads(response)
-        if not isinstance(learnings, list):
-            return []
-
-        # Validate each learning
-        valid_learnings = []
-        for learning in learnings:
-            if not isinstance(learning, dict):
-                continue
-            if learning.get("type") not in LEARNING_TYPES:
-                continue
-            if not learning.get("content"):
-                continue
-
-            valid_learnings.append({
-                "type": learning["type"],
-                "content": str(learning["content"])[:500],  # Limit content length
-                "confidence": float(learning.get("confidence", 0.5)),
-                "category": str(learning.get("category", "general"))[:50],
-            })
-
-        return valid_learnings
-
-    except json.JSONDecodeError:
-        logger.warning(f"Failed to parse learnings JSON: {response[:200]}")
-        return []
+    return valid_learnings
 
 
 def extract_tool_learning(

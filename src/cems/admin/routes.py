@@ -7,6 +7,7 @@ import logging
 import os
 import uuid
 
+from sqlalchemy import text
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
@@ -609,6 +610,120 @@ async def debug_llm_test(request: Request) -> JSONResponse:
     return JSONResponse({"llm_tests": results})
 
 
+async def cleanup_eval_data(request: Request) -> JSONResponse:
+    """Delete all eval data from the database (admin only).
+
+    DELETE /admin/eval/cleanup?source_prefix=project:longmemeval
+
+    This is used by the eval script to clean up stale data before runs.
+    """
+    if err := require_admin_auth(request):
+        return err
+
+    source_prefix = request.query_params.get("source_prefix", "project:longmemeval")
+
+    try:
+        db = get_database()
+        if not db:
+            return JSONResponse({"error": "Database not initialized"}, status_code=500)
+
+        async with db.async_session() as session:
+            # Delete chunks first (foreign key constraint)
+            chunk_result = await session.execute(
+                text("""
+                    DELETE FROM memory_chunks
+                    WHERE document_id IN (
+                        SELECT id FROM memory_documents
+                        WHERE source_ref LIKE :prefix
+                    )
+                """),
+                {"prefix": f"{source_prefix}%"},
+            )
+            chunks_deleted = chunk_result.rowcount
+
+            # Delete documents
+            doc_result = await session.execute(
+                text("""
+                    DELETE FROM memory_documents
+                    WHERE source_ref LIKE :prefix
+                """),
+                {"prefix": f"{source_prefix}%"},
+            )
+            docs_deleted = doc_result.rowcount
+
+            await session.commit()
+
+        return JSONResponse({
+            "success": True,
+            "chunks_deleted": chunks_deleted,
+            "documents_deleted": docs_deleted,
+            "source_prefix": source_prefix,
+        })
+
+    except Exception as e:
+        logger.error(f"Eval cleanup failed: {e}")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+async def database_stats(request: Request) -> JSONResponse:
+    """Get database statistics (admin only).
+
+    GET /admin/db/stats
+
+    Returns counts and embedding dimensions for all tables.
+    """
+    if err := require_admin_auth(request):
+        return err
+
+    try:
+        db = get_database()
+        if not db:
+            return JSONResponse({"error": "Database not initialized"}, status_code=500)
+
+        stats = {}
+
+        async with db.async_session() as session:
+            # Count memories
+            result = await session.execute(
+                text("SELECT COUNT(*) FROM memories WHERE archived = FALSE")
+            )
+            stats["memories_active"] = result.scalar()
+
+            result = await session.execute(text("SELECT COUNT(*) FROM memories"))
+            stats["memories_total"] = result.scalar()
+
+            # Check embedding dimension (sample first memory)
+            result = await session.execute(
+                text("SELECT array_length(embedding::real[], 1) FROM memories LIMIT 1")
+            )
+            dim = result.scalar()
+            stats["embedding_dimension"] = dim
+
+            # Count documents and chunks (new model)
+            result = await session.execute(text("SELECT COUNT(*) FROM memory_documents"))
+            stats["documents_total"] = result.scalar()
+
+            result = await session.execute(text("SELECT COUNT(*) FROM memory_chunks"))
+            stats["chunks_total"] = result.scalar()
+
+            # Check chunk embedding dimension
+            result = await session.execute(
+                text("SELECT array_length(embedding::real[], 1) FROM memory_chunks LIMIT 1")
+            )
+            chunk_dim = result.scalar()
+            stats["chunk_embedding_dimension"] = chunk_dim
+
+            # Count users
+            result = await session.execute(text("SELECT COUNT(*) FROM users"))
+            stats["users_total"] = result.scalar()
+
+        return JSONResponse({"stats": stats})
+
+    except Exception as e:
+        logger.error(f"Database stats failed: {e}")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
 # =============================================================================
 # Route Definitions
 # =============================================================================
@@ -618,6 +733,9 @@ admin_routes = [
     Route("/admin", admin_info, methods=["GET"]),
     Route("/admin/debug", debug_config, methods=["GET"]),
     Route("/admin/debug/llm", debug_llm_test, methods=["GET"]),
+    Route("/admin/db/stats", database_stats, methods=["GET"]),
+    # Eval cleanup
+    Route("/admin/eval/cleanup", cleanup_eval_data, methods=["DELETE"]),
     # Users
     Route("/admin/users", list_users, methods=["GET"]),
     Route("/admin/users", create_user, methods=["POST"]),

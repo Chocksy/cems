@@ -1,0 +1,800 @@
+"""Memory API handlers.
+
+All memory-related REST API endpoints:
+- add, add_batch, search, gate_rules, profile, forget, update
+- maintenance, status, summary_personal, summary_shared
+"""
+
+import logging
+from datetime import datetime
+
+from starlette.requests import Request
+from starlette.responses import JSONResponse
+
+from cems.api.deps import get_memory, get_scheduler
+from cems.chunking import Chunk, chunk_document
+
+logger = logging.getLogger(__name__)
+
+# Import scheduler cache for status endpoint
+from cems.api.deps import _scheduler_cache
+
+
+async def api_memory_add(request: Request):
+    """REST API endpoint to add a memory.
+
+    POST /api/memory/add
+    Body: {
+        "content": "...",
+        "category": "...",
+        "scope": "personal|shared",
+        "infer": true/false  (optional, default true),
+        "source_ref": "project:org/repo"  (optional, for project-scoped recall),
+        "ttl_hours": 24  (optional, memory expires after this many hours),
+        "pinned": true/false  (optional, default false - pinned memories never auto-prune),
+        "pin_reason": "..."  (optional, reason for pinning),
+        "timestamp": "2023-04-10T17:50:00Z"  (optional, ISO format for historical imports)
+    }
+
+    Note: Set infer=false for bulk imports (100-200ms vs 1-10s per memory).
+    With infer=false, content is stored raw without LLM fact extraction.
+
+    Use ttl_hours for short-term session memories that should auto-expire.
+    Use pinned=true for important memories like gate rules or guidelines.
+    Use timestamp for historical imports (e.g., eval benchmarks with event dates).
+    """
+    try:
+        body = await request.json()
+        content = body.get("content")
+        if not content:
+            return JSONResponse({"error": "content is required"}, status_code=400)
+
+        category = body.get("category", "general")
+        scope = body.get("scope", "personal")
+        tags = body.get("tags", [])  # Optional: tags for organization
+        # Gate rules must preserve exact pattern format, so disable LLM inference
+        default_infer = category != "gate-rules"
+        infer = body.get("infer", default_infer)
+        source_ref = body.get("source_ref")  # e.g., "project:org/repo"
+        ttl_hours = body.get("ttl_hours")  # Optional: memory expires after N hours
+        pinned = body.get("pinned", False)  # Optional: pin memory (never auto-prune)
+        pin_reason = body.get("pin_reason")  # Optional: reason for pinning
+        timestamp_str = body.get("timestamp")  # Optional: historical timestamp (ISO format)
+
+        # Parse timestamp if provided
+        timestamp = None
+        if timestamp_str:
+            from datetime import datetime
+            try:
+                timestamp = datetime.fromisoformat(timestamp_str.replace("Z", "+00:00"))
+            except ValueError:
+                return JSONResponse({"error": "Invalid timestamp format. Use ISO format."}, status_code=400)
+
+        memory = get_memory()
+        result = await memory.add_async(
+            content,
+            scope=scope,
+            category=category,
+            tags=tags,
+            infer=infer,
+            source_ref=source_ref,
+            ttl_hours=ttl_hours,
+            pinned=pinned,
+            pin_reason=pin_reason,
+            timestamp=timestamp,
+        )
+
+        return JSONResponse({
+            "success": True,
+            "result": result,
+        })
+    except Exception as e:
+        logger.error(f"API memory_add error: {e}")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+async def api_memory_add_batch(request: Request):
+    """REST API endpoint to add multiple memories in a single request.
+
+    POST /api/memory/add_batch
+    Body: {
+        "memories": [
+            {
+                "content": "...",
+                "category": "...",
+                "scope": "personal|shared",
+                "source_ref": "project:org/repo:id",
+                "tags": ["tag1", "tag2"],
+                "timestamp": "2023-04-10T17:50:00Z"  (optional)
+            },
+            ...
+        ]
+    }
+
+    This endpoint is optimized for bulk ingestion (e.g., eval benchmarks):
+    - Single HTTP request for many memories
+    - Batched embedding (100 texts per API call)
+    - Single database transaction for all documents
+    - Returns document IDs for all memories
+
+    Response: {
+        "success": true,
+        "document_ids": ["id1", "id2", ...],
+        "count": 100,
+        "new_count": 95,
+        "duplicate_count": 5,
+        "total_chunks": 150
+    }
+    """
+    try:
+        body = await request.json()
+        memories = body.get("memories", [])
+
+        if not memories:
+            return JSONResponse({"error": "No memories provided"}, status_code=400)
+
+        if not isinstance(memories, list):
+            return JSONResponse({"error": "memories must be an array"}, status_code=400)
+
+        # Validate all memories have content
+        for i, mem in enumerate(memories):
+            if not mem.get("content"):
+                return JSONResponse(
+                    {"error": f"Memory at index {i} is missing 'content'"},
+                    status_code=400,
+                )
+
+        logger.info(f"[API] Batch add request: {len(memories)} memories")
+
+        memory = get_memory()
+        await memory._ensure_initialized_async()
+
+        # Get the document store and embedder
+        from cems.db.document_store import DocumentStore
+
+        doc_store: DocumentStore = await memory._ensure_document_store()
+        embedder = memory._async_embedder
+
+        if not embedder:
+            return JSONResponse(
+                {"error": "Embedding client not initialized"},
+                status_code=500,
+            )
+
+        # Step 1: Chunk all documents
+        all_chunks: list[list[Chunk]] = []
+        all_texts: list[str] = []  # Flat list of all chunk texts for batch embedding
+        chunk_counts: list[int] = []  # Track how many chunks per document
+
+        for mem in memories:
+            chunks = chunk_document(mem["content"])
+            if not chunks:
+                # Empty content - create a single empty chunk placeholder
+                chunks = [Chunk(seq=0, pos=0, content="", tokens=0, bytes=0)]
+            all_chunks.append(chunks)
+            chunk_counts.append(len(chunks))
+            for chunk in chunks:
+                all_texts.append(chunk.content)
+
+        logger.info(f"[API] Chunked {len(memories)} memories into {len(all_texts)} total chunks")
+
+        # Step 2: Batch embed all chunks in one call (internally batches at 100)
+        all_embeddings_flat = await embedder.embed_batch(all_texts)
+
+        if len(all_embeddings_flat) != len(all_texts):
+            return JSONResponse(
+                {
+                    "error": f"Embedding count mismatch: expected {len(all_texts)}, got {len(all_embeddings_flat)}"
+                },
+                status_code=500,
+            )
+
+        # Step 3: Reconstruct embeddings per document
+        all_embeddings: list[list[list[float]]] = []
+        idx = 0
+        for count in chunk_counts:
+            all_embeddings.append(all_embeddings_flat[idx : idx + count])
+            idx += count
+
+        # Step 4: Prepare documents for batch insert
+        documents: list[dict] = []
+        for mem in memories:
+            doc = {
+                "content": mem["content"],
+                "category": mem.get("category", "general"),
+                "source_ref": mem.get("source_ref"),
+                "tags": mem.get("tags"),
+                "title": mem.get("title"),
+                "source": mem.get("source"),
+            }
+            documents.append(doc)
+
+        # Determine scope (use first memory's scope, default to personal)
+        scope = memories[0].get("scope", "personal") if memories else "personal"
+
+        # Step 5: Batch insert into database
+        user_id = memory.config.user_id
+        team_id = memory.config.team_id if scope == "shared" else None
+
+        if not user_id:
+            return JSONResponse({"error": "No user_id configured"}, status_code=500)
+
+        results = await doc_store.add_documents_batch(
+            documents=documents,
+            all_chunks=all_chunks,
+            all_embeddings=all_embeddings,
+            user_id=user_id,
+            team_id=team_id,
+            scope=scope,
+        )
+
+        # Collect stats
+        document_ids = [doc_id for doc_id, _ in results]
+        new_count = sum(1 for _, is_new in results if is_new)
+        duplicate_count = len(results) - new_count
+        total_chunks = sum(len(c) for c in all_chunks)
+
+        logger.info(
+            f"[API] Batch add complete: {new_count} new, {duplicate_count} duplicates, "
+            f"{total_chunks} chunks"
+        )
+
+        return JSONResponse({
+            "success": True,
+            "document_ids": document_ids,
+            "count": len(document_ids),
+            "new_count": new_count,
+            "duplicate_count": duplicate_count,
+            "total_chunks": total_chunks,
+        })
+
+    except Exception as e:
+        logger.error(f"API memory_add_batch error: {e}", exc_info=True)
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+async def api_memory_search(request: Request):
+    """REST API endpoint to search memories using enhanced retrieval pipeline.
+
+    POST /api/memory/search
+    Body: {
+        "query": "...",
+        "limit": 10,
+        "scope": "personal|shared|both",
+        "max_tokens": 2000,              # Token budget for results
+        "enable_graph": true,            # Include graph traversal
+        "enable_query_synthesis": true,  # LLM query expansion
+        "raw": false,                    # Bypass filtering (debug mode)
+        "project": "org/repo",           # Project ID for scoped boost
+        "mode": "auto|vector|hybrid",    # NEW: Retrieval mode
+        "enable_hyde": true,             # NEW: Use HyDE for better matching
+        "enable_rerank": true            # NEW: Use LLM re-ranking
+    }
+
+    The enhanced pipeline (retrieve_for_inference) implements 9 stages:
+    1. Query understanding (intent, domains, entities) - NEW
+    2. Query synthesis (LLM expands query for better retrieval)
+    3. HyDE (hypothetical document generation) - NEW
+    4. Candidate retrieval (vector + graph search)
+    5. RRF fusion (combine multi-query results) - NEW
+    6. LLM re-ranking (smarter relevance) - NEW
+    7. Relevance filtering (threshold-based)
+    8. Unified scoring (time decay + priority + project)
+    9. Token-budgeted assembly
+
+    Modes:
+    - "auto": Smart routing based on query analysis (default)
+    - "vector": Fast path, minimal LLM calls
+    - "hybrid": Full pipeline with HyDE + RRF + re-ranking
+
+    Use raw=true for debugging to see all results without filtering.
+    """
+    try:
+        body = await request.json()
+        query = body.get("query")
+        if not query:
+            return JSONResponse({"error": "query is required"}, status_code=400)
+
+        limit = body.get("limit", 10)
+        scope = body.get("scope", "both")
+        max_tokens = body.get("max_tokens", 4000)
+        enable_graph = body.get("enable_graph", True)
+        enable_query_synthesis = body.get("enable_query_synthesis", False)  # DISABLED: Was making results worse by adding noise
+        raw_mode = body.get("raw", False)
+        project = body.get("project")  # e.g., "org/repo"
+        # NEW parameters - EXPERIMENT: enable reranking for better Recall@All
+        mode = body.get("mode", "vector")  # Skip auto mode (requires LLM intent analysis)
+        enable_hyde = body.get("enable_hyde", False)  # Skip HyDE (LLM call)
+        enable_rerank = body.get("enable_rerank", True)  # Re-enabled with improved JSON parsing
+
+        logger.info(f"[API] Search request: query='{query[:50]}...', mode={mode}, raw={raw_mode}")
+
+        memory = get_memory()
+
+        if raw_mode:
+            # Debug mode: use raw search without filtering
+            results = await memory.search_async(query, scope=scope, limit=limit)
+            serialized_results = [r.model_dump(mode="json") for r in results]
+            logger.info(f"[API] Raw search: {len(serialized_results)} results")
+            return JSONResponse({
+                "success": True,
+                "results": serialized_results,
+                "count": len(serialized_results),
+                "mode": "raw",
+            })
+
+        # Production mode: use enhanced retrieval pipeline
+        result = await memory.retrieve_for_inference_async(
+            query=query,
+            scope=scope,
+            max_tokens=max_tokens,
+            enable_query_synthesis=enable_query_synthesis,
+            enable_graph=enable_graph,
+            project=project,
+            mode=mode,
+            enable_hyde=enable_hyde,
+            enable_rerank=enable_rerank,
+        )
+
+        # Log intent analysis if present
+        intent = result.get("intent")
+        if intent:
+            logger.info(
+                f"[API] Search intent: type={intent.get('primary_intent')}, "
+                f"complexity={intent.get('complexity')}, mode_selected={result.get('mode')}"
+            )
+
+        # Apply limit to results
+        limited_results = result["results"][:limit]
+
+        logger.info(f"[API] Search complete: {len(limited_results)} results, mode={result.get('mode')}")
+
+        return JSONResponse({
+            "success": True,
+            "results": limited_results,
+            "count": len(limited_results),
+            "mode": result.get("mode", "unified"),
+            "tokens_used": result["tokens_used"],
+            "queries_used": result["queries_used"],
+            "total_candidates": result["total_candidates"],
+            "filtered_count": result["filtered_count"],
+            "intent": result.get("intent"),  # NEW: Return query intent for debugging
+        })
+    except Exception as e:
+        logger.error(f"API memory_search error: {e}", exc_info=True)
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+async def api_memory_gate_rules(request: Request):
+    """REST API endpoint to fetch gate rules by category.
+
+    GET /api/memory/gate-rules?project=org/repo
+
+    Returns all memories with category='gate-rules', optionally filtered by project.
+    This bypasses semantic search and queries the metadata store directly.
+
+    Response: {
+        "success": true,
+        "rules": [
+            {
+                "memory_id": "...",
+                "content": "Bash: coolify deploy — reason",
+                "category": "gate-rules",
+                "source_ref": "project:org/repo",
+                "pinned": true,
+                "tags": ["block", "coolify"]
+            }
+        ],
+        "count": 1
+    }
+    """
+    try:
+        project = request.query_params.get("project")  # e.g., "org/repo"
+
+        memory = get_memory()
+
+        # Get gate-rules memory IDs from metadata store
+        memory_ids = memory._metadata.get_memories_by_category(
+            memory.config.user_id, "gate-rules"
+        )
+
+        if not memory_ids:
+            return JSONResponse({
+                "success": True,
+                "rules": [],
+                "count": 0,
+            })
+
+        # Get metadata for all gate rules
+        metadata_map = memory._metadata.get_metadata_batch(memory_ids)
+
+        gate_rules = []
+        for memory_id in memory_ids:
+            meta = metadata_map.get(memory_id)
+            if not meta:
+                continue
+
+            # Filter by project if specified
+            if project:
+                source_ref = meta.source_ref or ""
+                # Skip if source_ref is for a different project
+                if source_ref and source_ref.startswith("project:"):
+                    if source_ref != f"project:{project}":
+                        continue
+                # Global rules (no source_ref) are included for all projects
+
+            # Get the memory content from Mem0
+            try:
+                mem_data = memory._memory.get(memory_id)
+                content = mem_data.get("memory", "") if mem_data else ""
+            except Exception:
+                content = ""
+
+            gate_rules.append({
+                "memory_id": memory_id,
+                "content": content,
+                "category": meta.category,
+                "source_ref": meta.source_ref,
+                "pinned": meta.pinned,
+                "pin_reason": meta.pin_reason,
+                "tags": meta.tags or [],
+            })
+
+        logger.info(f"[API] Gate rules: found {len(gate_rules)} rules for project={project}")
+
+        return JSONResponse({
+            "success": True,
+            "rules": gate_rules,
+            "count": len(gate_rules),
+        })
+    except Exception as e:
+        logger.error(f"API memory_gate_rules error: {e}", exc_info=True)
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+async def api_memory_profile(request: Request):
+    """REST API endpoint to get session profile context.
+
+    GET /api/memory/profile?project=org/repo&token_budget=2500
+
+    Returns pre-formatted context string for session start injection:
+    - User preferences and guidelines
+    - Recent relevant memories (last 24h)
+    - Gate rules summary
+    - Project-specific context if applicable
+
+    Response: {
+        "success": true,
+        "context": "Pre-formatted context string...",
+        "components": {
+            "preferences": 3,
+            "guidelines": 2,
+            "recent_memories": 5,
+            "gate_rules_count": 4
+        },
+        "token_estimate": 1850
+    }
+    """
+    try:
+        project = request.query_params.get("project")
+        token_budget = int(request.query_params.get("token_budget", "2500"))
+
+        memory = get_memory()
+        await memory._ensure_initialized_async()
+
+        user_id = memory.config.user_id
+        components = {
+            "preferences": [],
+            "guidelines": [],
+            "recent_memories": [],
+            "gate_rules_count": 0,
+            "project_context": [],
+        }
+
+        # 1. Fetch preferences (category: preferences)
+        prefs = await memory._vectorstore.search_by_category(
+            user_id=user_id,
+            category="preferences",
+            limit=10,
+        )
+        components["preferences"] = prefs
+
+        # 2. Fetch guidelines (category: guidelines)
+        guidelines = await memory._vectorstore.search_by_category(
+            user_id=user_id,
+            category="guidelines",
+            limit=10,
+        )
+        components["guidelines"] = guidelines
+
+        # 3. Fetch recent memories (last 24h, any category)
+        recent = await memory._vectorstore.get_recent(
+            user_id=user_id,
+            hours=24,
+            limit=15,
+        )
+        # Filter out preferences/guidelines already included
+        recent = [
+            m for m in recent
+            if m.get("category") not in ("preferences", "guidelines", "gate-rules")
+        ]
+        components["recent_memories"] = recent
+
+        # 4. Gate rules count (for awareness, not full rules)
+        gate_rules = await memory._vectorstore.search_by_category(
+            user_id=user_id,
+            category="gate-rules",
+            limit=50,
+        )
+        components["gate_rules_count"] = len(gate_rules)
+
+        # 5. Project-specific memories if applicable
+        if project:
+            # Search for memories with matching source_ref
+            project_memories = await memory._vectorstore.search_by_category(
+                user_id=user_id,
+                category="project",  # Project-specific category
+                limit=10,
+            )
+            # Filter by source_ref prefix (handle None values)
+            project_memories = [
+                m for m in project_memories
+                if (m.get("source_ref") or "").startswith(f"project:{project}")
+            ]
+            components["project_context"] = project_memories
+
+        # Build formatted context string
+        context_parts = []
+
+        if components["preferences"]:
+            pref_list = [f"- {m['content']}" for m in components["preferences"][:5]]
+            context_parts.append("## Your Preferences\n" + "\n".join(pref_list))
+
+        if components["guidelines"]:
+            guide_list = [f"- {m['content']}" for m in components["guidelines"][:5]]
+            context_parts.append("## Guidelines\n" + "\n".join(guide_list))
+
+        if components["gate_rules_count"] > 0:
+            context_parts.append(
+                f"## Gate Rules\n{components['gate_rules_count']} gate rules active "
+                "(checked automatically on tool use)"
+            )
+
+        if components["recent_memories"]:
+            recent_list = [
+                f"- [{m.get('category', 'general')}] {m['content'][:100]}..."
+                if len(m.get('content', '')) > 100 else f"- [{m.get('category', 'general')}] {m['content']}"
+                for m in components["recent_memories"][:5]
+            ]
+            context_parts.append("## Recent Context (last 24h)\n" + "\n".join(recent_list))
+
+        if components["project_context"]:
+            proj_list = [f"- {m['content'][:100]}..." for m in components["project_context"][:3]]
+            context_parts.append(f"## Project Context ({project})\n" + "\n".join(proj_list))
+
+        context = "\n\n".join(context_parts) if context_parts else ""
+
+        # Estimate tokens (rough: 4 chars per token)
+        token_estimate = len(context) // 4
+
+        # Truncate if over budget
+        if token_estimate > token_budget and context:
+            # Simple truncation at roughly token_budget * 4 chars
+            max_chars = token_budget * 4
+            context = context[:max_chars] + "\n\n[...truncated]"
+            token_estimate = token_budget
+
+        logger.info(
+            f"[API] Profile: {len(components['preferences'])} prefs, "
+            f"{len(components['guidelines'])} guidelines, "
+            f"{len(components['recent_memories'])} recent, "
+            f"{components['gate_rules_count']} rules, "
+            f"~{token_estimate} tokens"
+        )
+
+        return JSONResponse({
+            "success": True,
+            "context": context,
+            "components": {
+                "preferences": len(components["preferences"]),
+                "guidelines": len(components["guidelines"]),
+                "recent_memories": len(components["recent_memories"]),
+                "gate_rules_count": components["gate_rules_count"],
+                "project_context": len(components["project_context"]),
+            },
+            "token_estimate": token_estimate,
+        })
+
+    except Exception as e:
+        logger.error(f"API memory_profile error: {e}", exc_info=True)
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+async def api_memory_forget(request: Request):
+    """REST API endpoint to forget (delete/archive) a memory.
+
+    POST /api/memory/forget
+    Body: {"memory_id": "...", "hard_delete": false}
+    """
+    try:
+        body = await request.json()
+        memory_id = body.get("memory_id")
+        if not memory_id:
+            return JSONResponse({"error": "memory_id is required"}, status_code=400)
+
+        hard_delete = body.get("hard_delete", False)
+
+        memory = get_memory()
+        await memory.delete_async(memory_id, hard=hard_delete)
+
+        action = "deleted" if hard_delete else "archived"
+        return JSONResponse({
+            "success": True,
+            "message": f"Memory {memory_id} {action}",
+            "memory_id": memory_id,
+        })
+    except Exception as e:
+        logger.error(f"API memory_forget error: {e}")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+async def api_memory_update(request: Request):
+    """REST API endpoint to update a memory.
+
+    POST /api/memory/update
+    Body: {"memory_id": "...", "content": "..."}
+    """
+    try:
+        body = await request.json()
+        memory_id = body.get("memory_id")
+        content = body.get("content")
+
+        if not memory_id:
+            return JSONResponse({"error": "memory_id is required"}, status_code=400)
+        if not content:
+            return JSONResponse({"error": "content is required"}, status_code=400)
+
+        memory = get_memory()
+        await memory.update_async(memory_id, content)
+
+        return JSONResponse({
+            "success": True,
+            "message": f"Memory {memory_id} updated",
+            "memory_id": memory_id,
+        })
+    except Exception as e:
+        logger.error(f"API memory_update error: {e}")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+async def api_memory_maintenance(request: Request):
+    """REST API endpoint to run maintenance jobs.
+
+    POST /api/memory/maintenance
+    Body: {"job_type": "consolidation|summarization|reindex|all"}
+    """
+    try:
+        body = await request.json()
+        job_type = body.get("job_type", "consolidation")
+
+        scheduler = get_scheduler()
+
+        if job_type == "all":
+            results = {}
+            for jt in ["consolidation", "summarization", "reindex"]:
+                results[jt] = scheduler.run_now(jt)
+            return JSONResponse({
+                "success": True,
+                "job_type": "all",
+                "results": results,
+            })
+        else:
+            result = scheduler.run_now(job_type)
+            return JSONResponse({
+                "success": True,
+                "job_type": job_type,
+                "results": result,
+            })
+    except Exception as e:
+        logger.error(f"API memory_maintenance error: {e}")
+        return JSONResponse({
+            "success": False,
+            "job_type": job_type,
+            "error": str(e),
+        }, status_code=500)
+
+
+async def api_memory_status(request: Request):
+    """REST API endpoint to get system status.
+
+    GET /api/memory/status
+    """
+    try:
+        memory = get_memory()
+        config = memory.config
+
+        # Get actual scheduler state from global scheduler (not per-user config)
+        scheduler_running = False
+        scheduler_jobs = []
+        if "default" in _scheduler_cache:
+            scheduler = _scheduler_cache["default"]
+            scheduler_running = scheduler.is_running
+            if scheduler_running:
+                scheduler_jobs = scheduler.get_jobs()
+
+        status = {
+            "status": "healthy",
+            "user_id": config.user_id,
+            "team_id": config.team_id,
+            "storage_dir": str(config.storage_dir),  # Convert Path to string for JSON
+            "backend": config.memory_backend,
+            "vector_store": "pgvector",  # Using native pgvector
+            "graph_store": "postgresql" if config.enable_graph else None,
+            "scheduler": scheduler_running,
+            "scheduler_jobs": scheduler_jobs,
+            "query_synthesis": config.enable_query_synthesis,
+            "relevance_threshold": config.relevance_threshold,
+            "max_tokens": config.default_max_tokens,
+        }
+
+        # Add graph stats if enabled
+        if memory.graph_store:
+            stats = memory.get_graph_stats()
+            status["graph_stats"] = stats
+
+        return JSONResponse(status)
+    except Exception as e:
+        logger.error(f"API memory_status error: {e}")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+async def api_memory_summary_personal(request: Request):
+    """REST API endpoint to get personal memory summary.
+
+    GET /api/memory/summary/personal
+    """
+    try:
+        memory = get_memory()
+        # Use efficient GROUP BY query instead of N+1 queries
+        categories = await memory.get_category_counts_async(scope="personal")
+        total = sum(categories.values())
+
+        return JSONResponse({
+            "success": True,
+            "total": total,
+            "categories": categories,
+        })
+    except Exception as e:
+        logger.error(f"API memory_summary_personal error: {e}")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+async def api_memory_summary_shared(request: Request):
+    """REST API endpoint to get shared memory summary.
+
+    GET /api/memory/summary/shared
+    """
+    try:
+        memory = get_memory()
+
+        if not memory.config.team_id:
+            return JSONResponse({
+                "success": True,
+                "total": 0,
+                "categories": {},
+                "message": "No team configured",
+            })
+
+        # Use efficient GROUP BY query instead of N+1 queries
+        categories = await memory.get_category_counts_async(scope="shared")
+        total = sum(categories.values())
+
+        return JSONResponse({
+            "success": True,
+            "total": total,
+            "categories": categories,
+            "team_id": memory.config.team_id,
+        })
+    except Exception as e:
+        logger.error(f"API memory_summary_shared error: {e}")
+        return JSONResponse({"error": str(e)}, status_code=500)

@@ -12,7 +12,7 @@ from typing import Any
 
 # Configuration - Direct REST API via docker exec
 API_URL = "http://localhost:8765"
-API_KEY = "cems_ak_1a33266736f39c2393a515b8af9cc687520f0478cfa3a8a7"
+API_KEY = "cems_ak_a5aa436d41fa1eec3ae063e9c1451aabbe9359953679cdd3"
 CONTAINER_NAME = "cems-server"
 
 

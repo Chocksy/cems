@@ -1,0 +1,1599 @@
+{
+  "summary": {
+    "total_questions": 100,
+    "recall_any_rate": 0.0,
+    "recall_all_rate": 0.0,
+    "avg_search_time_ms": 0.92,
+    "by_type": {
+      "temporal-reasoning": {
+        "total": 54,
+        "recall_any": 0,
+        "recall_all": 0
+      },
+      "multi-session": {
+        "total": 46,
+        "recall_any": 0,
+        "recall_all": 0
+      }
+    },
+    "elapsed_seconds": 0.5637898445129395
+  },
+  "results": [
+    {
+      "question_id": "gpt4_2655b836",
+      "question_type": "temporal-reasoning",
+      "question": "What was the first issue I had with my new car after its first service?",
+      "ground_truth": "GPS system not functioning correctly",
+      "retrieved_session_ids": [],
+      "correct_session_ids": [
+        "answer_4be1b6b4_2",
+        "answer_4be1b6b4_3",
+        "answer_4be1b6b4_1"
+      ],
+      "recall_any": false,
+      "recall_all": false,
+      "search_time_ms": 4,
+      "mode_used": "unknown"
+    },
+    {
+      "question_id": "gpt4_2487a7cb",
+      "question_type": "temporal-reasoning",
+      "question": "Which event did I attend first, the 'Effective Time Management' workshop or the 'Data Analysis using Python' webinar?",
+      "ground_truth": "'Data Analysis using Python' webinar",
+      "retrieved_session_ids": [],
+      "correct_session_ids": [
+        "answer_1c6b85ea_1",
+        "answer_1c6b85ea_2"
+      ],
+      "recall_any": false,
+      "recall_all": false,
+      "search_time_ms": 8,
+      "mode_used": "unknown"
+    },
+    {
+      "question_id": "gpt4_76048e76",
+      "question_type": "temporal-reasoning",
+      "question": "Which vehicle did I take care of first in February, the bike or the car?",
+      "ground_truth": "bike",
+      "retrieved_session_ids": [],
+      "correct_session_ids": [
+        "answer_b535969f_2",
+        "answer_b535969f_1"
+      ],
+      "recall_any": false,
+      "recall_all": false,
+      "search_time_ms": 6,
+      "mode_used": "unknown"
+    },
+    {
+      "question_id": "gpt4_2312f94c",
+      "question_type": "temporal-reasoning",
+      "question": "Which device did I got first, the Samsung Galaxy S22 or the Dell XPS 13?",
+      "ground_truth": "Samsung Galaxy S22",
+      "retrieved_session_ids": [],
+      "correct_session_ids": [
+        "answer_5328c3c2_1",
+        "answer_5328c3c2_2"
+      ],
+      "recall_any": false,
+      "recall_all": false,
+      "search_time_ms": 1,
+      "mode_used": "unknown"
+    },
+    {
+      "question_id": "0bb5a684",
+      "question_type": "temporal-reasoning",
+      "question": "How many days before the team meeting I was preparing for did I attend the workshop on 'Effective Communication in the Workplace'?",
+      "ground_truth": "7 days. 8 days (including the last day) is also acceptable.",
+      "retrieved_session_ids": [],
+      "correct_session_ids": [
+        "answer_e936197f_1",
+        "answer_e936197f_2"
+      ],
+      "recall_any": false,
+      "recall_all": false,
+      "search_time_ms": 1,
+      "mode_used": "unknown"
+    },
+    {
+      "question_id": "08f4fc43",
+      "question_type": "temporal-reasoning",
+      "question": "How many days had passed between the Sunday mass at St. Mary's Church and the Ash Wednesday service at the cathedral?",
+      "ground_truth": "30 days. 31 days (including the last day) is also acceptable.",
+      "retrieved_session_ids": [],
+      "correct_session_ids": [
+        "answer_6ea1541e_2",
+        "answer_6ea1541e_1"
+      ],
+      "recall_any": false,
+      "recall_all": false,
+      "search_time_ms": 0,
+      "mode_used": "unknown"
+    },
+    {
+      "question_id": "2c63a862",
+      "question_type": "temporal-reasoning",
+      "question": "How many days did it take for me to find a house I loved after starting to work with Rachel?",
+      "ground_truth": "14 days. 15 days (including the last day) is also acceptable.",
+      "retrieved_session_ids": [],
+      "correct_session_ids": [
+        "answer_d39b7977_1",
+        "answer_d39b7977_2"
+      ],
+      "recall_any": false,
+      "recall_all": false,
+      "search_time_ms": 1,
+      "mode_used": "unknown"
+    },
+    {
+      "question_id": "gpt4_385a5000",
+      "question_type": "temporal-reasoning",
+      "question": "Which seeds were started first, the tomatoes or the marigolds?",
+      "ground_truth": "Tomatoes",
+      "retrieved_session_ids": [],
+      "correct_session_ids": [
+        "answer_7a4a93f1_2",
+        "answer_7a4a93f1_1"
+      ],
+      "recall_any": false,
+      "recall_all": false,
+      "search_time_ms": 0,
+      "mode_used": "unknown"
+    },
+    {
+      "question_id": "2a1811e2",
+      "question_type": "temporal-reasoning",
+      "question": "How many days had passed between the Hindu festival of Holi and the Sunday mass at St. Mary's Church?",
+      "ground_truth": "21 days. 22 days (including the last day) is also acceptable.",
+      "retrieved_session_ids": [],
+      "correct_session_ids": [
+        "answer_1cc3cd0c_2",
+        "answer_1cc3cd0c_1"
+      ],
+      "recall_any": false,
+      "recall_all": false,
+      "search_time_ms": 1,
+      "mode_used": "unknown"
+    },
+    {
+      "question_id": "bbf86515",
+      "question_type": "temporal-reasoning",
+      "question": "How many days before the 'Rack Fest' did I participate in the 'Turbocharged Tuesdays' event?",
+      "ground_truth": "4 days.",
+      "retrieved_session_ids": [],
+      "correct_session_ids": [
+        "answer_b3763b6b_1",
+        "answer_b3763b6b_2"
+      ],
+      "recall_any": false,
+      "recall_all": false,
+      "search_time_ms": 1,
+      "mode_used": "unknown"
+    },
+    {
+      "question_id": "gpt4_5dcc0aab",
+      "question_type": "temporal-reasoning",
+      "question": "Which pair of shoes did I clean last month?",
+      "ground_truth": "white Adidas sneakers",
+      "retrieved_session_ids": [],
+      "correct_session_ids": [
+        "answer_099c1b6c_3",
+        "answer_099c1b6c_1",
+        "answer_099c1b6c_2",
+        "answer_099c1b6c_4",
+        "answer_099c1b6c_5"
+      ],
+      "recall_any": false,
+      "recall_all": false,
+      "search_time_ms": 0,
+      "mode_used": "unknown"
+    },
+    {
+      "question_id": "gpt4_0b2f1d21",
+      "question_type": "temporal-reasoning",
+      "question": "Which event happened first, the purchase of the coffee maker or the malfunction of the stand mixer?",
+      "ground_truth": "The malfunction of the stand mixer",
+      "retrieved_session_ids": [],
+      "correct_session_ids": [
+        "answer_c4e5d969_1",
+        "answer_c4e5d969_2"
+      ],
+      "recall_any": false,
+      "recall_all": false,
+      "search_time_ms": 0,
+      "mode_used": "unknown"
+    },
+    {
+      "question_id": "f0853d11",
+      "question_type": "temporal-reasoning",
+      "question": "How many days had passed between the 'Walk for Hunger' event and the 'Coastal Cleanup' event?",
+      "ground_truth": "14 days. 8 days (including the last day) is also acceptable.",
+      "retrieved_session_ids": [],
+      "correct_session_ids": [
+        "answer_932ea3bf_2",
+        "answer_932ea3bf_1"
+      ],
+      "recall_any": false,
+      "recall_all": false,
+      "search_time_ms": 1,
+      "mode_used": "unknown"
+    },
+    {
+      "question_id": "gpt4_6ed717ea",
+      "question_type": "temporal-reasoning",
+      "question": "Which item did I purchase first, the dog bed for Max or the training pads for Luna?",
+      "ground_truth": "Training pads for Luna",
+      "retrieved_session_ids": [],
+      "correct_session_ids": [
+        "answer_d50a8a33_2",
+        "answer_d50a8a33_1"
+      ],
+      "recall_any": false,
+      "recall_all": false,
+      "search_time_ms": 1,
+      "mode_used": "unknown"
+    },
+    {
+      "question_id": "gpt4_70e84552",
+      "question_type": "temporal-reasoning",
+      "question": "Which task did I complete first, fixing the fence or trimming the goats' hooves?",
+      "ground_truth": "Fixing the fence",
+      "retrieved_session_ids": [],
+      "correct_session_ids": [
+        "answer_b3070ec4_1",
+        "answer_b3070ec4_2"
+      ],
+      "recall_any": false,
+      "recall_all": false,
+      "search_time_ms": 0,
+      "mode_used": "unknown"
+    },
+    {
+      "question_id": "a3838d2b",
+      "question_type": "temporal-reasoning",
+      "question": "How many charity events did I participate in before the 'Run for the Cure' event?",
+      "ground_truth": "4",
+      "retrieved_session_ids": [],
+      "correct_session_ids": [
+        "answer_4ffa04a2_1",
+        "answer_4ffa04a2_6",
+        "answer_4ffa04a2_5",
+        "answer_4ffa04a2_4",
+        "answer_4ffa04a2_2",
+        "answer_4ffa04a2_3"
+      ],
+      "recall_any": false,
+      "recall_all": false,
+      "search_time_ms": 0,
+      "mode_used": "unknown"
+    },
+    {
+      "question_id": "gpt4_93159ced",
+      "question_type": "temporal-reasoning",
+      "question": "How long have I been working before I started my current job at NovaTech?",
+      "ground_truth": "4 years and 9 months",
+      "retrieved_session_ids": [],
+      "correct_session_ids": [
+        "answer_e5131a1b_1",
+        "answer_e5131a1b_2"
+      ],
+      "recall_any": false,
+      "recall_all": false,
+      "search_time_ms": 0,
+      "mode_used": "unknown"
+    },
+    {
+      "question_id": "gpt4_2d58bcd6",
+      "question_type": "temporal-reasoning",
+      "question": "Which book did I finish reading first, 'The Hate U Give' or 'The Nightingale'?",
+      "ground_truth": "'The Hate U Give'",
+      "retrieved_session_ids": [],
+      "correct_session_ids": [
+        "answer_3e11e0ae_2",
+        "answer_3e11e0ae_1"
+      ],
+      "recall_any": false,
+      "recall_all": false,
+      "search_time_ms": 1,
+      "mode_used": "unknown"
+    },
+    {
+      "question_id": "gpt4_65aabe59",
+      "question_type": "temporal-reasoning",
+      "question": "Which device did I set up first, the smart thermostat or the mesh network system?",
+      "ground_truth": "Smart thermostat",
+      "retrieved_session_ids": [],
+      "correct_session_ids": [
+        "answer_30dfe889_2",
+        "answer_30dfe889_1"
+      ],
+      "recall_any": false,
+      "recall_all": false,
+      "search_time_ms": 1,
+      "mode_used": "unknown"
+    },
+    {
+      "question_id": "982b5123",
+      "question_type": "temporal-reasoning",
+      "question": "How many months ago did I book the Airbnb in San Francisco?",
+      "ground_truth": "Five months ago",
+      "retrieved_session_ids": [],
+      "correct_session_ids": [
+        "answer_ab603dd5_2",
+        "answer_ab603dd5_1"
+      ],
+      "recall_any": false,
+      "recall_all": false,
+      "search_time_ms": 1,
+      "mode_used": "unknown"
+    },
+    {
+      "question_id": "b9cfe692",
+      "question_type": "temporal-reasoning",
+      "question": "How long did I take to finish 'The Seven Husbands of Evelyn Hugo' and 'The Nightingale' combined?",
+      "ground_truth": "5.5 weeks",
+      "retrieved_session_ids": [],
+      "correct_session_ids": [
+        "answer_5e3bb940_1",
+        "answer_5e3bb940_3",
+        "answer_5e3bb940_2"
+      ],
+      "recall_any": false,
+      "recall_all": false,
+      "search_time_ms": 0,
+      "mode_used": "unknown"
+    },
+    {
+      "question_id": "gpt4_4edbafa2",
+      "question_type": "temporal-reasoning",
+      "question": "What was the date on which I attended the first BBQ event in June?",
+      "ground_truth": "June 3rd",
+      "retrieved_session_ids": [],
+      "correct_session_ids": [
+        "answer_0a00c163_1",
+        "answer_0a00c163_2"
+      ],
+      "recall_any": false,
+      "recall_all": false,
+      "search_time_ms": 0,
+      "mode_used": "unknown"
+    },
+    {
+      "question_id": "c8090214",
+      "question_type": "temporal-reasoning",
+      "question": "How many days before I bought the iPhone 13 Pro did I attend the Holiday Market?",
+      "ground_truth": "7 days. 8 days (including the last day) is also acceptable.",
+      "retrieved_session_ids": [],
+      "correct_session_ids": [
+        "answer_70dc7d08_1",
+        "answer_70dc7d08_2"
+      ],
+      "recall_any": false,
+      "recall_all": false,
+      "search_time_ms": 1,
+      "mode_used": "unknown"
+    },
+    {
+      "question_id": "gpt4_483dd43c",
+      "question_type": "temporal-reasoning",
+      "question": "Which show did I start watching first, 'The Crown' or 'Game of Thrones'?",
+      "ground_truth": "'Game of Thrones'",
+      "retrieved_session_ids": [],
+      "correct_session_ids": [
+        "answer_fb793c87_2",
+        "answer_fb793c87_1"
+      ],
+      "recall_any": false,
+      "recall_all": false,
+      "search_time_ms": 1,
+      "mode_used": "unknown"
+    },
+    {
+      "question_id": "e4e14d04",
+      "question_type": "temporal-reasoning",
+      "question": "How long had I been a member of 'Book Lovers Unite' when I attended the meetup?",
+      "ground_truth": "Two weeks",
+      "retrieved_session_ids": [],
+      "correct_session_ids": [
+        "answer_cf425855_2",
+        "answer_cf425855_1"
+      ],
+      "recall_any": false,
+      "recall_all": false,
+      "search_time_ms": 1,
+      "mode_used": "unknown"
+    },
+    {
+      "question_id": "c9f37c46",
+      "question_type": "temporal-reasoning",
+      "question": "How long had I been watching stand-up comedy specials regularly when I attended the open mic night at the local comedy club?",
+      "ground_truth": "2 months",
+      "retrieved_session_ids": [],
+      "correct_session_ids": [
+        "answer_cdba3d9f_1",
+        "answer_cdba3d9f_2"
+      ],
+      "recall_any": false,
+      "recall_all": false,
+      "search_time_ms": 1,
+      "mode_used": "unknown"
+    },
+    {
+      "question_id": "gpt4_2c50253f",
+      "question_type": "temporal-reasoning",
+      "question": "What time do I wake up on Tuesdays and Thursdays?",
+      "ground_truth": "6:45 AM",
+      "retrieved_session_ids": [],
+      "correct_session_ids": [
+        "answer_9af4e346_1",
+        "answer_9af4e346_2"
+      ],
+      "recall_any": false,
+      "recall_all": false,
+      "search_time_ms": 0,
+      "mode_used": "unknown"
+    },
+    {
+      "question_id": "dcfa8644",
+      "question_type": "temporal-reasoning",
+      "question": "How many days had passed since I bought my Adidas running shoes when I realized one of the shoelaces on my old Converse sneakers had broken?",
+      "ground_truth": "14 days. 15 days (including the last day) is also acceptable.",
+      "retrieved_session_ids": [],
+      "correct_session_ids": [
+        "answer_5e3eeb12_1",
+        "answer_5e3eeb12_2"
+      ],
+      "recall_any": false,
+      "recall_all": false,
+      "search_time_ms": 1,
+      "mode_used": "unknown"
+    },
+    {
+      "question_id": "gpt4_b4a80587",
+      "question_type": "temporal-reasoning",
+      "question": "Which event happened first, the road trip to the coast or the arrival of the new prime lens?",
+      "ground_truth": "The arrival of the new prime lens",
+      "retrieved_session_ids": [],
+      "correct_session_ids": [
+        "answer_b9d9150e_2",
+        "answer_b9d9150e_1"
+      ],
+      "recall_any": false,
+      "recall_all": false,
+      "search_time_ms": 1,
+      "mode_used": "unknown"
+    },
+    {
+      "question_id": "gpt4_9a159967",
+      "question_type": "temporal-reasoning",
+      "question": "Which airline did I fly with the most in March and April?",
+      "ground_truth": "United Airlines",
+      "retrieved_session_ids": [],
+      "correct_session_ids": [
+        "answer_8a42fedf_1",
+        "answer_8a42fedf_3",
+        "answer_8a42fedf_2"
+      ],
+      "recall_any": false,
+      "recall_all": false,
+      "search_time_ms": 1,
+      "mode_used": "unknown"
+    },
+    {
+      "question_id": "cc6d1ec1",
+      "question_type": "temporal-reasoning",
+      "question": "How long had I been bird watching when I attended the bird watching workshop?",
+      "ground_truth": "Two months",
+      "retrieved_session_ids": [],
+      "correct_session_ids": [
+        "answer_be73098b_1",
+        "answer_be73098b_2"
+      ],
+      "recall_any": false,
+      "recall_all": false,
+      "search_time_ms": 1,
+      "mode_used": "unknown"
+    },
+    {
+      "question_id": "gpt4_8c8961ae",
+      "question_type": "temporal-reasoning",
+      "question": "Which trip did I take first, the one to Europe with family or the solo trip to Thailand?",
+      "ground_truth": "The solo trip to Thailand",
+      "retrieved_session_ids": [],
+      "correct_session_ids": [
+        "answer_72d9aa58_2",
+        "answer_72d9aa58_1"
+      ],
+      "recall_any": false,
+      "recall_all": false,
+      "search_time_ms": 1,
+      "mode_used": "unknown"
+    },
+    {
+      "question_id": "gpt4_d9af6064",
+      "question_type": "temporal-reasoning",
+      "question": "Which device did I set up first, the smart thermostat or the new router?",
+      "ground_truth": "new router",
+      "retrieved_session_ids": [],
+      "correct_session_ids": [
+        "answer_da704e79_1",
+        "answer_da704e79_2"
+      ],
+      "recall_any": false,
+      "recall_all": false,
+      "search_time_ms": 1,
+      "mode_used": "unknown"
+    },
+    {
+      "question_id": "gpt4_7de946e7",
+      "question_type": "temporal-reasoning",
+      "question": "Which health issue did I deal with first, the persistent cough or the skin tag removal?",
+      "ground_truth": "Persistent cough",
+      "retrieved_session_ids": [],
+      "correct_session_ids": [
+        "answer_6a78e959_1",
+        "answer_6a78e959_2"
+      ],
+      "recall_any": false,
+      "recall_all": false,
+      "search_time_ms": 0,
+      "mode_used": "unknown"
+    },
+    {
+      "question_id": "d01c6aa8",
+      "question_type": "temporal-reasoning",
+      "question": "How old was I when I moved to the United States?",
+      "ground_truth": "27",
+      "retrieved_session_ids": [],
+      "correct_session_ids": [
+        "answer_991d55e5_1",
+        "answer_991d55e5_2"
+      ],
+      "recall_any": false,
+      "recall_all": false,
+      "search_time_ms": 2,
+      "mode_used": "unknown"
+    },
+    {
+      "question_id": "993da5e2",
+      "question_type": "temporal-reasoning",
+      "question": "How long had I been using the new area rug when I rearranged my living room furniture?",
+      "ground_truth": "One week. Answers ranging from 7 days to 10 days are also acceptable.",
+      "retrieved_session_ids": [],
+      "correct_session_ids": [
+        "answer_54f0d6f9_2",
+        "answer_54f0d6f9_1"
+      ],
+      "recall_any": false,
+      "recall_all": false,
+      "search_time_ms": 0,
+      "mode_used": "unknown"
+    },
+    {
+      "question_id": "a3045048",
+      "question_type": "temporal-reasoning",
+      "question": "How many days before my best friend's birthday party did I order her gift?",
+      "ground_truth": "7 days. 8 days (including the last day) is also acceptable.",
+      "retrieved_session_ids": [],
+      "correct_session_ids": [
+        "answer_016f6bd4_1",
+        "answer_016f6bd4_2"
+      ],
+      "recall_any": false,
+      "recall_all": false,
+      "search_time_ms": 1,
+      "mode_used": "unknown"
+    },
+    {
+      "question_id": "gpt4_d31cdae3",
+      "question_type": "temporal-reasoning",
+      "question": "Which trip did the narrator take first, the solo trip to Europe or the family road trip across the American Southwest?",
+      "ground_truth": "The family road trip across the American Southwest",
+      "retrieved_session_ids": [],
+      "correct_session_ids": [
+        "answer_8464304d_1",
+        "answer_8464304d_2"
+      ],
+      "recall_any": false,
+      "recall_all": false,
+      "search_time_ms": 1,
+      "mode_used": "unknown"
+    },
+    {
+      "question_id": "gpt4_cd90e484",
+      "question_type": "temporal-reasoning",
+      "question": "How long did I use my new binoculars before I saw the American goldfinches returning to the area?",
+      "ground_truth": "Two weeks",
+      "retrieved_session_ids": [],
+      "correct_session_ids": [
+        "answer_aa930b56_2",
+        "answer_aa930b56_1"
+      ],
+      "recall_any": false,
+      "recall_all": false,
+      "search_time_ms": 2,
+      "mode_used": "unknown"
+    },
+    {
+      "question_id": "gpt4_88806d6e",
+      "question_type": "temporal-reasoning",
+      "question": "Who did I meet first, Mark and Sarah or Tom?",
+      "ground_truth": "Tom",
+      "retrieved_session_ids": [],
+      "correct_session_ids": [
+        "answer_e60a93ff_2",
+        "answer_e60a93ff_1"
+      ],
+      "recall_any": false,
+      "recall_all": false,
+      "search_time_ms": 1,
+      "mode_used": "unknown"
+    },
+    {
+      "question_id": "gpt4_4cd9eba1",
+      "question_type": "temporal-reasoning",
+      "question": "How many weeks have I been accepted into the exchange program when I started attending the pre-departure orientation sessions?",
+      "ground_truth": "one week",
+      "retrieved_session_ids": [],
+      "correct_session_ids": [
+        "answer_5fcca8bc_2",
+        "answer_5fcca8bc_1"
+      ],
+      "recall_any": false,
+      "recall_all": false,
+      "search_time_ms": 1,
+      "mode_used": "unknown"
+    },
+    {
+      "question_id": "gpt4_93f6379c",
+      "question_type": "temporal-reasoning",
+      "question": "Which group did I join first, 'Page Turners' or 'Marketing Professionals'?",
+      "ground_truth": "Page Turners",
+      "retrieved_session_ids": [],
+      "correct_session_ids": [
+        "answer_544fe66c_2",
+        "answer_544fe66c_1",
+        "answer_544fe66c_3"
+      ],
+      "recall_any": false,
+      "recall_all": false,
+      "search_time_ms": 0,
+      "mode_used": "unknown"
+    },
+    {
+      "question_id": "b29f3365",
+      "question_type": "temporal-reasoning",
+      "question": "How long had I been taking guitar lessons when I bought the new guitar amp?",
+      "ground_truth": "Four weeks",
+      "retrieved_session_ids": [],
+      "correct_session_ids": [
+        "answer_436d4309_1",
+        "answer_436d4309_2"
+      ],
+      "recall_any": false,
+      "recall_all": false,
+      "search_time_ms": 1,
+      "mode_used": "unknown"
+    },
+    {
+      "question_id": "gpt4_2f56ae70",
+      "question_type": "temporal-reasoning",
+      "question": "Which streaming service did I start using most recently?",
+      "ground_truth": "Disney+",
+      "retrieved_session_ids": [],
+      "correct_session_ids": [
+        "answer_7a36e820_2",
+        "answer_7a36e820_1",
+        "answer_7a36e820_3"
+      ],
+      "recall_any": false,
+      "recall_all": false,
+      "search_time_ms": 1,
+      "mode_used": "unknown"
+    },
+    {
+      "question_id": "6613b389",
+      "question_type": "temporal-reasoning",
+      "question": "How many months before my anniversary did Rachel get engaged?",
+      "ground_truth": "2",
+      "retrieved_session_ids": [],
+      "correct_session_ids": [
+        "answer_aaf71ce2_2",
+        "answer_aaf71ce2_1",
+        "answer_aaf71ce2_3"
+      ],
+      "recall_any": false,
+      "recall_all": false,
+      "search_time_ms": 1,
+      "mode_used": "unknown"
+    },
+    {
+      "question_id": "gpt4_78cf46a3",
+      "question_type": "temporal-reasoning",
+      "question": "Which event happened first, the narrator losing their phone charger or the narrator receiving their new phone case?",
+      "ground_truth": "Receiving the new phone case",
+      "retrieved_session_ids": [],
+      "correct_session_ids": [
+        "answer_5a78688d_2",
+        "answer_5a78688d_1"
+      ],
+      "recall_any": false,
+      "recall_all": false,
+      "search_time_ms": 0,
+      "mode_used": "unknown"
+    },
+    {
+      "question_id": "gpt4_0a05b494",
+      "question_type": "temporal-reasoning",
+      "question": "Who did I meet first, the woman selling jam at the farmer's market or the tourist from Australia?",
+      "ground_truth": "the woman selling jam at the farmer's market",
+      "retrieved_session_ids": [],
+      "correct_session_ids": [
+        "answer_a68db5db_2",
+        "answer_a68db5db_1"
+      ],
+      "recall_any": false,
+      "recall_all": false,
+      "search_time_ms": 1,
+      "mode_used": "unknown"
+    },
+    {
+      "question_id": "gpt4_1a1dc16d",
+      "question_type": "temporal-reasoning",
+      "question": "Which event happened first, the meeting with Rachel or the pride parade?",
+      "ground_truth": "The meeting with Rachel",
+      "retrieved_session_ids": [],
+      "correct_session_ids": [
+        "answer_faad7d7a_2",
+        "answer_faad7d7a_1"
+      ],
+      "recall_any": false,
+      "recall_all": false,
+      "search_time_ms": 1,
+      "mode_used": "unknown"
+    },
+    {
+      "question_id": "gpt4_2f584639",
+      "question_type": "temporal-reasoning",
+      "question": "Which gift did I buy first, the necklace for my sister or the photo album for my mom?",
+      "ground_truth": "the photo album for my mom",
+      "retrieved_session_ids": [],
+      "correct_session_ids": [
+        "answer_11a8f823_2",
+        "answer_11a8f823_1"
+      ],
+      "recall_any": false,
+      "recall_all": false,
+      "search_time_ms": 0,
+      "mode_used": "unknown"
+    },
+    {
+      "question_id": "gpt4_213fd887",
+      "question_type": "temporal-reasoning",
+      "question": "Which event did I participate in first, the volleyball league or the charity 5K run to raise money for a local children's hospital?",
+      "ground_truth": "volleyball league",
+      "retrieved_session_ids": [],
+      "correct_session_ids": [
+        "answer_53582e7e_1",
+        "answer_53582e7e_2"
+      ],
+      "recall_any": false,
+      "recall_all": false,
+      "search_time_ms": 1,
+      "mode_used": "unknown"
+    },
+    {
+      "question_id": "gpt4_5438fa52",
+      "question_type": "temporal-reasoning",
+      "question": "Which event happened first, my attendance at a cultural festival or the start of my Spanish classes?",
+      "ground_truth": "Spanish classes",
+      "retrieved_session_ids": [],
+      "correct_session_ids": [
+        "answer_b10f3828_2",
+        "answer_b10f3828_1"
+      ],
+      "recall_any": false,
+      "recall_all": false,
+      "search_time_ms": 1,
+      "mode_used": "unknown"
+    },
+    {
+      "question_id": "gpt4_c27434e8",
+      "question_type": "temporal-reasoning",
+      "question": "Which project did I start first, the Ferrari model or the Japanese Zero fighter plane model?",
+      "ground_truth": "Japanese Zero fighter plane model",
+      "retrieved_session_ids": [],
+      "correct_session_ids": [
+        "answer_d8e33f5c_1",
+        "answer_d8e33f5c_2"
+      ],
+      "recall_any": false,
+      "recall_all": false,
+      "search_time_ms": 1,
+      "mode_used": "unknown"
+    },
+    {
+      "question_id": "gpt4_fe651585",
+      "question_type": "temporal-reasoning",
+      "question": "Who became a parent first, Rachel or Alex?",
+      "ground_truth": "Alex",
+      "retrieved_session_ids": [],
+      "correct_session_ids": [
+        "answer_65600ff6_1",
+        "answer_65600ff6_2"
+      ],
+      "recall_any": false,
+      "recall_all": false,
+      "search_time_ms": 1,
+      "mode_used": "unknown"
+    },
+    {
+      "question_id": "8c18457d",
+      "question_type": "temporal-reasoning",
+      "question": "How many days had passed between the day I bought a gift for my brother's graduation ceremony and the day I bought a birthday gift for my best friend?",
+      "ground_truth": "7 days. 8 days (including the last day) is also acceptable.",
+      "retrieved_session_ids": [],
+      "correct_session_ids": [
+        "answer_124f5dc3_2",
+        "answer_124f5dc3_1"
+      ],
+      "recall_any": false,
+      "recall_all": false,
+      "search_time_ms": 1,
+      "mode_used": "unknown"
+    },
+    {
+      "question_id": "0a995998",
+      "question_type": "multi-session",
+      "question": "How many items of clothing do I need to pick up or return from a store?",
+      "ground_truth": "3",
+      "retrieved_session_ids": [],
+      "correct_session_ids": [
+        "answer_afa9873b_2",
+        "answer_afa9873b_3",
+        "answer_afa9873b_1"
+      ],
+      "recall_any": false,
+      "recall_all": false,
+      "search_time_ms": 1,
+      "mode_used": "unknown"
+    },
+    {
+      "question_id": "6d550036",
+      "question_type": "multi-session",
+      "question": "How many projects have I led or am currently leading?",
+      "ground_truth": "2",
+      "retrieved_session_ids": [],
+      "correct_session_ids": [
+        "answer_ec904b3c_4",
+        "answer_ec904b3c_2",
+        "answer_ec904b3c_1",
+        "answer_ec904b3c_3"
+      ],
+      "recall_any": false,
+      "recall_all": false,
+      "search_time_ms": 1,
+      "mode_used": "unknown"
+    },
+    {
+      "question_id": "gpt4_59c863d7",
+      "question_type": "multi-session",
+      "question": "How many model kits have I worked on or bought?",
+      "ground_truth": "I have worked on or bought five model kits. The scales of the models are: Revell F-15 Eagle (scale not mentioned), Tamiya 1/48 scale Spitfire Mk.V, 1/16 scale German Tiger I tank, 1/72 scale B-29 bomber, and 1/24 scale '69 Camaro.",
+      "retrieved_session_ids": [],
+      "correct_session_ids": [
+        "answer_593bdffd_1",
+        "answer_593bdffd_2",
+        "answer_593bdffd_3",
+        "answer_593bdffd_4"
+      ],
+      "recall_any": false,
+      "recall_all": false,
+      "search_time_ms": 1,
+      "mode_used": "unknown"
+    },
+    {
+      "question_id": "b5ef892d",
+      "question_type": "multi-session",
+      "question": "How many days did I spend on camping trips in the United States this year?",
+      "ground_truth": "8 days.",
+      "retrieved_session_ids": [],
+      "correct_session_ids": [
+        "answer_a8b4290f_2",
+        "answer_a8b4290f_3",
+        "answer_a8b4290f_1"
+      ],
+      "recall_any": false,
+      "recall_all": false,
+      "search_time_ms": 1,
+      "mode_used": "unknown"
+    },
+    {
+      "question_id": "e831120c",
+      "question_type": "multi-session",
+      "question": "How many weeks did it take me to watch all the Marvel Cinematic Universe movies and the main Star Wars films?",
+      "ground_truth": "3.5 weeks",
+      "retrieved_session_ids": [],
+      "correct_session_ids": [
+        "answer_86c505e7_1",
+        "answer_86c505e7_2"
+      ],
+      "recall_any": false,
+      "recall_all": false,
+      "search_time_ms": 1,
+      "mode_used": "unknown"
+    },
+    {
+      "question_id": "3a704032",
+      "question_type": "multi-session",
+      "question": "How many plants did I acquire in the last month?",
+      "ground_truth": "3",
+      "retrieved_session_ids": [],
+      "correct_session_ids": [
+        "answer_c2204106_2",
+        "answer_c2204106_3",
+        "answer_c2204106_1"
+      ],
+      "recall_any": false,
+      "recall_all": false,
+      "search_time_ms": 1,
+      "mode_used": "unknown"
+    },
+    {
+      "question_id": "gpt4_d84a3211",
+      "question_type": "multi-session",
+      "question": "How much total money have I spent on bike-related expenses since the start of the year?",
+      "ground_truth": "$185",
+      "retrieved_session_ids": [],
+      "correct_session_ids": [
+        "answer_2880eb6c_3",
+        "answer_2880eb6c_1",
+        "answer_2880eb6c_4",
+        "answer_2880eb6c_2"
+      ],
+      "recall_any": false,
+      "recall_all": false,
+      "search_time_ms": 1,
+      "mode_used": "unknown"
+    },
+    {
+      "question_id": "aae3761f",
+      "question_type": "multi-session",
+      "question": "How many hours in total did I spend driving to my three road trip destinations combined?",
+      "ground_truth": "15 hours for getting to the three destinations (or 30 hours for the round trip)",
+      "retrieved_session_ids": [],
+      "correct_session_ids": [
+        "answer_526354c8_1",
+        "answer_526354c8_2",
+        "answer_526354c8_3"
+      ],
+      "recall_any": false,
+      "recall_all": false,
+      "search_time_ms": 1,
+      "mode_used": "unknown"
+    },
+    {
+      "question_id": "gpt4_f2262a51",
+      "question_type": "multi-session",
+      "question": "How many different doctors did I visit?",
+      "ground_truth": "I visited three different doctors: a primary care physician, an ENT specialist, and a dermatologist.",
+      "retrieved_session_ids": [],
+      "correct_session_ids": [
+        "answer_55a6940c_3",
+        "answer_55a6940c_1",
+        "answer_55a6940c_2"
+      ],
+      "recall_any": false,
+      "recall_all": false,
+      "search_time_ms": 1,
+      "mode_used": "unknown"
+    },
+    {
+      "question_id": "dd2973ad",
+      "question_type": "multi-session",
+      "question": "What time did I go to bed on the day before I had a doctor's appointment?",
+      "ground_truth": "2 AM",
+      "retrieved_session_ids": [],
+      "correct_session_ids": [
+        "answer_f9de4602_1",
+        "answer_f9de4602_2"
+      ],
+      "recall_any": false,
+      "recall_all": false,
+      "search_time_ms": 1,
+      "mode_used": "unknown"
+    },
+    {
+      "question_id": "c4a1ceb8",
+      "question_type": "multi-session",
+      "question": "How many different types of citrus fruits have I used in my cocktail recipes?",
+      "ground_truth": "3",
+      "retrieved_session_ids": [],
+      "correct_session_ids": [
+        "answer_56d02cab_3",
+        "answer_56d02cab_2",
+        "answer_56d02cab_1",
+        "answer_56d02cab_4"
+      ],
+      "recall_any": false,
+      "recall_all": false,
+      "search_time_ms": 0,
+      "mode_used": "unknown"
+    },
+    {
+      "question_id": "gpt4_a56e767c",
+      "question_type": "multi-session",
+      "question": "How many movie festivals that I attended?",
+      "ground_truth": "I attended four movie festivals.",
+      "retrieved_session_ids": [],
+      "correct_session_ids": [
+        "answer_cf9e3940_1",
+        "answer_cf9e3940_2",
+        "answer_cf9e3940_3"
+      ],
+      "recall_any": false,
+      "recall_all": false,
+      "search_time_ms": 1,
+      "mode_used": "unknown"
+    },
+    {
+      "question_id": "6cb6f249",
+      "question_type": "multi-session",
+      "question": "How many days did I take social media breaks in total?",
+      "ground_truth": "17 days",
+      "retrieved_session_ids": [],
+      "correct_session_ids": [
+        "answer_a4204937_1",
+        "answer_a4204937_2"
+      ],
+      "recall_any": false,
+      "recall_all": false,
+      "search_time_ms": 1,
+      "mode_used": "unknown"
+    },
+    {
+      "question_id": "46a3abf7",
+      "question_type": "multi-session",
+      "question": "How many tanks do I currently have, including the one I set up for my friend's kid?",
+      "ground_truth": "3",
+      "retrieved_session_ids": [],
+      "correct_session_ids": [
+        "answer_c65042d7_2",
+        "answer_c65042d7_1",
+        "answer_c65042d7_3"
+      ],
+      "recall_any": false,
+      "recall_all": false,
+      "search_time_ms": 1,
+      "mode_used": "unknown"
+    },
+    {
+      "question_id": "36b9f61e",
+      "question_type": "multi-session",
+      "question": "What is the total amount I spent on luxury items in the past few months?",
+      "ground_truth": "$2,500",
+      "retrieved_session_ids": [],
+      "correct_session_ids": [
+        "answer_ef74281f_2",
+        "answer_ef74281f_3",
+        "answer_ef74281f_1"
+      ],
+      "recall_any": false,
+      "recall_all": false,
+      "search_time_ms": 1,
+      "mode_used": "unknown"
+    },
+    {
+      "question_id": "28dc39ac",
+      "question_type": "multi-session",
+      "question": "How many hours have I spent playing games in total?",
+      "ground_truth": "140 hours",
+      "retrieved_session_ids": [],
+      "correct_session_ids": [
+        "answer_8d015d9d_3",
+        "answer_8d015d9d_1",
+        "answer_8d015d9d_2",
+        "answer_8d015d9d_5",
+        "answer_8d015d9d_4"
+      ],
+      "recall_any": false,
+      "recall_all": false,
+      "search_time_ms": 1,
+      "mode_used": "unknown"
+    },
+    {
+      "question_id": "gpt4_2f8be40d",
+      "question_type": "multi-session",
+      "question": "How many weddings have I attended in this year?",
+      "ground_truth": "I attended three weddings. The couples were Rachel and Mike, Emily and Sarah, and Jen and Tom.",
+      "retrieved_session_ids": [],
+      "correct_session_ids": [
+        "answer_e7b0637e_1",
+        "answer_e7b0637e_3",
+        "answer_e7b0637e_2"
+      ],
+      "recall_any": false,
+      "recall_all": false,
+      "search_time_ms": 0,
+      "mode_used": "unknown"
+    },
+    {
+      "question_id": "2e6d26dc",
+      "question_type": "multi-session",
+      "question": "How many babies were born to friends and family members in the last few months?",
+      "ground_truth": "5",
+      "retrieved_session_ids": [],
+      "correct_session_ids": [
+        "answer_fa526fc0_3",
+        "answer_fa526fc0_4",
+        "answer_fa526fc0_1",
+        "answer_fa526fc0_2"
+      ],
+      "recall_any": false,
+      "recall_all": false,
+      "search_time_ms": 1,
+      "mode_used": "unknown"
+    },
+    {
+      "question_id": "gpt4_15e38248",
+      "question_type": "multi-session",
+      "question": "How many pieces of furniture did I buy, assemble, sell, or fix in the past few months?",
+      "ground_truth": "4",
+      "retrieved_session_ids": [],
+      "correct_session_ids": [
+        "answer_8858d9dc_3",
+        "answer_8858d9dc_2",
+        "answer_8858d9dc_1",
+        "answer_8858d9dc_4"
+      ],
+      "recall_any": false,
+      "recall_all": false,
+      "search_time_ms": 1,
+      "mode_used": "unknown"
+    },
+    {
+      "question_id": "88432d0a",
+      "question_type": "multi-session",
+      "question": "How many times did I bake something in the past two weeks?",
+      "ground_truth": "4",
+      "retrieved_session_ids": [],
+      "correct_session_ids": [
+        "answer_733e443a_3",
+        "answer_733e443a_1",
+        "answer_733e443a_2",
+        "answer_733e443a_4"
+      ],
+      "recall_any": false,
+      "recall_all": false,
+      "search_time_ms": 0,
+      "mode_used": "unknown"
+    },
+    {
+      "question_id": "80ec1f4f",
+      "question_type": "multi-session",
+      "question": "How many different museums or galleries did I visit in the month of February?",
+      "ground_truth": "2",
+      "retrieved_session_ids": [],
+      "correct_session_ids": [
+        "answer_990c8992_3",
+        "answer_990c8992_2",
+        "answer_990c8992_1"
+      ],
+      "recall_any": false,
+      "recall_all": false,
+      "search_time_ms": 0,
+      "mode_used": "unknown"
+    },
+    {
+      "question_id": "d23cf73b",
+      "question_type": "multi-session",
+      "question": "How many different cuisines have I learned to cook or tried out in the past few months?",
+      "ground_truth": "4",
+      "retrieved_session_ids": [],
+      "correct_session_ids": [
+        "answer_5a0d28f8_4",
+        "answer_5a0d28f8_2",
+        "answer_5a0d28f8_1",
+        "answer_5a0d28f8_3"
+      ],
+      "recall_any": false,
+      "recall_all": false,
+      "search_time_ms": 1,
+      "mode_used": "unknown"
+    },
+    {
+      "question_id": "gpt4_7fce9456",
+      "question_type": "multi-session",
+      "question": "How many properties did I view before making an offer on the townhouse in the Brookside neighborhood?",
+      "ground_truth": "I viewed four properties before making an offer on the townhouse in the Brookside neighborhood. The reasons I didn't make an offer on them were: the kitchen of the bungalow needed serious renovation, the property in Cedar Creek was out of my budget, the noise from the highway was a deal-breaker for the 1-bedroom condo, and my offer on the 2-bedroom condo was rejected due to a higher bid.",
+      "retrieved_session_ids": [],
+      "correct_session_ids": [
+        "answer_a679a86a_3",
+        "answer_a679a86a_1",
+        "answer_a679a86a_5",
+        "answer_a679a86a_4",
+        "answer_a679a86a_2"
+      ],
+      "recall_any": false,
+      "recall_all": false,
+      "search_time_ms": 0,
+      "mode_used": "unknown"
+    },
+    {
+      "question_id": "d682f1a2",
+      "question_type": "multi-session",
+      "question": "How many different types of food delivery services have I used recently?",
+      "ground_truth": "3",
+      "retrieved_session_ids": [],
+      "correct_session_ids": [
+        "answer_c008e5df_3",
+        "answer_c008e5df_1",
+        "answer_c008e5df_2"
+      ],
+      "recall_any": false,
+      "recall_all": false,
+      "search_time_ms": 1,
+      "mode_used": "unknown"
+    },
+    {
+      "question_id": "7024f17c",
+      "question_type": "multi-session",
+      "question": "How many hours of jogging and yoga did I do last week?",
+      "ground_truth": "0.5 hours",
+      "retrieved_session_ids": [],
+      "correct_session_ids": [
+        "answer_a21f3697_3",
+        "answer_a21f3697_2",
+        "answer_a21f3697_1"
+      ],
+      "recall_any": false,
+      "recall_all": false,
+      "search_time_ms": 0,
+      "mode_used": "unknown"
+    },
+    {
+      "question_id": "gpt4_5501fe77",
+      "question_type": "multi-session",
+      "question": "Which social media platform did I gain the most followers on over the past month?",
+      "ground_truth": "TikTok",
+      "retrieved_session_ids": [],
+      "correct_session_ids": [
+        "answer_203bf3fa_2",
+        "answer_203bf3fa_1",
+        "answer_203bf3fa_3"
+      ],
+      "recall_any": false,
+      "recall_all": false,
+      "search_time_ms": 1,
+      "mode_used": "unknown"
+    },
+    {
+      "question_id": "gpt4_2ba83207",
+      "question_type": "multi-session",
+      "question": "Which grocery store did I spend the most money at in the past month?",
+      "ground_truth": "Thrive Market",
+      "retrieved_session_ids": [],
+      "correct_session_ids": [
+        "answer_6a3b5c13_2",
+        "answer_6a3b5c13_1",
+        "answer_6a3b5c13_3",
+        "answer_6a3b5c13_4"
+      ],
+      "recall_any": false,
+      "recall_all": false,
+      "search_time_ms": 1,
+      "mode_used": "unknown"
+    },
+    {
+      "question_id": "2318644b",
+      "question_type": "multi-session",
+      "question": "How much more did I spend on accommodations per night in Hawaii compared to Tokyo?",
+      "ground_truth": "$270",
+      "retrieved_session_ids": [],
+      "correct_session_ids": [
+        "answer_eaa8e3ef_1",
+        "answer_eaa8e3ef_2"
+      ],
+      "recall_any": false,
+      "recall_all": false,
+      "search_time_ms": 1,
+      "mode_used": "unknown"
+    },
+    {
+      "question_id": "2ce6a0f2",
+      "question_type": "multi-session",
+      "question": "How many different art-related events did I attend in the past month?",
+      "ground_truth": "4",
+      "retrieved_session_ids": [],
+      "correct_session_ids": [
+        "answer_901a6763_3",
+        "answer_901a6763_4",
+        "answer_901a6763_1",
+        "answer_901a6763_2"
+      ],
+      "recall_any": false,
+      "recall_all": false,
+      "search_time_ms": 1,
+      "mode_used": "unknown"
+    },
+    {
+      "question_id": "gpt4_d12ceb0e",
+      "question_type": "multi-session",
+      "question": "What is the average age of me, my parents, and my grandparents?",
+      "ground_truth": "59.6",
+      "retrieved_session_ids": [],
+      "correct_session_ids": [
+        "answer_2504635e_1",
+        "answer_2504635e_2",
+        "answer_2504635e_3"
+      ],
+      "recall_any": false,
+      "recall_all": false,
+      "search_time_ms": 1,
+      "mode_used": "unknown"
+    },
+    {
+      "question_id": "00ca467f",
+      "question_type": "multi-session",
+      "question": "How many doctor's appointments did I go to in March?",
+      "ground_truth": "2",
+      "retrieved_session_ids": [],
+      "correct_session_ids": [
+        "answer_39900a0a_1",
+        "answer_39900a0a_2",
+        "answer_39900a0a_3"
+      ],
+      "recall_any": false,
+      "recall_all": false,
+      "search_time_ms": 0,
+      "mode_used": "unknown"
+    },
+    {
+      "question_id": "b3c15d39",
+      "question_type": "multi-session",
+      "question": "How many days did it take for me to receive the new remote shutter release after I ordered it?",
+      "ground_truth": "5 days. 6 days (including the last day) is also acceptable.",
+      "retrieved_session_ids": [],
+      "correct_session_ids": [
+        "answer_05d808e6_2",
+        "answer_05d808e6_1"
+      ],
+      "recall_any": false,
+      "recall_all": false,
+      "search_time_ms": 1,
+      "mode_used": "unknown"
+    },
+    {
+      "question_id": "gpt4_31ff4165",
+      "question_type": "multi-session",
+      "question": "How many health-related devices do I use in a day?",
+      "ground_truth": "4",
+      "retrieved_session_ids": [],
+      "correct_session_ids": [
+        "answer_02b63d04_2",
+        "answer_02b63d04_1",
+        "answer_02b63d04_5",
+        "answer_02b63d04_3",
+        "answer_02b63d04_4"
+      ],
+      "recall_any": false,
+      "recall_all": false,
+      "search_time_ms": 1,
+      "mode_used": "unknown"
+    },
+    {
+      "question_id": "eeda8a6d",
+      "question_type": "multi-session",
+      "question": "How many fish are there in total in both of my aquariums?",
+      "ground_truth": "17",
+      "retrieved_session_ids": [],
+      "correct_session_ids": [
+        "answer_3e5fea0e_1",
+        "answer_3e5fea0e_2"
+      ],
+      "recall_any": false,
+      "recall_all": false,
+      "search_time_ms": 1,
+      "mode_used": "unknown"
+    },
+    {
+      "question_id": "2788b940",
+      "question_type": "multi-session",
+      "question": "How many fitness classes do I attend in a typical week?",
+      "ground_truth": "5",
+      "retrieved_session_ids": [],
+      "correct_session_ids": [
+        "answer_8f6b938d_4",
+        "answer_8f6b938d_1",
+        "answer_8f6b938d_3",
+        "answer_8f6b938d_2"
+      ],
+      "recall_any": false,
+      "recall_all": false,
+      "search_time_ms": 1,
+      "mode_used": "unknown"
+    },
+    {
+      "question_id": "60bf93ed",
+      "question_type": "multi-session",
+      "question": "How many days did it take for my laptop backpack to arrive after I bought it?",
+      "ground_truth": "5 days. 6 days (including the last day) is also acceptable.",
+      "retrieved_session_ids": [],
+      "correct_session_ids": [
+        "answer_e0956e0a_1",
+        "answer_e0956e0a_2"
+      ],
+      "recall_any": false,
+      "recall_all": false,
+      "search_time_ms": 1,
+      "mode_used": "unknown"
+    },
+    {
+      "question_id": "9d25d4e0",
+      "question_type": "multi-session",
+      "question": "How many pieces of jewelry did I acquire in the last two months?",
+      "ground_truth": "3",
+      "retrieved_session_ids": [],
+      "correct_session_ids": [
+        "answer_fcff2dc4_1",
+        "answer_fcff2dc4_3",
+        "answer_fcff2dc4_2"
+      ],
+      "recall_any": false,
+      "recall_all": false,
+      "search_time_ms": 1,
+      "mode_used": "unknown"
+    },
+    {
+      "question_id": "129d1232",
+      "question_type": "multi-session",
+      "question": "How much money did I raise in total through all the charity events I participated in?",
+      "ground_truth": "$5,850",
+      "retrieved_session_ids": [],
+      "correct_session_ids": [
+        "answer_1de862d6_1",
+        "answer_1de862d6_2",
+        "answer_1de862d6_3"
+      ],
+      "recall_any": false,
+      "recall_all": false,
+      "search_time_ms": 1,
+      "mode_used": "unknown"
+    },
+    {
+      "question_id": "60472f9c",
+      "question_type": "multi-session",
+      "question": "How many projects have I been working on simultaneously, excluding my thesis?",
+      "ground_truth": "2",
+      "retrieved_session_ids": [],
+      "correct_session_ids": [
+        "answer_e7fe8c8b_2",
+        "answer_e7fe8c8b_1",
+        "answer_e7fe8c8b_3"
+      ],
+      "recall_any": false,
+      "recall_all": false,
+      "search_time_ms": 0,
+      "mode_used": "unknown"
+    },
+    {
+      "question_id": "gpt4_194be4b3",
+      "question_type": "multi-session",
+      "question": "How many musical instruments do I currently own?",
+      "ground_truth": "I currently own 4 musical instruments. I've had the Fender Stratocaster electric guitar for 5 years, the Yamaha FG800 acoustic guitar for 8 years, the 5-piece Pearl Export drum set for an unspecified amount of time, and the Korg B1 piano for 3 years.",
+      "retrieved_session_ids": [],
+      "correct_session_ids": [
+        "answer_3826dc55_5",
+        "answer_3826dc55_3",
+        "answer_3826dc55_2",
+        "answer_3826dc55_4",
+        "answer_3826dc55_1"
+      ],
+      "recall_any": false,
+      "recall_all": false,
+      "search_time_ms": 1,
+      "mode_used": "unknown"
+    },
+    {
+      "question_id": "a9f6b44c",
+      "question_type": "multi-session",
+      "question": "How many bikes did I service or plan to service in March?",
+      "ground_truth": "2",
+      "retrieved_session_ids": [],
+      "correct_session_ids": [
+        "answer_cc021f81_3",
+        "answer_cc021f81_2",
+        "answer_cc021f81_1"
+      ],
+      "recall_any": false,
+      "recall_all": false,
+      "search_time_ms": 0,
+      "mode_used": "unknown"
+    },
+    {
+      "question_id": "d851d5ba",
+      "question_type": "multi-session",
+      "question": "How much money did I raise for charity in total?",
+      "ground_truth": "$3,750",
+      "retrieved_session_ids": [],
+      "correct_session_ids": [
+        "answer_5cdf9bd2_4",
+        "answer_5cdf9bd2_1",
+        "answer_5cdf9bd2_2",
+        "answer_5cdf9bd2_3"
+      ],
+      "recall_any": false,
+      "recall_all": false,
+      "search_time_ms": 1,
+      "mode_used": "unknown"
+    },
+    {
+      "question_id": "5a7937c8",
+      "question_type": "multi-session",
+      "question": "How many days did I spend participating in faith-related activities in December?",
+      "ground_truth": "3 days.",
+      "retrieved_session_ids": [],
+      "correct_session_ids": [
+        "answer_4cef8a3c_3",
+        "answer_4cef8a3c_2",
+        "answer_4cef8a3c_1"
+      ],
+      "recall_any": false,
+      "recall_all": false,
+      "search_time_ms": 1,
+      "mode_used": "unknown"
+    },
+    {
+      "question_id": "gpt4_ab202e7f",
+      "question_type": "multi-session",
+      "question": "How many kitchen items did I replace or fix?",
+      "ground_truth": "I replaced or fixed five items: the kitchen faucet, the kitchen mat, the toaster, the coffee maker, and the kitchen shelves.",
+      "retrieved_session_ids": [],
+      "correct_session_ids": [
+        "answer_728deb4d_3",
+        "answer_728deb4d_1",
+        "answer_728deb4d_2",
+        "answer_728deb4d_5",
+        "answer_728deb4d_4"
+      ],
+      "recall_any": false,
+      "recall_all": false,
+      "search_time_ms": 0,
+      "mode_used": "unknown"
+    },
+    {
+      "question_id": "gpt4_e05b82a6",
+      "question_type": "multi-session",
+      "question": "How many times did I ride rollercoasters across all the events I attended from July to October?",
+      "ground_truth": "10 times",
+      "retrieved_session_ids": [],
+      "correct_session_ids": [
+        "answer_6350aa4f_4",
+        "answer_6350aa4f_3",
+        "answer_6350aa4f_2",
+        "answer_6350aa4f_1"
+      ],
+      "recall_any": false,
+      "recall_all": false,
+      "search_time_ms": 1,
+      "mode_used": "unknown"
+    },
+    {
+      "question_id": "gpt4_731e37d7",
+      "question_type": "multi-session",
+      "question": "How much total money did I spend on attending workshops in the last four months?",
+      "ground_truth": "$720",
+      "retrieved_session_ids": [],
+      "correct_session_ids": [
+        "answer_826d51da_3",
+        "answer_826d51da_4",
+        "answer_826d51da_2",
+        "answer_826d51da_1"
+      ],
+      "recall_any": false,
+      "recall_all": false,
+      "search_time_ms": 1,
+      "mode_used": "unknown"
+    }
+  ]
+}

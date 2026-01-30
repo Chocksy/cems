@@ -116,7 +116,9 @@ class CEMSEvalClient:
                 "content": content,
                 "category": "eval-session",
                 "infer": False,  # Fast mode - no LLM extraction
-                "source_ref": f"longmemeval:{session_id}",
+                # Use project: prefix so project-scoped scoring works correctly
+                # All eval memories are in the same "longmemeval" project
+                "source_ref": f"project:longmemeval:{session_id}",
                 "tags": ["longmemeval", session_id],
             }
 
@@ -141,6 +143,76 @@ class CEMSEvalClient:
         except Exception as e:
             print(f"  Error adding memory: {e}", file=sys.stderr)
         return None
+
+    def add_memories_batch(
+        self,
+        memories: list[dict],
+    ) -> dict[str, str]:
+        """Add multiple memories in a single request.
+
+        Args:
+            memories: List of memory dicts with keys:
+                - content: Memory content
+                - session_id: Session identifier for tracking
+                - timestamp: Optional timestamp in LongMemEval format
+
+        Returns:
+            Dict mapping session_id -> document_id for successfully added memories
+        """
+        if not memories:
+            return {}
+
+        # Prepare batch payload
+        batch_memories = []
+        session_ids = []
+
+        for mem in memories:
+            session_id = mem["session_id"]
+            session_ids.append(session_id)
+
+            payload = {
+                "content": mem["content"],
+                "category": "eval-session",
+                "source_ref": f"project:longmemeval:{session_id}",
+                "tags": ["longmemeval", session_id],
+            }
+
+            # Convert timestamp if provided
+            if mem.get("timestamp"):
+                iso_timestamp = self._parse_timestamp(mem["timestamp"])
+                if iso_timestamp:
+                    payload["timestamp"] = iso_timestamp
+
+            batch_memories.append(payload)
+
+        try:
+            # Use extended timeout for large batches
+            # Each memory may have multiple chunks, and embedding is slow (~4s/chunk on llama.cpp)
+            # Conservative estimate: 10 seconds per memory for chunking + embedding + DB insert
+            timeout = max(self.timeout, len(memories) * 10)
+            resp = self.client.post(
+                f"{self.api_url}/api/memory/add_batch",
+                headers=self._headers(),
+                json={"memories": batch_memories},
+                timeout=timeout,
+            )
+            data = resp.json()
+
+            if data.get("success"):
+                document_ids = data.get("document_ids", [])
+                # Map session_ids to document_ids
+                result_map = {}
+                for session_id, doc_id in zip(session_ids, document_ids):
+                    result_map[session_id] = doc_id
+                    self._session_to_memory[session_id] = doc_id
+                return result_map
+            else:
+                print(f"  Batch add failed: {data.get('error')}", file=sys.stderr)
+                return {}
+
+        except Exception as e:
+            print(f"  Error in batch add: {e}", file=sys.stderr)
+            return {}
 
     def _parse_timestamp(self, ts: str) -> str | None:
         """Parse LongMemEval timestamp format to ISO format.
@@ -171,6 +243,8 @@ class CEMSEvalClient:
                     "limit": limit,
                     "scope": "personal",
                     "mode": "auto",  # Let CEMS decide vector vs hybrid
+                    # Pass project so same-project boost (1.3x) applies to all eval memories
+                    "project": "longmemeval",
                 },
             )
             elapsed_ms = int((time.time() - start) * 1000)
@@ -193,13 +267,143 @@ class CEMSEvalClient:
         except Exception:
             return False
 
-    def cleanup_eval_memories(self) -> int:
-        """Delete all memories created during eval."""
+    def cleanup_eval_memories(self, admin_key: str | None = None) -> int:
+        """Delete all memories created during eval.
+
+        Uses admin bulk delete API for efficiency instead of individual forget calls.
+        Falls back to individual deletes if admin API fails.
+        """
+        # Try bulk delete via admin API first (same as cleanup_stale_eval_data)
+        effective_key = admin_key or os.getenv("CEMS_ADMIN_KEY") or self.api_key
+
+        try:
+            resp = self.client.delete(
+                f"{self.api_url}/admin/eval/cleanup",
+                headers={
+                    "Authorization": f"Bearer {effective_key}",
+                    "Content-Type": "application/json",
+                },
+                params={"source_prefix": "project:longmemeval"},
+            )
+            data = resp.json()
+
+            if data.get("success"):
+                docs = data.get("documents_deleted", 0)
+                self._session_to_memory.clear()
+                return docs
+        except Exception:
+            pass  # Fall through to individual deletes
+
+        # Fallback: individual deletes (slow but reliable)
         deleted = 0
         for session_id, memory_id in self._session_to_memory.items():
             if self.forget_memory(memory_id):
                 deleted += 1
         self._session_to_memory.clear()
+        return deleted
+
+    def cleanup_stale_eval_data(self, admin_key: str | None = None) -> int:
+        """Delete ALL old eval data from previous runs.
+
+        Uses the admin API endpoint for reliable bulk deletion.
+        Falls back to search-based cleanup if admin API fails.
+
+        Should be called before starting a fresh eval run to prevent
+        data contamination from previous runs.
+        """
+        # Try admin API first (requires CEMS_ADMIN_KEY)
+        effective_key = admin_key or os.getenv("CEMS_ADMIN_KEY") or self.api_key
+
+        try:
+            resp = self.client.delete(
+                f"{self.api_url}/admin/eval/cleanup",
+                headers={
+                    "Authorization": f"Bearer {effective_key}",
+                    "Content-Type": "application/json",
+                },
+                params={"source_prefix": "project:longmemeval"},
+            )
+            data = resp.json()
+
+            if data.get("success"):
+                docs = data.get("documents_deleted", 0)
+                chunks = data.get("chunks_deleted", 0)
+                if docs > 0:
+                    print(f"  Deleted {docs} documents ({chunks} chunks)")
+                else:
+                    print("  No stale eval data found")
+                return docs
+
+            # Admin API returned error
+            print(f"  Admin API error: {data.get('error', 'unknown')}")
+            print("  Falling back to search-based cleanup...")
+
+        except Exception as e:
+            print(f"  Admin API unavailable ({e}), trying search-based cleanup...")
+
+        # Fallback: search-based cleanup (less reliable)
+        return self._search_based_cleanup()
+
+    def _search_based_cleanup(self) -> int:
+        """Fallback cleanup using search API (less reliable)."""
+        deleted = 0
+        found_ids: set[str] = set()
+
+        # Try multiple search terms to find eval memories
+        search_queries = [
+            "eval session longmemeval",
+            "temporal reasoning first",
+            "seeds tomatoes marigolds",
+            "device Samsung Galaxy MacBook",
+        ]
+
+        try:
+            for query in search_queries:
+                resp = self.client.post(
+                    f"{self.api_url}/api/memory/search",
+                    headers=self._headers(),
+                    json={
+                        "query": query,
+                        "limit": 200,
+                        "scope": "personal",
+                        "raw": True,
+                    },
+                )
+                data = resp.json()
+
+                if not data.get("success"):
+                    continue
+
+                for mem in data.get("results", []):
+                    source_ref = mem.get("source_ref") or ""
+                    tags = mem.get("tags") or []
+
+                    is_eval_memory = (
+                        source_ref.startswith("project:longmemeval:")
+                        or "longmemeval" in tags
+                        or "eval-session" in str(mem.get("category", ""))
+                    )
+
+                    if is_eval_memory:
+                        memory_id = mem.get("memory_id") or mem.get("id")
+                        if memory_id:
+                            found_ids.add(memory_id)
+
+            if not found_ids:
+                print("  No stale eval data found (search-based)")
+                return 0
+
+            print(f"  Found {len(found_ids)} stale memories (search-based)...")
+
+            for memory_id in found_ids:
+                if self.forget_memory(memory_id):
+                    deleted += 1
+
+            print(f"  Deleted {deleted} stale memories")
+
+        except Exception as e:
+            print(f"  Warning: Search-based cleanup failed: {e}")
+
         return deleted
 
 
@@ -269,18 +473,87 @@ def format_session_content(session: list[dict]) -> str:
     return "\n".join(parts)
 
 
+def collect_all_sessions(questions: list[dict]) -> dict[str, dict]:
+    """Collect all unique sessions across all questions.
+
+    Args:
+        questions: List of LongMemEval questions
+
+    Returns:
+        Dict mapping session_id -> {content, timestamp} for all unique sessions
+    """
+    all_sessions: dict[str, dict] = {}
+
+    for q in questions:
+        sessions = q.get("haystack_sessions", [])
+        session_ids = q.get("haystack_session_ids", [])
+        session_dates = q.get("haystack_dates", [])
+
+        # Pad dates if needed
+        dates_padded = session_dates + [None] * (len(sessions) - len(session_dates))
+
+        for sid, session, session_date in zip(session_ids, sessions, dates_padded):
+            if sid not in all_sessions:
+                all_sessions[sid] = {
+                    "content": format_session_content(session),
+                    "session_id": sid,
+                    "timestamp": session_date,
+                }
+
+    return all_sessions
+
+
 def run_eval(
     client: CEMSEvalClient,
     questions: list[dict],
     verbose: bool = False,
+    use_bulk_ingestion: bool = True,
 ) -> tuple[list[EvalResult], EvalSummary]:
-    """Run the evaluation and return results."""
+    """Run the evaluation and return results.
+
+    Two-phase approach (when use_bulk_ingestion=True):
+    1. Collect all unique sessions upfront
+    2. Bulk ingest all sessions in one HTTP call
+    3. Run searches against stable data
+
+    Args:
+        client: CEMS evaluation client
+        questions: List of questions to evaluate
+        verbose: Print detailed output
+        use_bulk_ingestion: Use bulk ingestion (default True, faster)
+    """
     results: list[EvalResult] = []
     summary = EvalSummary()
 
-    # Track which sessions we've already ingested
+    # Track which sessions we've already ingested (for incremental mode)
     ingested_sessions: set[str] = set()
 
+    # Phase 1: Bulk ingest all sessions upfront (if enabled)
+    if use_bulk_ingestion:
+        print("\nPhase 1: Collecting all unique sessions...")
+        all_sessions = collect_all_sessions(questions)
+        print(f"  Found {len(all_sessions)} unique sessions across {len(questions)} questions")
+
+        if all_sessions:
+            print("\nPhase 2: Bulk ingesting all sessions...")
+            ingest_start = time.time()
+
+            # Convert to list format for batch API
+            memories_to_add = list(all_sessions.values())
+
+            # Batch ingest
+            result_map = client.add_memories_batch(memories_to_add)
+
+            ingest_elapsed = time.time() - ingest_start
+            print(f"  Ingested {len(result_map)} sessions in {ingest_elapsed:.1f}s "
+                  f"({ingest_elapsed/len(memories_to_add)*1000:.0f}ms/session)")
+
+            # Mark all as ingested
+            ingested_sessions = set(result_map.keys())
+
+        print("\nPhase 3: Running searches...")
+
+    # Phase 2/3: Run searches
     for i, q in enumerate(questions):
         qid = q["question_id"]
         qtype = q.get("question_type", "unknown")
@@ -289,38 +562,40 @@ def run_eval(
 
         print(f"\n[{i+1}/{len(questions)}] {qtype}: {question[:60]}...")
 
-        # 1. Ingest any new sessions for this question
-        sessions = q.get("haystack_sessions", [])
+        # Incremental ingestion (only if bulk ingestion disabled)
+        if not use_bulk_ingestion:
+            sessions = q.get("haystack_sessions", [])
+            session_ids = q.get("haystack_session_ids", [])
+            session_dates = q.get("haystack_dates", [])
+            dates_padded = session_dates + [None] * (len(sessions) - len(session_dates))
+
+            for sid, session, session_date in zip(session_ids, sessions, dates_padded):
+                if sid not in ingested_sessions:
+                    content = format_session_content(session)
+                    mem_id = client.add_memory(content, sid, timestamp=session_date)
+                    if mem_id:
+                        ingested_sessions.add(sid)
+                        if verbose:
+                            ts_info = f" @ {session_date}" if session_date else ""
+                            print(f"  Ingested session {sid}{ts_info} -> {mem_id[:8]}...")
+
+        # Get correct session IDs for this question
         session_ids = q.get("haystack_session_ids", [])
-        session_dates = q.get("haystack_dates", [])  # Temporal data!
         correct_ids = q.get("answer_session_ids", [])
 
-        # Zip sessions with their dates (pad dates if needed)
-        dates_padded = session_dates + [None] * (len(sessions) - len(session_dates))
-
-        for sid, session, session_date in zip(session_ids, sessions, dates_padded):
-            if sid not in ingested_sessions:
-                content = format_session_content(session)
-                mem_id = client.add_memory(content, sid, timestamp=session_date)
-                if mem_id:
-                    ingested_sessions.add(sid)
-                    if verbose:
-                        ts_info = f" @ {session_date}" if session_date else ""
-                        print(f"  Ingested session {sid}{ts_info} -> {mem_id[:8]}...")
-
-        # 2. Search for relevant memories
+        # Search for relevant memories
         search_result = client.search(question, limit=10)
         elapsed_ms = search_result.get("_elapsed_ms", 0)
         mode_used = search_result.get("mode", "unknown")
 
-        # 3. Extract retrieved session IDs from results
+        # Extract retrieved session IDs from results
         retrieved_ids: list[str] = []
         if search_result.get("success"):
             for mem in search_result.get("results", []):
                 # Get session ID from source_ref or tags
                 source_ref = mem.get("source_ref", "") or ""
-                if source_ref.startswith("longmemeval:"):
-                    sid = source_ref.replace("longmemeval:", "")
+                if source_ref.startswith("project:longmemeval:"):
+                    sid = source_ref.replace("project:longmemeval:", "")
                     retrieved_ids.append(sid)
                 else:
                     # Try tags
@@ -330,7 +605,7 @@ def run_eval(
                             retrieved_ids.append(tag)
                             break
 
-        # 4. Calculate recall metrics
+        # Calculate recall metrics
         correct_set = set(correct_ids)
         retrieved_set = set(retrieved_ids[:5])  # Recall@5
 
@@ -430,6 +705,14 @@ def main():
         "--download", action="store_true",
         help="Force re-download of dataset"
     )
+    parser.add_argument(
+        "--no-clean-stale", action="store_true",
+        help="Don't clean up stale data from previous eval runs"
+    )
+    parser.add_argument(
+        "--incremental", action="store_true",
+        help="Use incremental ingestion (old behavior, slower) instead of bulk"
+    )
 
     args = parser.parse_args()
 
@@ -453,6 +736,11 @@ def main():
         sys.exit(1)
     print("  Connected!")
 
+    # Clean up stale data from previous runs (prevents data contamination)
+    if not args.no_clean_stale:
+        print("\nCleaning up stale eval data from previous runs...")
+        client.cleanup_stale_eval_data()
+
     # Download/load data
     try:
         data_file = download_longmemeval(force=args.download)
@@ -466,11 +754,17 @@ def main():
         sys.exit(1)
 
     # Run evaluation
-    print(f"\nStarting evaluation...")
+    use_bulk = not args.incremental
+    mode_str = "bulk ingestion" if use_bulk else "incremental (legacy)"
+    print(f"\nStarting evaluation with {mode_str}...")
     start_time = time.time()
 
     try:
-        results, summary = run_eval(client, questions, verbose=args.verbose)
+        results, summary = run_eval(
+            client, questions,
+            verbose=args.verbose,
+            use_bulk_ingestion=use_bulk,
+        )
     except KeyboardInterrupt:
         print("\n\nInterrupted by user")
         summary = EvalSummary()

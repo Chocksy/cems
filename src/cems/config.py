@@ -37,6 +37,15 @@ class CEMSConfig(BaseSettings):
     )
 
     # =========================================================================
+    # Debug Mode - CRITICAL: Let exceptions bubble up in development
+    # =========================================================================
+    debug_mode: bool = Field(
+        default=True,  # ON by default - we want to see errors during development
+        description="When True, exceptions bubble up instead of being silently caught. "
+                    "Set to False only in production to enable fallbacks.",
+    )
+
+    # =========================================================================
     # Client Settings (for CLI and other HTTP clients)
     # =========================================================================
     api_url: str | None = Field(
@@ -88,17 +97,65 @@ class CEMSConfig(BaseSettings):
     )
 
     # =========================================================================
+    # Embedding Backend Settings
+    # =========================================================================
+    # Choose between llama.cpp server (768-dim) or OpenRouter API (1536-dim)
+    # Strategy A: Single embedding column at configured dimension
+    embedding_backend: Literal["openrouter", "llamacpp_server"] = Field(
+        default="openrouter",
+        description="Embedding backend: openrouter (1536-dim API) or llamacpp_server (768-dim)",
+    )
+    embedding_dimension: int = Field(
+        default=1536,
+        description="Embedding dimension (1536 for OpenRouter, 768 for llama.cpp server)",
+    )
+
+    # =========================================================================
+    # llama.cpp Server Settings
+    # =========================================================================
+    # These settings are used when embedding_backend="llamacpp_server"
+    # Run separate llama.cpp servers for embeddings and reranking
+    llamacpp_base_url: str = Field(
+        default="http://localhost:8081",
+        description="Base URL for llama.cpp embedding server",
+    )
+    llamacpp_embed_model: str = Field(
+        default="embeddinggemma-300M-Q8_0.gguf",
+        description="Model name for embeddings (passed to server)",
+    )
+    llamacpp_embed_path: str = Field(
+        default="/v1/embeddings",
+        description="Endpoint path for embeddings (OpenAI-compatible)",
+    )
+    llamacpp_rerank_url: str = Field(
+        default="http://localhost:8082",
+        description="Base URL for llama.cpp reranker server",
+    )
+    llamacpp_rerank_model: str = Field(
+        default="Qwen3-Reranker-0.6B.Q8_0.gguf",
+        description="Model name for reranking",
+    )
+    llamacpp_rerank_path: str = Field(
+        default="/rerank",
+        description="Endpoint path for reranking",
+    )
+    llamacpp_api_key: str | None = Field(
+        default=None,
+        description="API key for llama.cpp server (if required)",
+    )
+    llamacpp_timeout_seconds: int = Field(
+        default=60,
+        description="Timeout for llama.cpp server requests (increased for batch operations)",
+    )
+
+    # =========================================================================
     # Vector Store Settings (pgvector - unified with PostgreSQL)
     # =========================================================================
     # pgvector uses the same PostgreSQL database as metadata storage
     # No separate vector store URL needed - uses CEMS_DATABASE_URL
     hybrid_vector_weight: float = Field(
-        default=0.7,
+        default=0.4,  # Reduced from 0.7 to favor BM25 for entity matching (temporal queries)
         description="Weight for vector similarity in hybrid search (0-1). Text gets 1-vector_weight.",
-    )
-    embedding_dimension: int = Field(
-        default=1536,
-        description="Embedding dimension (1536 for OpenAI text-embedding-3-small)",
     )
 
     # =========================================================================
@@ -130,6 +187,10 @@ class CEMSConfig(BaseSettings):
         default=False,  # EXPERIMENT: Disable LLM query expansion (was slowing down eval)
         description="Enable LLM query expansion (Stage 1 of retrieval pipeline)",
     )
+    enable_preference_synthesis: bool = Field(
+        default=True,  # Always expand preference queries to bridge semantic gap
+        description="Force query synthesis for preference/recommendation queries even when enable_query_synthesis=False",
+    )
     relevance_threshold: float = Field(
         default=0.005,  # Lowered further to catch borderline matches in RRF
         description="Minimum similarity score to include in results (Stage 3)",
@@ -139,16 +200,88 @@ class CEMSConfig(BaseSettings):
         description="Default token budget for retrieval results (Stage 5)",
     )
     max_candidates_per_query: int = Field(
-        default=75,  # Increased from 50 for better recall
+        default=150,  # Increased from 75 for better Recall@All
         description="Max candidates per vector search query",
     )
     rerank_input_limit: int = Field(
-        default=60,  # Increased from 40 - LLM sees more candidates
-        description="Max candidates to send to LLM for reranking",
+        default=40,  # QMD-style cap for reranking quality/latency balance
+        description="Max candidates to send to reranker",
     )
     rerank_output_limit: int = Field(
-        default=40,  # Increased from 25 - keep more ranked results
+        default=50,  # Increased from 40 - keep more ranked results
         description="Max results to return from LLM reranking",
+    )
+
+    # =========================================================================
+    # QMD-Style Retrieval Settings (strong-signal skip, lexical stream, RRF)
+    # =========================================================================
+    # Strong signal detection - skip expansion when BM25 has high confidence
+    strong_signal_threshold: float = Field(
+        default=0.85,
+        description="Skip query expansion if top BM25 score >= this threshold",
+    )
+    strong_signal_gap: float = Field(
+        default=0.15,
+        description="AND gap to second result >= this (ensures clear winner)",
+    )
+
+    # Lexical stream - add BM25 alongside vector search
+    enable_lexical_in_inference: bool = Field(
+        default=True,
+        description="Add BM25 stream alongside vector in inference pipeline",
+    )
+
+    # RRF weights - protect original query from expansion noise
+    rrf_original_weight: float = Field(
+        default=2.0,
+        description="Weight for original query lists in RRF (vector + lexical)",
+    )
+    rrf_expansion_weight: float = Field(
+        default=1.0,
+        description="Weight for expansion query lists in RRF",
+    )
+    rrf_top_rank_bonus_r1: float = Field(
+        default=0.05,
+        description="Bonus added to rank 1 items in RRF",
+    )
+    rrf_top_rank_bonus_r23: float = Field(
+        default=0.02,
+        description="Bonus added to rank 2-3 items in RRF",
+    )
+
+    # =========================================================================
+    # Reranker Settings
+    # =========================================================================
+    reranker_backend: Literal["llamacpp_server", "llm", "disabled"] = Field(
+        default="disabled",
+        description="Reranker backend: llamacpp_server (llama.cpp server), llm (OpenRouter API), disabled",
+    )
+
+    # =========================================================================
+    # Scoring Penalty Settings
+    # =========================================================================
+    # These penalties help prioritize memories from the same category/project.
+    # They're designed for multi-project, multi-category production usage.
+    # Set to False for benchmarks with uniform categories (e.g., LongMemEval).
+    enable_cross_category_penalty: bool = Field(
+        default=True,
+        description="Apply 0.8x penalty when memory category differs from inferred query category",
+    )
+    enable_project_penalty: bool = Field(
+        default=True,
+        description="Apply 0.8x penalty for different-project memories (1.3x boost for same-project)",
+    )
+    cross_category_penalty_factor: float = Field(
+        default=0.8,
+        description="Multiplier for cross-category memories (lower = more penalty)",
+    )
+    project_penalty_factor: float = Field(
+        default=0.8,
+        description="Multiplier for different-project memories",
+    )
+    project_boost_factor: float = Field(
+        default=1.3,
+        description="Multiplier for same-project memories (boost)",
     )
 
     # =========================================================================

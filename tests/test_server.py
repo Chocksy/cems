@@ -8,7 +8,9 @@ import pytest
 from starlette.testclient import TestClient
 from unittest.mock import MagicMock, patch, AsyncMock
 
-import cems.server as server_module
+import cems.api.deps as deps_module
+import cems.api.handlers.memory as memory_handlers
+import cems.api.handlers.tool as tool_handlers
 
 
 @pytest.fixture
@@ -61,11 +63,11 @@ def mock_user():
 @pytest.fixture(autouse=True)
 def reset_server_state():
     """Reset server global state before each test."""
-    server_module._memory_cache.clear()
-    server_module._scheduler_cache.clear()
+    deps_module._memory_cache.clear()
+    deps_module._scheduler_cache.clear()
     yield
-    server_module._memory_cache.clear()
-    server_module._scheduler_cache.clear()
+    deps_module._memory_cache.clear()
+    deps_module._scheduler_cache.clear()
 
 
 class TestHealthEndpoints:
@@ -102,7 +104,7 @@ class TestMemoryAPI:
 
     @patch("cems.db.database.is_database_initialized", return_value=True)
     @patch("cems.db.database.get_database")
-    @patch.object(server_module, "get_memory")
+    @patch.object(memory_handlers, "get_memory")
     def test_memory_add(self, mock_get_memory, mock_db, mock_is_db, mock_memory, mock_user):
         """Test POST /api/memory/add endpoint."""
         mock_get_memory.return_value = mock_memory
@@ -131,7 +133,7 @@ class TestMemoryAPI:
 
     @patch("cems.db.database.is_database_initialized", return_value=True)
     @patch("cems.db.database.get_database")
-    @patch.object(server_module, "get_memory")
+    @patch.object(memory_handlers, "get_memory")
     def test_memory_add_requires_content(self, mock_get_memory, mock_db, mock_is_db, mock_memory, mock_user):
         """Test POST /api/memory/add requires content field."""
         mock_get_memory.return_value = mock_memory
@@ -158,7 +160,7 @@ class TestMemoryAPI:
 
     @patch("cems.db.database.is_database_initialized", return_value=True)
     @patch("cems.db.database.get_database")
-    @patch.object(server_module, "get_memory")
+    @patch.object(memory_handlers, "get_memory")
     def test_memory_search(self, mock_get_memory, mock_db, mock_is_db, mock_memory, mock_user):
         """Test POST /api/memory/search endpoint."""
         mock_memory.retrieve_for_inference_async.return_value = {
@@ -199,7 +201,7 @@ class TestMemoryAPI:
 
     @patch("cems.db.database.is_database_initialized", return_value=True)
     @patch("cems.db.database.get_database")
-    @patch.object(server_module, "get_memory")
+    @patch.object(memory_handlers, "get_memory")
     def test_memory_forget(self, mock_get_memory, mock_db, mock_is_db, mock_memory, mock_user):
         """Test POST /api/memory/forget endpoint."""
         mock_get_memory.return_value = mock_memory
@@ -228,7 +230,7 @@ class TestMemoryAPI:
 
     @patch("cems.db.database.is_database_initialized", return_value=True)
     @patch("cems.db.database.get_database")
-    @patch.object(server_module, "get_memory")
+    @patch.object(memory_handlers, "get_memory")
     def test_memory_update(self, mock_get_memory, mock_db, mock_is_db, mock_memory, mock_user):
         """Test POST /api/memory/update endpoint."""
         mock_get_memory.return_value = mock_memory
@@ -260,7 +262,7 @@ class TestSummaryEndpoints:
 
     @patch("cems.db.database.is_database_initialized", return_value=True)
     @patch("cems.db.database.get_database")
-    @patch.object(server_module, "get_memory")
+    @patch.object(memory_handlers, "get_memory")
     def test_personal_summary(self, mock_get_memory, mock_db, mock_is_db, mock_memory, mock_user):
         """Test GET /api/memory/summary/personal endpoint."""
         mock_memory.get_category_counts_async.return_value = {"general": 5, "decisions": 3}
@@ -294,7 +296,7 @@ class TestMaintenanceEndpoint:
 
     @patch("cems.db.database.is_database_initialized", return_value=True)
     @patch("cems.db.database.get_database")
-    @patch.object(server_module, "get_scheduler")
+    @patch.object(memory_handlers, "get_scheduler")
     def test_maintenance_consolidation(self, mock_get_scheduler, mock_db, mock_is_db, mock_user):
         """Test POST /api/memory/maintenance endpoint."""
         mock_scheduler = MagicMock()
@@ -372,7 +374,7 @@ class TestProfileEndpoint:
 
     @patch("cems.db.database.is_database_initialized", return_value=True)
     @patch("cems.db.database.get_database")
-    @patch.object(server_module, "get_memory")
+    @patch.object(memory_handlers, "get_memory")
     def test_profile_returns_context(self, mock_get_memory, mock_db, mock_is_db, mock_memory, mock_user):
         """Test GET /api/memory/profile returns formatted context."""
         # Setup mock vectorstore
@@ -423,7 +425,7 @@ class TestProfileEndpoint:
 
     @patch("cems.db.database.is_database_initialized", return_value=True)
     @patch("cems.db.database.get_database")
-    @patch.object(server_module, "get_memory")
+    @patch.object(memory_handlers, "get_memory")
     def test_profile_with_token_budget(self, mock_get_memory, mock_db, mock_is_db, mock_memory, mock_user):
         """Test GET /api/memory/profile respects token_budget parameter."""
         mock_vectorstore = MagicMock()
@@ -456,7 +458,7 @@ class TestProfileEndpoint:
 
     @patch("cems.db.database.is_database_initialized", return_value=True)
     @patch("cems.db.database.get_database")
-    @patch.object(server_module, "get_memory")
+    @patch.object(memory_handlers, "get_memory")
     def test_profile_with_project_filter(self, mock_get_memory, mock_db, mock_is_db, mock_memory, mock_user):
         """Test GET /api/memory/profile filters by project."""
         mock_vectorstore = MagicMock()
@@ -498,7 +500,7 @@ class TestProfileEndpoint:
 
     @patch("cems.db.database.is_database_initialized", return_value=True)
     @patch("cems.db.database.get_database")
-    @patch.object(server_module, "get_memory")
+    @patch.object(memory_handlers, "get_memory")
     def test_profile_empty_context(self, mock_get_memory, mock_db, mock_is_db, mock_memory, mock_user):
         """Test GET /api/memory/profile with no memories returns empty context."""
         mock_vectorstore = MagicMock()
@@ -547,7 +549,7 @@ class TestProfileEndpoint:
 
     @patch("cems.db.database.is_database_initialized", return_value=True)
     @patch("cems.db.database.get_database")
-    @patch.object(server_module, "get_memory")
+    @patch.object(memory_handlers, "get_memory")
     def test_profile_filters_recent_duplicates(self, mock_get_memory, mock_db, mock_is_db, mock_memory, mock_user):
         """Test GET /api/memory/profile filters preferences/guidelines from recent."""
         mock_vectorstore = MagicMock()
@@ -595,7 +597,7 @@ class TestToolLearningEndpoint:
 
     @patch("cems.db.database.is_database_initialized", return_value=True)
     @patch("cems.db.database.get_database")
-    @patch.object(server_module, "get_memory")
+    @patch.object(tool_handlers, "get_memory")
     @patch("cems.llm.extract_tool_learning")
     def test_tool_learning_stores_learning(
         self, mock_extract, mock_get_memory, mock_db, mock_is_db, mock_memory, mock_user
@@ -682,7 +684,7 @@ class TestToolLearningEndpoint:
 
     @patch("cems.db.database.is_database_initialized", return_value=True)
     @patch("cems.db.database.get_database")
-    @patch.object(server_module, "get_memory")
+    @patch.object(tool_handlers, "get_memory")
     @patch("cems.llm.extract_tool_learning")
     def test_tool_learning_no_learning_extracted(
         self, mock_extract, mock_get_memory, mock_db, mock_is_db, mock_memory, mock_user
