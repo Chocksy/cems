@@ -917,6 +917,104 @@ class PgVectorStore:
 
         return {row["category"]: row["count"] for row in rows}
 
+    async def search_by_category(
+        self,
+        user_id: str,
+        category: str,
+        limit: int = 10,
+        include_archived: bool = False,
+    ) -> list[dict[str, Any]]:
+        """Get memories by category without semantic search.
+
+        Directly queries by category field for fast, exact matching.
+        Used for profile retrieval and gate rules.
+
+        Args:
+            user_id: User ID to filter by
+            category: Category to match exactly
+            limit: Maximum results
+            include_archived: Include archived memories
+
+        Returns:
+            List of memory dicts
+        """
+        pool = await self._get_pool()
+
+        conditions = ["user_id = $1", "category = $2"]
+        values: list = [UUID(user_id), category, limit]
+
+        if not include_archived:
+            conditions.append("archived = FALSE")
+            conditions.append("(expires_at IS NULL OR expires_at > NOW())")
+
+        where_clause = " AND ".join(conditions)
+
+        query = f"""
+            SELECT id, content, user_id, team_id, scope, category, tags,
+                   source, source_ref, priority, pinned, pin_reason,
+                   pin_category, archived, access_count, created_at,
+                   updated_at, last_accessed, expires_at
+            FROM memories
+            WHERE {where_clause}
+            ORDER BY priority DESC, created_at DESC
+            LIMIT $3
+        """
+
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(query, *values)
+
+        return [self._row_to_dict(row) for row in rows]
+
+    async def get_recent(
+        self,
+        user_id: str,
+        hours: int = 24,
+        limit: int = 15,
+        include_archived: bool = False,
+    ) -> list[dict[str, Any]]:
+        """Get memories created within the last N hours.
+
+        Used for session profile context injection.
+
+        Args:
+            user_id: User ID to filter by
+            hours: Hours to look back (default 24)
+            limit: Maximum results
+            include_archived: Include archived memories
+
+        Returns:
+            List of memory dicts ordered by recency
+        """
+        pool = await self._get_pool()
+
+        conditions = [
+            "user_id = $1",
+            "created_at > NOW() - INTERVAL '1 hour' * $2",
+        ]
+        values: list = [UUID(user_id), hours, limit]
+
+        if not include_archived:
+            conditions.append("archived = FALSE")
+            conditions.append("(expires_at IS NULL OR expires_at > NOW())")
+
+        where_clause = " AND ".join(conditions)
+
+        query = f"""
+            SELECT id, content, user_id, team_id, scope, category, tags,
+                   source, source_ref, priority, pinned, pin_reason,
+                   pin_category, archived, access_count, created_at,
+                   updated_at, last_accessed, expires_at
+            FROM memories
+            WHERE {where_clause}
+            ORDER BY created_at DESC
+            LIMIT $3
+        """
+
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(query, *values)
+
+        return [self._row_to_dict(row) for row in rows]
+
     # =========================================================================
     # Helpers
     # =========================================================================

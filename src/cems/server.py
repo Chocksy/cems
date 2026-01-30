@@ -478,6 +478,163 @@ def create_http_app():
             logger.error(f"API memory_gate_rules error: {e}", exc_info=True)
             return JSONResponse({"error": str(e)}, status_code=500)
 
+    async def api_memory_profile(request: Request):
+        """REST API endpoint to get session profile context.
+
+        GET /api/memory/profile?project=org/repo&token_budget=2500
+
+        Returns pre-formatted context string for session start injection:
+        - User preferences and guidelines
+        - Recent relevant memories (last 24h)
+        - Gate rules summary
+        - Project-specific context if applicable
+
+        Response: {
+            "success": true,
+            "context": "Pre-formatted context string...",
+            "components": {
+                "preferences": 3,
+                "guidelines": 2,
+                "recent_memories": 5,
+                "gate_rules_count": 4
+            },
+            "token_estimate": 1850
+        }
+        """
+        try:
+            project = request.query_params.get("project")
+            token_budget = int(request.query_params.get("token_budget", "2500"))
+
+            memory = get_memory()
+            await memory._ensure_initialized_async()
+
+            user_id = memory.config.user_id
+            components = {
+                "preferences": [],
+                "guidelines": [],
+                "recent_memories": [],
+                "gate_rules_count": 0,
+                "project_context": [],
+            }
+
+            # 1. Fetch preferences (category: preferences)
+            prefs = await memory._vectorstore.search_by_category(
+                user_id=user_id,
+                category="preferences",
+                limit=10,
+            )
+            components["preferences"] = prefs
+
+            # 2. Fetch guidelines (category: guidelines)
+            guidelines = await memory._vectorstore.search_by_category(
+                user_id=user_id,
+                category="guidelines",
+                limit=10,
+            )
+            components["guidelines"] = guidelines
+
+            # 3. Fetch recent memories (last 24h, any category)
+            recent = await memory._vectorstore.get_recent(
+                user_id=user_id,
+                hours=24,
+                limit=15,
+            )
+            # Filter out preferences/guidelines already included
+            recent = [
+                m for m in recent
+                if m.get("category") not in ("preferences", "guidelines", "gate-rules")
+            ]
+            components["recent_memories"] = recent
+
+            # 4. Gate rules count (for awareness, not full rules)
+            gate_rules = await memory._vectorstore.search_by_category(
+                user_id=user_id,
+                category="gate-rules",
+                limit=50,
+            )
+            components["gate_rules_count"] = len(gate_rules)
+
+            # 5. Project-specific memories if applicable
+            if project:
+                # Search for memories with matching source_ref
+                project_memories = await memory._vectorstore.search_by_category(
+                    user_id=user_id,
+                    category="project",  # Project-specific category
+                    limit=10,
+                )
+                # Filter by source_ref prefix (handle None values)
+                project_memories = [
+                    m for m in project_memories
+                    if (m.get("source_ref") or "").startswith(f"project:{project}")
+                ]
+                components["project_context"] = project_memories
+
+            # Build formatted context string
+            context_parts = []
+
+            if components["preferences"]:
+                pref_list = [f"- {m['content']}" for m in components["preferences"][:5]]
+                context_parts.append("## Your Preferences\n" + "\n".join(pref_list))
+
+            if components["guidelines"]:
+                guide_list = [f"- {m['content']}" for m in components["guidelines"][:5]]
+                context_parts.append("## Guidelines\n" + "\n".join(guide_list))
+
+            if components["gate_rules_count"] > 0:
+                context_parts.append(
+                    f"## Gate Rules\n{components['gate_rules_count']} gate rules active "
+                    "(checked automatically on tool use)"
+                )
+
+            if components["recent_memories"]:
+                recent_list = [
+                    f"- [{m.get('category', 'general')}] {m['content'][:100]}..."
+                    if len(m.get('content', '')) > 100 else f"- [{m.get('category', 'general')}] {m['content']}"
+                    for m in components["recent_memories"][:5]
+                ]
+                context_parts.append("## Recent Context (last 24h)\n" + "\n".join(recent_list))
+
+            if components["project_context"]:
+                proj_list = [f"- {m['content'][:100]}..." for m in components["project_context"][:3]]
+                context_parts.append(f"## Project Context ({project})\n" + "\n".join(proj_list))
+
+            context = "\n\n".join(context_parts) if context_parts else ""
+
+            # Estimate tokens (rough: 4 chars per token)
+            token_estimate = len(context) // 4
+
+            # Truncate if over budget
+            if token_estimate > token_budget and context:
+                # Simple truncation at roughly token_budget * 4 chars
+                max_chars = token_budget * 4
+                context = context[:max_chars] + "\n\n[...truncated]"
+                token_estimate = token_budget
+
+            logger.info(
+                f"[API] Profile: {len(components['preferences'])} prefs, "
+                f"{len(components['guidelines'])} guidelines, "
+                f"{len(components['recent_memories'])} recent, "
+                f"{components['gate_rules_count']} rules, "
+                f"~{token_estimate} tokens"
+            )
+
+            return JSONResponse({
+                "success": True,
+                "context": context,
+                "components": {
+                    "preferences": len(components["preferences"]),
+                    "guidelines": len(components["guidelines"]),
+                    "recent_memories": len(components["recent_memories"]),
+                    "gate_rules_count": components["gate_rules_count"],
+                    "project_context": len(components["project_context"]),
+                },
+                "token_estimate": token_estimate,
+            })
+
+        except Exception as e:
+            logger.error(f"API memory_profile error: {e}", exc_info=True)
+            return JSONResponse({"error": str(e)}, status_code=500)
+
     async def api_session_analyze(request: Request):
         """REST API endpoint to analyze a session transcript and extract learnings.
 
@@ -583,6 +740,138 @@ def create_http_app():
 
         except Exception as e:
             logger.error(f"API session_analyze error: {e}")
+            return JSONResponse({"error": str(e)}, status_code=500)
+
+    async def api_tool_learning(request: Request):
+        """REST API endpoint for incremental tool-based learning.
+
+        POST /api/tool/learning
+        Body: {
+            "tool_name": "Edit",           # Tool that was used
+            "tool_input": {...},           # Tool input (file_path, etc.)
+            "tool_output": "...",          # Tool output summary
+            "session_id": "...",           # Session identifier
+            "context_snippet": "...",      # Recent conversation context
+            "working_dir": "..."           # Optional: project context
+        }
+
+        This endpoint is designed for SuperMemory-style incremental learning:
+        - Called after significant tool completions (Edit, Write, Bash with commits)
+        - Extracts quick learnings without full session analysis
+        - Uses fast LLM calls (haiku) for immediate processing
+
+        Response: {
+            "success": true,
+            "stored": true | false,
+            "memory_id": "...",
+            "reason": "stored" | "skipped_not_learnable" | "skipped_too_brief"
+        }
+        """
+        from cems.llm import extract_tool_learning
+
+        try:
+            body = await request.json()
+            tool_name = body.get("tool_name")
+            tool_input = body.get("tool_input", {})
+            tool_output = body.get("tool_output", "")
+            session_id = body.get("session_id", "unknown")
+            context_snippet = body.get("context_snippet", "")
+            working_dir = body.get("working_dir")
+
+            if not tool_name:
+                return JSONResponse({"error": "tool_name is required"}, status_code=400)
+
+            # Skip non-significant tools (reads, searches don't produce learnings)
+            non_learnable_tools = {"Read", "Glob", "Grep", "LS", "WebFetch", "WebSearch"}
+            if tool_name in non_learnable_tools:
+                return JSONResponse({
+                    "success": True,
+                    "stored": False,
+                    "memory_id": None,
+                    "reason": "skipped_non_learnable_tool",
+                })
+
+            # Skip if no meaningful context
+            if not context_snippet and not tool_output:
+                return JSONResponse({
+                    "success": True,
+                    "stored": False,
+                    "memory_id": None,
+                    "reason": "skipped_no_context",
+                })
+
+            # Build tool context for learning extraction
+            tool_context = f"Tool: {tool_name}\n"
+            if tool_input:
+                if tool_name == "Edit" and "file_path" in tool_input:
+                    tool_context += f"File: {tool_input['file_path']}\n"
+                elif tool_name == "Write" and "file_path" in tool_input:
+                    tool_context += f"Created: {tool_input['file_path']}\n"
+                elif tool_name == "Bash" and "command" in tool_input:
+                    cmd = tool_input.get("command", "")[:200]
+                    desc = tool_input.get("description", "")
+                    tool_context += f"Command: {desc or cmd}\n"
+            if tool_output:
+                tool_context += f"Result: {tool_output[:500]}\n"
+
+            # Extract learning from tool usage
+            learning = extract_tool_learning(
+                tool_context=tool_context,
+                conversation_snippet=context_snippet,
+                working_dir=working_dir,
+            )
+
+            if not learning:
+                return JSONResponse({
+                    "success": True,
+                    "stored": False,
+                    "memory_id": None,
+                    "reason": "skipped_no_learning_extracted",
+                })
+
+            # Store the learning
+            memory = get_memory()
+            content = learning.get("content", "")
+            category = learning.get("category", "learnings")
+            learning_type = learning.get("type", "TOOL")
+
+            # Format with type prefix
+            formatted_content = f"[{learning_type}] {content}"
+            if session_id != "unknown":
+                formatted_content += f" (session: {session_id[:8]})"
+
+            result = await memory.add_async(
+                content=formatted_content,
+                scope="personal",
+                category=category,
+                tags=["tool-learning", tool_name.lower(), learning_type.lower()],
+                infer=False,
+            )
+
+            # Extract memory ID
+            memory_id = None
+            if result and "results" in result:
+                for r in result["results"]:
+                    if r.get("id"):
+                        memory_id = r["id"]
+                        break
+
+            logger.info(f"Tool learning stored: {tool_name} -> {content[:50]}...")
+
+            return JSONResponse({
+                "success": True,
+                "stored": True,
+                "memory_id": memory_id,
+                "reason": "stored",
+                "learning": {
+                    "type": learning_type,
+                    "content": content,
+                    "category": category,
+                },
+            })
+
+        except Exception as e:
+            logger.error(f"API tool_learning error: {e}", exc_info=True)
             return JSONResponse({"error": str(e)}, status_code=500)
 
     async def api_memory_forget(request: Request):
@@ -785,11 +1074,13 @@ def create_http_app():
         Route("/api/memory/maintenance", api_memory_maintenance, methods=["POST"]),
         Route("/api/memory/status", api_memory_status, methods=["GET"]),
         Route("/api/memory/gate-rules", api_memory_gate_rules, methods=["GET"]),
+        Route("/api/memory/profile", api_memory_profile, methods=["GET"]),
         Route("/api/memory/summary/personal", api_memory_summary_personal, methods=["GET"]),
         Route("/api/memory/summary/shared", api_memory_summary_shared, methods=["GET"]),
         Route("/api/session/analyze", api_session_analyze, methods=["POST"]),
+        Route("/api/tool/learning", api_tool_learning, methods=["POST"]),
     ]
-    logger.info("REST API routes enabled (/api/memory/*, /api/session/*)")
+    logger.info("REST API routes enabled (/api/memory/*, /api/session/*, /api/tool/*)")
 
     # Add admin routes (always available in HTTP mode with database)
     from cems.admin.routes import admin_routes

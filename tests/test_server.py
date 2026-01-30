@@ -365,3 +365,397 @@ class TestAuthentication:
 
             assert response.status_code == 401
             assert "Invalid API key" in response.json()["error"]
+
+
+class TestProfileEndpoint:
+    """Tests for /api/memory/profile endpoint."""
+
+    @patch("cems.db.database.is_database_initialized", return_value=True)
+    @patch("cems.db.database.get_database")
+    @patch.object(server_module, "get_memory")
+    def test_profile_returns_context(self, mock_get_memory, mock_db, mock_is_db, mock_memory, mock_user):
+        """Test GET /api/memory/profile returns formatted context."""
+        # Setup mock vectorstore
+        mock_vectorstore = MagicMock()
+        mock_vectorstore.search_by_category = AsyncMock(side_effect=[
+            # preferences
+            [{"id": "pref-1", "content": "Use Python for backend", "category": "preferences"}],
+            # guidelines
+            [{"id": "guide-1", "content": "Always write tests", "category": "guidelines"}],
+            # gate-rules
+            [{"id": "gate-1", "content": "Block after 10pm", "category": "gate-rules"}],
+            # project context (empty for no project)
+            [],
+        ])
+        mock_vectorstore.get_recent = AsyncMock(return_value=[
+            {"id": "recent-1", "content": "Discussed API design", "category": "decisions"},
+        ])
+
+        mock_memory._vectorstore = mock_vectorstore
+        mock_memory._ensure_initialized_async = AsyncMock()
+        mock_get_memory.return_value = mock_memory
+
+        mock_session = MagicMock()
+        mock_user_service = MagicMock()
+        mock_user_service.get_user_by_api_key.return_value = mock_user
+        mock_db.return_value.session.return_value.__enter__ = MagicMock(return_value=mock_session)
+        mock_db.return_value.session.return_value.__exit__ = MagicMock(return_value=False)
+
+        with patch("cems.admin.services.UserService", return_value=mock_user_service):
+            from cems.server import create_http_app
+            app = create_http_app()
+            client = TestClient(app)
+
+            response = client.get(
+                "/api/memory/profile",
+                headers={"Authorization": "Bearer test-api-key"}
+            )
+
+            assert response.status_code == 200
+            data = response.json()
+            assert data["success"] is True
+            assert "context" in data
+            assert "components" in data
+            assert data["components"]["preferences"] == 1
+            assert data["components"]["guidelines"] == 1
+            assert data["components"]["gate_rules_count"] == 1
+            assert "token_estimate" in data
+
+    @patch("cems.db.database.is_database_initialized", return_value=True)
+    @patch("cems.db.database.get_database")
+    @patch.object(server_module, "get_memory")
+    def test_profile_with_token_budget(self, mock_get_memory, mock_db, mock_is_db, mock_memory, mock_user):
+        """Test GET /api/memory/profile respects token_budget parameter."""
+        mock_vectorstore = MagicMock()
+        mock_vectorstore.search_by_category = AsyncMock(return_value=[])
+        mock_vectorstore.get_recent = AsyncMock(return_value=[])
+
+        mock_memory._vectorstore = mock_vectorstore
+        mock_memory._ensure_initialized_async = AsyncMock()
+        mock_get_memory.return_value = mock_memory
+
+        mock_session = MagicMock()
+        mock_user_service = MagicMock()
+        mock_user_service.get_user_by_api_key.return_value = mock_user
+        mock_db.return_value.session.return_value.__enter__ = MagicMock(return_value=mock_session)
+        mock_db.return_value.session.return_value.__exit__ = MagicMock(return_value=False)
+
+        with patch("cems.admin.services.UserService", return_value=mock_user_service):
+            from cems.server import create_http_app
+            app = create_http_app()
+            client = TestClient(app)
+
+            response = client.get(
+                "/api/memory/profile?token_budget=1000",
+                headers={"Authorization": "Bearer test-api-key"}
+            )
+
+            assert response.status_code == 200
+            data = response.json()
+            assert data["success"] is True
+
+    @patch("cems.db.database.is_database_initialized", return_value=True)
+    @patch("cems.db.database.get_database")
+    @patch.object(server_module, "get_memory")
+    def test_profile_with_project_filter(self, mock_get_memory, mock_db, mock_is_db, mock_memory, mock_user):
+        """Test GET /api/memory/profile filters by project."""
+        mock_vectorstore = MagicMock()
+        mock_vectorstore.search_by_category = AsyncMock(side_effect=[
+            [],  # preferences
+            [],  # guidelines
+            [],  # gate-rules
+            [  # project context
+                {"id": "proj-1", "content": "CEMS uses pgvector", "source_ref": "project:org/cems"},
+            ],
+        ])
+        mock_vectorstore.get_recent = AsyncMock(return_value=[])
+
+        mock_memory._vectorstore = mock_vectorstore
+        mock_memory._ensure_initialized_async = AsyncMock()
+        mock_get_memory.return_value = mock_memory
+
+        mock_session = MagicMock()
+        mock_user_service = MagicMock()
+        mock_user_service.get_user_by_api_key.return_value = mock_user
+        mock_db.return_value.session.return_value.__enter__ = MagicMock(return_value=mock_session)
+        mock_db.return_value.session.return_value.__exit__ = MagicMock(return_value=False)
+
+        with patch("cems.admin.services.UserService", return_value=mock_user_service):
+            from cems.server import create_http_app
+            app = create_http_app()
+            client = TestClient(app)
+
+            response = client.get(
+                "/api/memory/profile?project=org/cems",
+                headers={"Authorization": "Bearer test-api-key"}
+            )
+
+            assert response.status_code == 200
+            data = response.json()
+            assert data["success"] is True
+            # search_by_category should be called 4 times (preferences, guidelines, gate-rules, project)
+            assert mock_vectorstore.search_by_category.call_count == 4
+
+    @patch("cems.db.database.is_database_initialized", return_value=True)
+    @patch("cems.db.database.get_database")
+    @patch.object(server_module, "get_memory")
+    def test_profile_empty_context(self, mock_get_memory, mock_db, mock_is_db, mock_memory, mock_user):
+        """Test GET /api/memory/profile with no memories returns empty context."""
+        mock_vectorstore = MagicMock()
+        mock_vectorstore.search_by_category = AsyncMock(return_value=[])
+        mock_vectorstore.get_recent = AsyncMock(return_value=[])
+
+        mock_memory._vectorstore = mock_vectorstore
+        mock_memory._ensure_initialized_async = AsyncMock()
+        mock_get_memory.return_value = mock_memory
+
+        mock_session = MagicMock()
+        mock_user_service = MagicMock()
+        mock_user_service.get_user_by_api_key.return_value = mock_user
+        mock_db.return_value.session.return_value.__enter__ = MagicMock(return_value=mock_session)
+        mock_db.return_value.session.return_value.__exit__ = MagicMock(return_value=False)
+
+        with patch("cems.admin.services.UserService", return_value=mock_user_service):
+            from cems.server import create_http_app
+            app = create_http_app()
+            client = TestClient(app)
+
+            response = client.get(
+                "/api/memory/profile",
+                headers={"Authorization": "Bearer test-api-key"}
+            )
+
+            assert response.status_code == 200
+            data = response.json()
+            assert data["success"] is True
+            assert data["context"] == ""
+            assert data["components"]["preferences"] == 0
+            assert data["components"]["guidelines"] == 0
+            assert data["components"]["recent_memories"] == 0
+            assert data["token_estimate"] == 0
+
+    @patch("cems.db.database.is_database_initialized", return_value=True)
+    def test_profile_requires_auth(self, mock_is_db):
+        """Test GET /api/memory/profile requires authentication."""
+        from cems.server import create_http_app
+        app = create_http_app()
+        client = TestClient(app)
+
+        response = client.get("/api/memory/profile")
+
+        assert response.status_code == 401
+
+    @patch("cems.db.database.is_database_initialized", return_value=True)
+    @patch("cems.db.database.get_database")
+    @patch.object(server_module, "get_memory")
+    def test_profile_filters_recent_duplicates(self, mock_get_memory, mock_db, mock_is_db, mock_memory, mock_user):
+        """Test GET /api/memory/profile filters preferences/guidelines from recent."""
+        mock_vectorstore = MagicMock()
+        mock_vectorstore.search_by_category = AsyncMock(side_effect=[
+            [{"id": "pref-1", "content": "Prefer Python", "category": "preferences"}],
+            [{"id": "guide-1", "content": "Write tests", "category": "guidelines"}],
+            [],  # gate-rules
+        ])
+        # Recent includes preferences/guidelines that should be filtered out
+        mock_vectorstore.get_recent = AsyncMock(return_value=[
+            {"id": "pref-1", "content": "Prefer Python", "category": "preferences"},  # Should be filtered
+            {"id": "guide-1", "content": "Write tests", "category": "guidelines"},  # Should be filtered
+            {"id": "decision-1", "content": "Use REST API", "category": "decisions"},  # Should remain
+        ])
+
+        mock_memory._vectorstore = mock_vectorstore
+        mock_memory._ensure_initialized_async = AsyncMock()
+        mock_get_memory.return_value = mock_memory
+
+        mock_session = MagicMock()
+        mock_user_service = MagicMock()
+        mock_user_service.get_user_by_api_key.return_value = mock_user
+        mock_db.return_value.session.return_value.__enter__ = MagicMock(return_value=mock_session)
+        mock_db.return_value.session.return_value.__exit__ = MagicMock(return_value=False)
+
+        with patch("cems.admin.services.UserService", return_value=mock_user_service):
+            from cems.server import create_http_app
+            app = create_http_app()
+            client = TestClient(app)
+
+            response = client.get(
+                "/api/memory/profile",
+                headers={"Authorization": "Bearer test-api-key"}
+            )
+
+            assert response.status_code == 200
+            data = response.json()
+            assert data["success"] is True
+            # Only decision should remain in recent_memories count
+            assert data["components"]["recent_memories"] == 1
+
+
+class TestToolLearningEndpoint:
+    """Tests for /api/tool/learning endpoint."""
+
+    @patch("cems.db.database.is_database_initialized", return_value=True)
+    @patch("cems.db.database.get_database")
+    @patch.object(server_module, "get_memory")
+    @patch("cems.llm.extract_tool_learning")
+    def test_tool_learning_stores_learning(
+        self, mock_extract, mock_get_memory, mock_db, mock_is_db, mock_memory, mock_user
+    ):
+        """Test POST /api/tool/learning stores extracted learning."""
+        # Setup mock learning extraction
+        mock_extract.return_value = {
+            "type": "WORKING_SOLUTION",
+            "content": "Use pgvector for hybrid search",
+            "confidence": 0.8,
+            "category": "database",
+        }
+
+        mock_memory.add_async = AsyncMock(return_value={
+            "results": [{"id": "mem-123", "event": "ADD"}]
+        })
+        mock_memory._ensure_initialized_async = AsyncMock()
+        mock_get_memory.return_value = mock_memory
+
+        mock_session = MagicMock()
+        mock_user_service = MagicMock()
+        mock_user_service.get_user_by_api_key.return_value = mock_user
+        mock_db.return_value.session.return_value.__enter__ = MagicMock(return_value=mock_session)
+        mock_db.return_value.session.return_value.__exit__ = MagicMock(return_value=False)
+
+        with patch("cems.admin.services.UserService", return_value=mock_user_service):
+            from cems.server import create_http_app
+            app = create_http_app()
+            client = TestClient(app)
+
+            response = client.post(
+                "/api/tool/learning",
+                json={
+                    "tool_name": "Edit",
+                    "tool_input": {"file_path": "/src/db.py"},
+                    "tool_output": "Success",
+                    "session_id": "test-session",
+                    "context_snippet": "Working on database setup",
+                },
+                headers={"Authorization": "Bearer test-api-key"}
+            )
+
+            assert response.status_code == 200
+            data = response.json()
+            assert data["success"] is True
+            assert data["stored"] is True
+            assert data["memory_id"] == "mem-123"
+            assert data["learning"]["type"] == "WORKING_SOLUTION"
+
+    @patch("cems.db.database.is_database_initialized", return_value=True)
+    @patch("cems.db.database.get_database")
+    @patch("cems.llm.extract_tool_learning")
+    def test_tool_learning_skips_non_learnable_tools(
+        self, mock_extract, mock_db, mock_is_db, mock_user
+    ):
+        """Test POST /api/tool/learning skips Read/Glob/Grep tools."""
+        mock_session = MagicMock()
+        mock_user_service = MagicMock()
+        mock_user_service.get_user_by_api_key.return_value = mock_user
+        mock_db.return_value.session.return_value.__enter__ = MagicMock(return_value=mock_session)
+        mock_db.return_value.session.return_value.__exit__ = MagicMock(return_value=False)
+
+        with patch("cems.admin.services.UserService", return_value=mock_user_service):
+            from cems.server import create_http_app
+            app = create_http_app()
+            client = TestClient(app)
+
+            response = client.post(
+                "/api/tool/learning",
+                json={
+                    "tool_name": "Read",
+                    "tool_input": {"file_path": "/src/db.py"},
+                },
+                headers={"Authorization": "Bearer test-api-key"}
+            )
+
+            assert response.status_code == 200
+            data = response.json()
+            assert data["success"] is True
+            assert data["stored"] is False
+            assert data["reason"] == "skipped_non_learnable_tool"
+            # extract_tool_learning should not be called
+            mock_extract.assert_not_called()
+
+    @patch("cems.db.database.is_database_initialized", return_value=True)
+    @patch("cems.db.database.get_database")
+    @patch.object(server_module, "get_memory")
+    @patch("cems.llm.extract_tool_learning")
+    def test_tool_learning_no_learning_extracted(
+        self, mock_extract, mock_get_memory, mock_db, mock_is_db, mock_memory, mock_user
+    ):
+        """Test POST /api/tool/learning handles no learning extracted."""
+        mock_extract.return_value = None  # No learning extracted
+
+        mock_memory._ensure_initialized_async = AsyncMock()
+        mock_get_memory.return_value = mock_memory
+
+        mock_session = MagicMock()
+        mock_user_service = MagicMock()
+        mock_user_service.get_user_by_api_key.return_value = mock_user
+        mock_db.return_value.session.return_value.__enter__ = MagicMock(return_value=mock_session)
+        mock_db.return_value.session.return_value.__exit__ = MagicMock(return_value=False)
+
+        with patch("cems.admin.services.UserService", return_value=mock_user_service):
+            from cems.server import create_http_app
+            app = create_http_app()
+            client = TestClient(app)
+
+            response = client.post(
+                "/api/tool/learning",
+                json={
+                    "tool_name": "Edit",
+                    "tool_input": {"file_path": "/src/db.py"},
+                    "tool_output": "Success",
+                },
+                headers={"Authorization": "Bearer test-api-key"}
+            )
+
+            assert response.status_code == 200
+            data = response.json()
+            assert data["success"] is True
+            assert data["stored"] is False
+            assert data["reason"] == "skipped_no_learning_extracted"
+
+    @patch("cems.db.database.is_database_initialized", return_value=True)
+    @patch("cems.db.database.get_database")
+    def test_tool_learning_requires_tool_name(self, mock_db, mock_is_db, mock_user):
+        """Test POST /api/tool/learning requires tool_name."""
+        mock_session = MagicMock()
+        mock_user_service = MagicMock()
+        mock_user_service.get_user_by_api_key.return_value = mock_user
+        mock_db.return_value.session.return_value.__enter__ = MagicMock(return_value=mock_session)
+        mock_db.return_value.session.return_value.__exit__ = MagicMock(return_value=False)
+
+        with patch("cems.admin.services.UserService", return_value=mock_user_service):
+            from cems.server import create_http_app
+            app = create_http_app()
+            client = TestClient(app)
+
+            response = client.post(
+                "/api/tool/learning",
+                json={
+                    "tool_input": {"file_path": "/src/db.py"},
+                },
+                headers={"Authorization": "Bearer test-api-key"}
+            )
+
+            assert response.status_code == 400
+            assert "tool_name is required" in response.json()["error"]
+
+    @patch("cems.db.database.is_database_initialized", return_value=True)
+    def test_tool_learning_requires_auth(self, mock_is_db):
+        """Test POST /api/tool/learning requires authentication."""
+        from cems.server import create_http_app
+        app = create_http_app()
+        client = TestClient(app)
+
+        response = client.post(
+            "/api/tool/learning",
+            json={"tool_name": "Edit"}
+        )
+
+        assert response.status_code == 401

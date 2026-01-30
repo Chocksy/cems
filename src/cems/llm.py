@@ -793,3 +793,123 @@ def _parse_learnings_response(response: str) -> list[dict]:
     except json.JSONDecodeError:
         logger.warning(f"Failed to parse learnings JSON: {response[:200]}")
         return []
+
+
+def extract_tool_learning(
+    tool_context: str,
+    conversation_snippet: str = "",
+    working_dir: str | None = None,
+    model: str | None = None,
+) -> dict | None:
+    """Extract a single learning from tool usage context.
+
+    This is a lightweight version of extract_session_learnings designed
+    for incremental tool-based learning (SuperMemory-style).
+
+    Args:
+        tool_context: Description of the tool that was used (name, input, output)
+        conversation_snippet: Recent conversation context (last few messages)
+        working_dir: Optional working directory for project context
+        model: Optional model override (defaults to haiku for speed)
+
+    Returns:
+        Learning dict with keys (type, content, category, confidence) or None if
+        nothing worth storing.
+    """
+    # Skip if context is too brief
+    total_context = tool_context + conversation_snippet
+    if len(total_context) < 100:
+        logger.debug("Tool context too brief for learning extraction")
+        return None
+
+    # Build context
+    context_parts = []
+    if working_dir:
+        # Extract project name from path
+        project_name = working_dir.split("/")[-1] if "/" in working_dir else working_dir
+        context_parts.append(f"Project: {project_name}")
+
+    context_section = "\n".join(context_parts) if context_parts else ""
+
+    system_prompt = """You are a Tool Learning Extractor. Given a tool usage and conversation context, extract ONE meaningful learning if present.
+
+## Learning Types
+- WORKING_SOLUTION - A pattern, command, or approach that worked
+- ERROR_FIX - How an error was diagnosed and fixed
+- DECISION - A design/architecture decision with reasoning
+- USER_PREFERENCE - A user preference about tools, styles, or workflows
+
+## Output Format
+Return a single JSON object OR null if nothing worth remembering.
+
+{
+  "type": "WORKING_SOLUTION",
+  "content": "Clear, actionable learning (1-2 sentences)",
+  "confidence": 0.7,
+  "category": "topic"
+}
+
+Be selective - only extract if there's a genuine learning, not routine operations.
+Return null for routine reads, searches, or trivial edits."""
+
+    prompt = f"""Analyze this tool usage and extract ONE learning if significant.
+
+{f"## Context\\n{context_section}\\n" if context_section else ""}
+## Tool Usage
+{tool_context}
+
+{f"## Recent Conversation\\n{conversation_snippet[:1000]}\\n" if conversation_snippet else ""}
+## Instructions
+If this represents a meaningful pattern, fix, decision, or preference, extract it.
+If it's routine (just reading files, simple searches), return null.
+
+Return ONLY valid JSON (object or null)."""
+
+    try:
+        client = get_client()
+        response = client.complete(
+            prompt=prompt,
+            system=system_prompt,
+            max_tokens=500,  # Short response expected
+            temperature=0.2,  # Lower temperature for consistency
+            model=model or "openai/gpt-4o-mini",
+        )
+
+        # Parse response
+        response = response.strip()
+
+        # Handle null response
+        if response.lower() in ("null", "none", "{}"):
+            return None
+
+        # Remove markdown code blocks if present
+        if response.startswith("```"):
+            import re
+            match = re.search(r"```(?:json)?\s*([\s\S]*?)```", response)
+            if match:
+                response = match.group(1).strip()
+
+        import json
+        learning = json.loads(response)
+
+        if not learning or not isinstance(learning, dict):
+            return None
+
+        # Validate learning
+        if learning.get("type") not in LEARNING_TYPES:
+            return None
+        if not learning.get("content"):
+            return None
+        if learning.get("confidence", 0) < 0.5:  # Higher threshold for tool learning
+            return None
+
+        return {
+            "type": learning["type"],
+            "content": str(learning["content"])[:500],
+            "confidence": float(learning.get("confidence", 0.7)),
+            "category": str(learning.get("category", "general"))[:50],
+        }
+
+    except Exception as e:
+        logger.warning(f"Failed to extract tool learning: {e}")
+        return None

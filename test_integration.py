@@ -292,6 +292,116 @@ def test_maintenance() -> tuple[bool, str]:
         return False, str(e)
 
 
+def test_profile_endpoint() -> tuple[bool, str]:
+    """Test GET /api/memory/profile endpoint for session context injection."""
+    try:
+        result = call_api("GET", "/api/memory/profile?token_budget=2000")
+
+        if not result.get("success"):
+            return False, f"failed: {result.get('error', 'unknown error')}"
+
+        # Verify expected response structure
+        if "context" not in result:
+            return False, "missing 'context' field"
+        if "components" not in result:
+            return False, "missing 'components' field"
+        if "token_estimate" not in result:
+            return False, "missing 'token_estimate' field"
+
+        components = result.get("components", {})
+        prefs = components.get("preferences", 0)
+        guidelines = components.get("guidelines", 0)
+        recent = components.get("recent_memories", 0)
+        gates = components.get("gate_rules_count", 0)
+        tokens = result.get("token_estimate", 0)
+
+        return True, f"prefs={prefs}, guidelines={guidelines}, recent={recent}, gates={gates}, ~{tokens} tokens"
+    except Exception as e:
+        return False, str(e)
+
+
+def test_profile_with_project() -> tuple[bool, str]:
+    """Test GET /api/memory/profile with project parameter."""
+    try:
+        result = call_api("GET", "/api/memory/profile?project=testorg/testrepo&token_budget=1500")
+
+        if not result.get("success"):
+            return False, f"failed: {result.get('error', 'unknown error')}"
+
+        # Should still return valid structure even if no project memories exist
+        if "context" not in result or "components" not in result:
+            return False, "missing expected fields"
+
+        return True, f"project-scoped profile returned"
+    except Exception as e:
+        return False, str(e)
+
+
+def test_tool_learning_endpoint() -> tuple[bool, str]:
+    """Test POST /api/tool/learning endpoint for incremental learning."""
+    try:
+        # Test with a learnable tool (Edit)
+        result = call_api("POST", "/api/tool/learning", {
+            "tool_name": "Edit",
+            "tool_input": {"file_path": "/src/test.py"},
+            "tool_output": "Success",
+            "session_id": "integration-test-session",
+            "context_snippet": "Implementing new feature for database connection pooling",
+        })
+
+        if not result.get("success"):
+            return False, f"failed: {result.get('error', 'unknown error')}"
+
+        stored = result.get("stored", False)
+        reason = result.get("reason", "unknown")
+
+        # It may or may not store depending on LLM extraction
+        return True, f"stored={stored}, reason={reason}"
+    except Exception as e:
+        return False, str(e)
+
+
+def test_tool_learning_skips_reads() -> tuple[bool, str]:
+    """Test that /api/tool/learning skips non-learnable tools like Read."""
+    try:
+        result = call_api("POST", "/api/tool/learning", {
+            "tool_name": "Read",
+            "tool_input": {"file_path": "/src/test.py"},
+        })
+
+        if not result.get("success"):
+            return False, f"failed: {result.get('error', 'unknown error')}"
+
+        stored = result.get("stored", True)
+        reason = result.get("reason", "")
+
+        if stored:
+            return False, "Read tool should NOT store learnings"
+
+        if reason != "skipped_non_learnable_tool":
+            return False, f"unexpected reason: {reason}"
+
+        return True, "correctly skipped Read tool"
+    except Exception as e:
+        return False, str(e)
+
+
+def test_gate_rules_endpoint() -> tuple[bool, str]:
+    """Test GET /api/memory/gate-rules endpoint."""
+    try:
+        result = call_api("GET", "/api/memory/gate-rules")
+
+        if not result.get("success"):
+            return False, f"failed: {result.get('error', 'unknown error')}"
+
+        rules = result.get("rules", [])
+        count = result.get("count", 0)
+
+        return True, f"found {count} gate rules"
+    except Exception as e:
+        return False, str(e)
+
+
 def test_memory_add_with_source_ref() -> tuple[bool, str]:
     """Test POST /api/memory/add with source_ref for project-scoped recall."""
     import time
@@ -622,6 +732,13 @@ def run_all_tests():
         ("Summary", test_memory_summary),
         ("Forget", test_memory_forget),
         ("Maintenance", test_maintenance),
+        # New endpoints for SessionStart hook support
+        ("Profile Endpoint", test_profile_endpoint),
+        ("Profile (project)", test_profile_with_project),
+        ("Gate Rules", test_gate_rules_endpoint),
+        # New endpoints for tool-based learning (SuperMemory-style)
+        ("Tool Learning", test_tool_learning_endpoint),
+        ("Tool Learning (skip Read)", test_tool_learning_skips_reads),
     ]
     
     results = []
