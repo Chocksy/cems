@@ -130,6 +130,7 @@ class PgVectorStore:
         pin_reason: str | None = None,
         pin_category: str | None = None,
         expires_at: datetime | None = None,
+        created_at: datetime | None = None,
     ) -> str:
         """Add a memory to the store.
 
@@ -148,6 +149,7 @@ class PgVectorStore:
             pin_reason: Reason for pinning
             pin_category: Pin category
             expires_at: Expiration timestamp
+            created_at: Optional historical timestamp (for imports/evals)
 
         Returns:
             Memory ID as string (UUID)
@@ -161,32 +163,66 @@ class PgVectorStore:
         memory_id = uuid4()
 
         async with pool.acquire() as conn:
-            await conn.execute(
-                """
-                INSERT INTO memories (
-                    id, content, embedding, user_id, team_id, scope, category,
-                    tags, source, source_ref, priority, pinned, pin_reason,
-                    pin_category, expires_at
-                ) VALUES (
-                    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15
+            if created_at:
+                # Use provided timestamp for created_at only
+                # Keep last_accessed as current time to avoid time decay penalties
+                # This is important for eval/import scenarios where we want
+                # historical timestamps but normal recency scoring
+                await conn.execute(
+                    """
+                    INSERT INTO memories (
+                        id, content, embedding, user_id, team_id, scope, category,
+                        tags, source, source_ref, priority, pinned, pin_reason,
+                        pin_category, expires_at, created_at, updated_at
+                    ) VALUES (
+                        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $16
+                    )
+                    """,
+                    memory_id,
+                    content,
+                    embedding,
+                    user_uuid,
+                    team_uuid,
+                    scope,
+                    category,
+                    tags or [],
+                    source,
+                    source_ref,
+                    priority,
+                    pinned,
+                    pin_reason,
+                    pin_category,
+                    expires_at,
+                    created_at,  # Only for created_at and updated_at; last_accessed uses DB default (now)
                 )
-                """,
-                memory_id,
-                content,
-                embedding,
-                user_uuid,
-                team_uuid,
-                scope,
-                category,
-                tags or [],
-                source,
-                source_ref,
-                priority,
-                pinned,
-                pin_reason,
-                pin_category,
-                expires_at,
-            )
+            else:
+                # Use database defaults for current time
+                await conn.execute(
+                    """
+                    INSERT INTO memories (
+                        id, content, embedding, user_id, team_id, scope, category,
+                        tags, source, source_ref, priority, pinned, pin_reason,
+                        pin_category, expires_at
+                    ) VALUES (
+                        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15
+                    )
+                    """,
+                    memory_id,
+                    content,
+                    embedding,
+                    user_uuid,
+                    team_uuid,
+                    scope,
+                    category,
+                    tags or [],
+                    source,
+                    source_ref,
+                    priority,
+                    pinned,
+                    pin_reason,
+                    pin_category,
+                    expires_at,
+                )
 
         logger.debug(f"Added memory {memory_id}")
         return str(memory_id)

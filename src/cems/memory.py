@@ -318,8 +318,14 @@ class CEMSMemory:
         ttl_hours: int | None = None,
         pinned: bool = False,
         pin_reason: str | None = None,
+        timestamp: datetime | None = None,
     ) -> dict[str, Any]:
-        """Async version of add(). Use this from async contexts (HTTP server)."""
+        """Async version of add(). Use this from async contexts (HTTP server).
+
+        Args:
+            timestamp: Optional historical timestamp for the memory (for imports/evals).
+                      If provided, used as created_at instead of current time.
+        """
         await self._ensure_initialized_async()
         assert self._vectorstore is not None
         assert self._embedder is not None
@@ -366,6 +372,7 @@ class CEMSMemory:
                     pinned=pinned,
                     pin_reason=pin_reason,
                     expires_at=expires_at,
+                    created_at=timestamp,  # For historical imports
                 )
 
                 results.append({

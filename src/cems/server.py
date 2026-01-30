@@ -242,7 +242,8 @@ def create_http_app():
             "source_ref": "project:org/repo"  (optional, for project-scoped recall),
             "ttl_hours": 24  (optional, memory expires after this many hours),
             "pinned": true/false  (optional, default false - pinned memories never auto-prune),
-            "pin_reason": "..."  (optional, reason for pinning)
+            "pin_reason": "..."  (optional, reason for pinning),
+            "timestamp": "2023-04-10T17:50:00Z"  (optional, ISO format for historical imports)
         }
 
         Note: Set infer=false for bulk imports (100-200ms vs 1-10s per memory).
@@ -250,6 +251,7 @@ def create_http_app():
 
         Use ttl_hours for short-term session memories that should auto-expire.
         Use pinned=true for important memories like gate rules or guidelines.
+        Use timestamp for historical imports (e.g., eval benchmarks with event dates).
         """
         try:
             body = await request.json()
@@ -267,6 +269,16 @@ def create_http_app():
             ttl_hours = body.get("ttl_hours")  # Optional: memory expires after N hours
             pinned = body.get("pinned", False)  # Optional: pin memory (never auto-prune)
             pin_reason = body.get("pin_reason")  # Optional: reason for pinning
+            timestamp_str = body.get("timestamp")  # Optional: historical timestamp (ISO format)
+
+            # Parse timestamp if provided
+            timestamp = None
+            if timestamp_str:
+                from datetime import datetime
+                try:
+                    timestamp = datetime.fromisoformat(timestamp_str.replace("Z", "+00:00"))
+                except ValueError:
+                    return JSONResponse({"error": "Invalid timestamp format. Use ISO format."}, status_code=400)
 
             memory = get_memory()
             result = await memory.add_async(
@@ -279,6 +291,7 @@ def create_http_app():
                 ttl_hours=ttl_hours,
                 pinned=pinned,
                 pin_reason=pin_reason,
+                timestamp=timestamp,
             )
 
             return JSONResponse({

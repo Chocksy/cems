@@ -28,11 +28,13 @@ OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
 # Model mapping for OpenRouter (provider/model format)
 OPENROUTER_MODELS = {
-    # Default models - using GPT-4o-mini for reliability and system prompt support
-    "default": "openai/gpt-4o-mini",
-    "fast": "openai/gpt-4o-mini",
+    # Default models - using Qwen3 for speed (via Cerebras/Groq when available)
+    "default": "qwen/qwen3-32b",
+    "fast": "qwen/qwen3-32b",  # ~2500 t/s on Cerebras
     "smart": "anthropic/claude-sonnet-4",
     # Explicit mappings from common model names
+    "qwen3-32b": "qwen/qwen3-32b",
+    "qwen3-8b": "qwen/qwen3-8b",
     "gpt-4o-mini": "openai/gpt-4o-mini",
     "gpt-4o": "openai/gpt-4o",
     "grok-4.1-fast": "x-ai/grok-4.1-fast",
@@ -40,6 +42,10 @@ OPENROUTER_MODELS = {
     "claude-3-sonnet-20240229": "anthropic/claude-3-sonnet",
     "claude-sonnet-4-20250514": "anthropic/claude-sonnet-4",
 }
+
+# Fast inference providers (Cerebras ~3000 t/s, Groq ~900 t/s)
+# Use these for speed-critical operations like query synthesis, reranking
+FAST_PROVIDERS = ["cerebras", "groq", "sambanova"]
 
 
 class OpenRouterClient:
@@ -57,6 +63,7 @@ class OpenRouterClient:
         self,
         api_key: str | None = None,
         model: str | None = None,
+        provider: str | None = None,
         site_url: str | None = None,
         site_name: str | None = None,
     ):
@@ -64,7 +71,9 @@ class OpenRouterClient:
 
         Args:
             api_key: OpenRouter API key. Defaults to OPENROUTER_API_KEY env var.
-            model: Model in OpenRouter format. Defaults to CEMS_LLM_MODEL or anthropic/claude-3-haiku.
+            model: Model in OpenRouter format. Defaults to CEMS_LLM_MODEL or qwen/qwen3-32b.
+            provider: Preferred provider slug (e.g., "cerebras", "groq"). Defaults to CEMS_LLM_PROVIDER.
+                     When set, routes requests to this provider for faster inference.
             site_url: Attribution URL for OpenRouter dashboard.
             site_name: Attribution name for OpenRouter dashboard.
         """
@@ -76,6 +85,7 @@ class OpenRouterClient:
             )
 
         self.model = self._resolve_model(model or os.getenv("CEMS_LLM_MODEL"))
+        self.provider = provider or os.getenv("CEMS_LLM_PROVIDER")  # e.g., "cerebras" or "groq"
         self.site_url = site_url or os.getenv("CEMS_OPENROUTER_SITE_URL", "https://github.com/cems")
         self.site_name = site_name or os.getenv("CEMS_OPENROUTER_SITE_NAME", "CEMS Memory Server")
 
@@ -118,6 +128,7 @@ class OpenRouterClient:
         max_tokens: int = 1000,
         temperature: float = 0.3,
         model: str | None = None,
+        provider: str | None = None,
     ) -> str:
         """Generate a completion from the LLM.
 
@@ -127,6 +138,7 @@ class OpenRouterClient:
             max_tokens: Maximum response tokens
             temperature: Sampling temperature (0-2)
             model: Override model for this call
+            provider: Override provider for this call (e.g., "cerebras", "groq")
 
         Returns:
             Generated text response
@@ -136,12 +148,25 @@ class OpenRouterClient:
             messages.append({"role": "system", "content": system})
         messages.append({"role": "user", "content": prompt})
 
-        response = self._client.chat.completions.create(
-            model=model or self.model,
-            messages=messages,
-            max_tokens=max_tokens,
-            temperature=temperature,
-        )
+        # Build request kwargs
+        kwargs: dict = {
+            "model": model or self.model,
+            "messages": messages,
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+        }
+
+        # Add provider routing if specified (for faster inference via Cerebras/Groq)
+        effective_provider = provider or self.provider
+        if effective_provider:
+            kwargs["extra_body"] = {
+                "provider": {
+                    "order": [effective_provider],
+                    "allow_fallbacks": True,  # Fall back to other providers if unavailable
+                }
+            }
+
+        response = self._client.chat.completions.create(**kwargs)
         return response.choices[0].message.content or ""
 
 

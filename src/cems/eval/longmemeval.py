@@ -104,18 +104,32 @@ class CEMSEvalClient:
         session_id: str,
         timestamp: str | None = None,
     ) -> str | None:
-        """Add a memory and return its ID."""
+        """Add a memory and return its ID.
+
+        Args:
+            content: Memory content
+            session_id: Session identifier for tracking
+            timestamp: Optional timestamp in format "2023/04/10 (Mon) 17:50"
+        """
         try:
+            payload = {
+                "content": content,
+                "category": "eval-session",
+                "infer": False,  # Fast mode - no LLM extraction
+                "source_ref": f"longmemeval:{session_id}",
+                "tags": ["longmemeval", session_id],
+            }
+
+            # Convert LongMemEval timestamp to ISO format if provided
+            if timestamp:
+                iso_timestamp = self._parse_timestamp(timestamp)
+                if iso_timestamp:
+                    payload["timestamp"] = iso_timestamp
+
             resp = self.client.post(
                 f"{self.api_url}/api/memory/add",
                 headers=self._headers(),
-                json={
-                    "content": content,
-                    "category": "eval-session",
-                    "infer": False,  # Fast mode - no LLM extraction
-                    "source_ref": f"longmemeval:{session_id}",
-                    "tags": ["longmemeval", session_id],
-                },
+                json=payload,
             )
             data = resp.json()
             if data.get("success"):
@@ -127,6 +141,23 @@ class CEMSEvalClient:
         except Exception as e:
             print(f"  Error adding memory: {e}", file=sys.stderr)
         return None
+
+    def _parse_timestamp(self, ts: str) -> str | None:
+        """Parse LongMemEval timestamp format to ISO format.
+
+        Input: "2023/04/10 (Mon) 17:50"
+        Output: "2023-04-10T17:50:00Z"
+        """
+        try:
+            # Remove day of week: "2023/04/10 (Mon) 17:50" -> "2023/04/10 17:50"
+            import re
+            clean = re.sub(r"\s*\([^)]+\)\s*", " ", ts).strip()
+            # Parse and convert
+            from datetime import datetime
+            dt = datetime.strptime(clean, "%Y/%m/%d %H:%M")
+            return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+        except Exception:
+            return None
 
     def search(self, query: str, limit: int = 10) -> dict[str, Any]:
         """Search memories and return results with timing."""
@@ -261,16 +292,21 @@ def run_eval(
         # 1. Ingest any new sessions for this question
         sessions = q.get("haystack_sessions", [])
         session_ids = q.get("haystack_session_ids", [])
+        session_dates = q.get("haystack_dates", [])  # Temporal data!
         correct_ids = q.get("answer_session_ids", [])
 
-        for sid, session in zip(session_ids, sessions):
+        # Zip sessions with their dates (pad dates if needed)
+        dates_padded = session_dates + [None] * (len(sessions) - len(session_dates))
+
+        for sid, session, session_date in zip(session_ids, sessions, dates_padded):
             if sid not in ingested_sessions:
                 content = format_session_content(session)
-                mem_id = client.add_memory(content, sid)
+                mem_id = client.add_memory(content, sid, timestamp=session_date)
                 if mem_id:
                     ingested_sessions.add(sid)
                     if verbose:
-                        print(f"  Ingested session {sid} -> {mem_id[:8]}...")
+                        ts_info = f" @ {session_date}" if session_date else ""
+                        print(f"  Ingested session {sid}{ts_info} -> {mem_id[:8]}...")
 
         # 2. Search for relevant memories
         search_result = client.search(question, limit=10)
