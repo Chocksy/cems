@@ -295,20 +295,8 @@ def apply_score_adjustments(
         if result.metadata.pinned:
             score *= 1.1
 
-        # Cross-category penalty (20% if category doesn't match)
-        if inferred_category and result.metadata.category:
-            if result.metadata.category.lower() != inferred_category.lower():
-                score *= 0.8
-
-        # Project-scoped scoring
-        if project:
-            source_ref = result.metadata.source_ref
-            if source_ref and source_ref.startswith(f"project:{project}"):
-                # +30% boost for same project
-                score *= 1.3
-            elif source_ref and source_ref.startswith("project:"):
-                # -20% penalty for different project
-                score *= 0.8
+        # REMOVED: Cross-category penalty (was hurting recall)
+        # REMOVED: Project penalty (was hurting eval recall)
 
     return score
 

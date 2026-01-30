@@ -348,13 +348,13 @@ def create_http_app():
             scope = body.get("scope", "both")
             max_tokens = body.get("max_tokens", 4000)
             enable_graph = body.get("enable_graph", True)
-            enable_query_synthesis = body.get("enable_query_synthesis", True)
+            enable_query_synthesis = body.get("enable_query_synthesis", False)  # EXPERIMENT: disabled for speed
             raw_mode = body.get("raw", False)
             project = body.get("project")  # e.g., "org/repo"
-            # NEW parameters
-            mode = body.get("mode", "auto")  # auto, vector, hybrid
-            enable_hyde = body.get("enable_hyde", True)
-            enable_rerank = body.get("enable_rerank", True)
+            # NEW parameters - EXPERIMENT: disabled for faster eval
+            mode = body.get("mode", "vector")  # Skip auto mode (requires LLM intent analysis)
+            enable_hyde = body.get("enable_hyde", False)  # Skip HyDE (LLM call)
+            enable_rerank = body.get("enable_rerank", False)  # Skip reranking (LLM call)
 
             logger.info(f"[API] Search request: query='{query[:50]}...', mode={mode}, raw={raw_mode}")
 

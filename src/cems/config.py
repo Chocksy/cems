@@ -127,7 +127,7 @@ class CEMSConfig(BaseSettings):
     # Retrieval Settings (5-Stage Inference Pipeline)
     # =========================================================================
     enable_query_synthesis: bool = Field(
-        default=True,
+        default=False,  # EXPERIMENT: Disable LLM query expansion (was slowing down eval)
         description="Enable LLM query expansion (Stage 1 of retrieval pipeline)",
     )
     relevance_threshold: float = Field(

@@ -514,17 +514,14 @@ class CEMSMemory:
 
                 # Time decay: 50% penalty per month since last access
                 days_since_access = (now - result.metadata.last_accessed).days
-                time_decay = 1.0 / (1.0 + (days_since_access / 30))
+                time_decay = 1.0 / (1.0 + (days_since_access / 60))
                 result.score *= time_decay
 
                 # Boost pinned memories slightly (they're important)
                 if result.metadata.pinned:
                     result.score *= 1.1
 
-                # Cross-category penalty
-                if inferred_category and result.metadata.category:
-                    if result.metadata.category.lower() != inferred_category:
-                        result.score *= 0.8
+                # REMOVED: Cross-category penalty (was hurting recall)
 
         # Sort by adjusted score and limit
         results.sort(key=lambda x: x.score, reverse=True)
@@ -611,13 +608,11 @@ class CEMSMemory:
             if result.metadata:
                 result.score *= result.metadata.priority
                 days_since_access = (now - result.metadata.last_accessed).days
-                time_decay = 1.0 / (1.0 + (days_since_access / 30))
+                time_decay = 1.0 / (1.0 + (days_since_access / 60))
                 result.score *= time_decay
                 if result.metadata.pinned:
                     result.score *= 1.1
-                if inferred_category and result.metadata.category:
-                    if result.metadata.category.lower() != inferred_category:
-                        result.score *= 0.8
+                # REMOVED: Cross-category penalty (was hurting recall)
 
         results.sort(key=lambda x: x.score, reverse=True)
         return results[:limit]
