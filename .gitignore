@@ -28,3 +28,6 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Eval data (downloaded from HuggingFace)
+src/cems/eval/data/

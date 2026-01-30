@@ -1304,6 +1304,8 @@ class CEMSMemory:
                     "score": r.score,
                     "scope": r.scope.value,
                     "category": r.metadata.category if r.metadata else None,
+                    "source_ref": r.metadata.source_ref if r.metadata else None,
+                    "tags": r.metadata.tags if r.metadata else [],
                 }
                 for r in selected
             ],
@@ -1607,6 +1609,8 @@ class CEMSMemory:
                     "score": r.score,
                     "scope": r.scope.value,
                     "category": r.metadata.category if r.metadata else None,
+                    "source_ref": r.metadata.source_ref if r.metadata else None,
+                    "tags": r.metadata.tags if r.metadata else [],
                 }
                 for r in selected
             ],

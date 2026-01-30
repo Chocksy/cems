@@ -131,7 +131,7 @@ class CEMSConfig(BaseSettings):
         description="Enable LLM query expansion (Stage 1 of retrieval pipeline)",
     )
     relevance_threshold: float = Field(
-        default=0.01,  # Lowered for RRF scoring (scores ~0.01-0.02)
+        default=0.005,  # Lowered further to catch borderline matches in RRF
         description="Minimum similarity score to include in results (Stage 3)",
     )
     default_max_tokens: int = Field(
@@ -139,15 +139,15 @@ class CEMSConfig(BaseSettings):
         description="Default token budget for retrieval results (Stage 5)",
     )
     max_candidates_per_query: int = Field(
-        default=50,
+        default=75,  # Increased from 50 for better recall
         description="Max candidates per vector search query",
     )
     rerank_input_limit: int = Field(
-        default=40,
+        default=60,  # Increased from 40 - LLM sees more candidates
         description="Max candidates to send to LLM for reranking",
     )
     rerank_output_limit: int = Field(
-        default=25,
+        default=40,  # Increased from 25 - keep more ranked results
         description="Max results to return from LLM reranking",
     )
 

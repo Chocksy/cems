@@ -34,11 +34,25 @@ logger = logging.getLogger(__name__)
 DEFAULT_ENCODING = "cl100k_base"
 
 
+def _is_temporal_query(query: str) -> bool:
+    """Detect if query is asking about temporal/chronological information."""
+    temporal_patterns = [
+        "first", "last", "before", "after", "when",
+        "how many days", "how many weeks", "how many months",
+        "how long", "earliest", "latest", "most recent",
+        "happened first", "happened last", "which came first",
+        "start", "began", "ended", "finished",
+    ]
+    query_lower = query.lower()
+    return any(pattern in query_lower for pattern in temporal_patterns)
+
+
 def synthesize_query(query: str, client: "OpenRouterClient") -> list[str]:
     """Stage 1: Generate better search terms from user query.
 
     Uses LLM to expand the user's query into multiple search terms
-    that might help find relevant memories.
+    that might help find relevant memories. Has special handling for
+    temporal queries to improve chronological reasoning.
 
     Args:
         query: Original user query
@@ -47,7 +61,24 @@ def synthesize_query(query: str, client: "OpenRouterClient") -> list[str]:
     Returns:
         List of expanded search terms (original not included)
     """
-    prompt = f"""Generate 2-3 search queries to find memories about the EXACT SAME TOPIC.
+    # Detect temporal queries for specialized expansion
+    is_temporal = _is_temporal_query(query)
+
+    if is_temporal:
+        prompt = f"""Generate 3-4 search queries to find memories about temporal/chronological events.
+
+User query: {query}
+
+CRITICAL RULES for TEMPORAL queries:
+- Focus on finding events, dates, sequences, and timelines
+- Include date-related terms (when, date, time, started, ended)
+- For "which first/last" questions, search for BOTH events mentioned
+- Include terms that capture chronological ordering
+- Stay within the SAME specific events/topics mentioned
+
+Return one search term per line. No bullets, no numbering."""
+    else:
+        prompt = f"""Generate 2-3 search queries to find memories about the EXACT SAME TOPIC.
 
 User query: {query}
 
@@ -62,8 +93,9 @@ Return one search term per line. No bullets, no numbering."""
     try:
         result = client.complete(prompt, max_tokens=100, temperature=0.3)
         terms = [q.strip() for q in result.strip().split("\n") if q.strip()]
-        # Filter out empty or very short terms, limit to 3 expansions
-        return [t for t in terms if len(t) > 2][:3]
+        # Filter out empty or very short terms, limit to 4 expansions for temporal
+        max_terms = 4 if is_temporal else 3
+        return [t for t in terms if len(t) > 2][:max_terms]
     except Exception as e:
         logger.warning(f"Query synthesis failed: {e}")
         return []
@@ -252,10 +284,11 @@ def apply_score_adjustments(
         # Priority boost (1.0 default, up to 2.0 for hot memories)
         score *= result.metadata.priority
 
-        # Time decay: 50% penalty per month since last access
+        # Time decay: 50% penalty per 2 months since last access (was 1 month)
+        # Slower decay helps with temporal reasoning queries over longer periods
         now = datetime.now(UTC)
         days_since_access = (now - result.metadata.last_accessed).days
-        time_decay = 1.0 / (1.0 + (days_since_access / 30))
+        time_decay = 1.0 / (1.0 + (days_since_access / 60))  # 60-day half-life
         score *= time_decay
 
         # Pinned boost (10%)
@@ -292,6 +325,8 @@ def generate_hypothetical_memory(query: str, client: "OpenRouterClient") -> str:
     generate what an ideal answer would look like, then search for
     documents similar to that answer.
 
+    Has special handling for temporal queries to generate timeline-aware content.
+
     Args:
         query: User's search query
         client: OpenRouter client for LLM calls
@@ -299,7 +334,23 @@ def generate_hypothetical_memory(query: str, client: "OpenRouterClient") -> str:
     Returns:
         Hypothetical memory content (2-3 sentences)
     """
-    prompt = f"""You are a memory retrieval system. Given this query, generate a 
+    is_temporal = _is_temporal_query(query)
+
+    if is_temporal:
+        prompt = f"""You are a memory retrieval system. Given this TEMPORAL query, generate a
+hypothetical memory entry (2-3 sentences) that would perfectly answer it.
+
+Query: {query}
+
+IMPORTANT for temporal queries:
+- Include specific dates or time references (e.g., "On March 15th...", "Last Tuesday...")
+- Mention the sequence of events if comparing ("First X happened, then Y")
+- Include duration or time differences if relevant ("3 days before...", "2 weeks after...")
+- Be specific about WHEN things happened
+
+Hypothetical memory:"""
+    else:
+        prompt = f"""You are a memory retrieval system. Given this query, generate a
 hypothetical memory entry (2-3 sentences) that would perfectly answer it.
 
 Query: {query}
@@ -325,7 +376,7 @@ Hypothetical memory:"""
 def reciprocal_rank_fusion(
     result_lists: list[list["SearchResult"]],
     k: int = 60,
-    rrf_weight: float = 0.3,
+    rrf_weight: float = 0.5,  # Increased from 0.3 for better multi-query fusion
 ) -> list["SearchResult"]:
     """Combine results from multiple retrievers using RRF.
 
@@ -337,7 +388,7 @@ def reciprocal_rank_fusion(
     Args:
         result_lists: List of result lists from different retrievers/queries
         k: Ranking constant (default 60, standard in literature)
-        rrf_weight: Weight for normalized RRF score in final blend (default 0.3)
+        rrf_weight: Weight for normalized RRF score in final blend (default 0.5)
                     Final = rrf_weight * norm_rrf + (1-rrf_weight) * vector_score
 
     Returns:
@@ -373,8 +424,8 @@ def reciprocal_rank_fusion(
         else:
             norm_rrf = 1.0  # All same score = all top rank
         
-        # Blend: 30% normalized RRF (for ranking fusion), 70% original vector score
-        # This preserves meaningful score magnitudes while still benefiting from RRF
+        # Blend: 50% normalized RRF (for ranking fusion), 50% original vector score
+        # Equal weighting gives multi-query fusion more influence on final ranking
         result.score = rrf_weight * norm_rrf + (1 - rrf_weight) * result.score
         fused.append(result)
 
