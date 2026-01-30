@@ -232,13 +232,20 @@ class AsyncEmbeddingClient:
     async def embed(self, text: str) -> list[float]:
         """Generate embedding for a single text.
 
+        For multiple texts, prefer embed_batch() which is more efficient.
+
         Args:
             text: Text to embed
 
         Returns:
             Embedding vector as list of floats
         """
+        import time
+
+        start_time = time.time()
         result = await self._call_api([text])
+        elapsed = time.time() - start_time
+        logger.debug(f"[EMBEDDING] Single embed in {elapsed:.2f}s")
         return result[0]
 
     async def embed_batch(
@@ -246,7 +253,10 @@ class AsyncEmbeddingClient:
         texts: list[str],
         batch_size: int = 100,
     ) -> list[list[float]]:
-        """Generate embeddings for multiple texts.
+        """Generate embeddings for multiple texts in a single API call.
+
+        This is significantly faster than sequential embed() calls.
+        For 5 texts: batch = ~500ms vs sequential = ~2500ms.
 
         Args:
             texts: List of texts to embed
@@ -255,9 +265,12 @@ class AsyncEmbeddingClient:
         Returns:
             List of embedding vectors
         """
+        import time
+
         if not texts:
             return []
 
+        start_time = time.time()
         all_embeddings: list[list[float]] = []
 
         for i in range(0, len(texts), batch_size):
@@ -265,6 +278,9 @@ class AsyncEmbeddingClient:
             embeddings = await self._call_api(batch)
             all_embeddings.extend(embeddings)
             logger.debug(f"Embedded batch {i // batch_size + 1}, {len(batch)} texts")
+
+        elapsed = time.time() - start_time
+        logger.info(f"[EMBEDDING] Batch embedded {len(texts)} texts in {elapsed:.2f}s ({elapsed/len(texts)*1000:.0f}ms/text)")
 
         return all_embeddings
 

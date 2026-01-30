@@ -30,7 +30,7 @@ from cems.models import (
 
 if TYPE_CHECKING:
     from cems.db.metadata_store import PostgresMetadataStore
-    from cems.embedding import EmbeddingClient
+    from cems.embedding import AsyncEmbeddingClient, EmbeddingClient
     from cems.fact_extraction import FactExtractor
     from cems.vectorstore import PgVectorStore
 
@@ -88,9 +88,11 @@ class CEMSMemory:
         # Initialize components lazily
         self._vectorstore: PgVectorStore | None = None
         self._embedder: EmbeddingClient | None = None
+        self._async_embedder: AsyncEmbeddingClient | None = None  # For async contexts
         self._fact_extractor: FactExtractor | None = None
         self._metadata: PostgresMetadataStore | None = None
         self._initialized = False
+        self._async_initialized = False  # Track async initialization separately
 
         # Initialize legacy metadata store for backwards compatibility
         # This will be deprecated once migration is complete
@@ -131,10 +133,10 @@ class CEMSMemory:
 
     async def _ensure_initialized_async(self) -> None:
         """Ensure all components are initialized (async version for HTTP server)."""
-        if self._initialized:
+        if self._async_initialized:
             return
 
-        from cems.embedding import EmbeddingClient
+        from cems.embedding import AsyncEmbeddingClient, EmbeddingClient
         from cems.fact_extraction import FactExtractor
         from cems.vectorstore import PgVectorStore
 
@@ -143,15 +145,20 @@ class CEMSMemory:
             self._vectorstore = PgVectorStore(self.config.database_url)
             await self._vectorstore.connect()
 
-        # Initialize embedder
+        # Initialize sync embedder (for fact extraction which is sync)
         if self._embedder is None:
             self._embedder = EmbeddingClient(model=self.config.embedding_model)
+
+        # Initialize async embedder for async search paths
+        if self._async_embedder is None:
+            self._async_embedder = AsyncEmbeddingClient(model=self.config.embedding_model)
 
         # Initialize fact extractor
         if self._fact_extractor is None:
             self._fact_extractor = FactExtractor()
 
         self._initialized = True
+        self._async_initialized = True
 
     def _infer_category_from_query(self, query: str) -> str | None:
         """Infer the likely category from a search query.
@@ -328,7 +335,7 @@ class CEMSMemory:
         """
         await self._ensure_initialized_async()
         assert self._vectorstore is not None
-        assert self._embedder is not None
+        assert self._async_embedder is not None
 
         memory_scope = MemoryScope(scope)
 
@@ -354,8 +361,8 @@ class CEMSMemory:
         results = []
         for fact_content in contents_to_store:
             try:
-                # Generate embedding
-                embedding = self._embedder.embed(fact_content)
+                # Generate embedding using async embedder
+                embedding = await self._async_embedder.embed(fact_content)
 
                 # Store in pgvector
                 memory_id = await self._vectorstore.add(
@@ -533,10 +540,10 @@ class CEMSMemory:
         """Async version of search(). Use this from async contexts (HTTP server)."""
         await self._ensure_initialized_async()
         assert self._vectorstore is not None
-        assert self._embedder is not None
+        assert self._async_embedder is not None
 
-        # Generate query embedding
-        query_embedding = self._embedder.embed(query)
+        # Generate query embedding using async embedder
+        query_embedding = await self._async_embedder.embed(query)
 
         # Determine user/team for filtering
         user_id = self.config.user_id
@@ -629,10 +636,10 @@ class CEMSMemory:
         """Async version of update(). Use this from async contexts (HTTP server)."""
         await self._ensure_initialized_async()
         assert self._vectorstore is not None
-        assert self._embedder is not None
+        assert self._async_embedder is not None
 
-        # Generate new embedding
-        embedding = self._embedder.embed(content)
+        # Generate new embedding using async embedder
+        embedding = await self._async_embedder.embed(content)
 
         await self._vectorstore.update(
             memory_id=memory_id,
@@ -1410,13 +1417,28 @@ class CEMSMemory:
         scope: Literal["personal", "shared", "both"] = "both",
         category: str | None = None,
         limit: int = 5,
+        query_embedding: list[float] | None = None,
     ) -> list[SearchResult]:
-        """Async version of _search_raw()."""
+        """Async version of _search_raw().
+
+        Args:
+            query: Search query (used for embedding if query_embedding not provided)
+            scope: Which namespace(s) to search
+            category: Optional category filter
+            limit: Maximum results
+            query_embedding: Pre-computed embedding (for batch optimization)
+
+        Returns:
+            List of SearchResult with base vector scores
+        """
         await self._ensure_initialized_async()
         assert self._vectorstore is not None
-        assert self._embedder is not None
+        assert self._async_embedder is not None
 
-        query_embedding = self._embedder.embed(query)
+        # Use pre-computed embedding or generate one
+        if query_embedding is None:
+            query_embedding = await self._async_embedder.embed(query)
+
         user_id = self.config.user_id
         team_id = self.config.team_id if scope in ("shared", "both") else None
 
@@ -1503,6 +1525,10 @@ class CEMSMemory:
         log = logger
         log.info(f"[RETRIEVAL] Starting async retrieve_for_inference: query='{query[:50]}...'")
 
+        # Ensure async embedder is initialized
+        await self._ensure_initialized_async()
+        assert self._async_embedder is not None
+
         client = None
         try:
             from cems.llm import get_client
@@ -1523,6 +1549,7 @@ class CEMSMemory:
 
         inferred_category = self._infer_category_from_query(query)
 
+        # Stage 1-3: Collect all queries to search (synthesis + HyDE)
         queries_to_search = [query]
         if enable_query_synthesis and self.config.enable_query_synthesis and client:
             try:
@@ -1541,10 +1568,18 @@ class CEMSMemory:
             except Exception as e:
                 log.warning(f"[RETRIEVAL] HyDE generation failed: {e}")
 
+        # OPTIMIZATION: Batch embed all queries in a single API call
+        # This reduces N sequential embedding calls (~500ms each) to 1 batch call
+        log.info(f"[RETRIEVAL] Batch embedding {len(queries_to_search)} queries")
+        query_embeddings = await self._async_embedder.embed_batch(queries_to_search)
+        log.info(f"[RETRIEVAL] Batch embedding complete")
+
+        # Stage 4: Candidate retrieval using pre-computed embeddings
         query_results: list[list[SearchResult]] = []
-        for search_query in queries_to_search:
+        for search_query, embedding in zip(queries_to_search, query_embeddings):
             vector_results = await self._search_raw_async(
-                search_query, scope, limit=self.config.max_candidates_per_query
+                search_query, scope, limit=self.config.max_candidates_per_query,
+                query_embedding=embedding,  # Pass pre-computed embedding
             )
             query_results.append(vector_results)
 
