@@ -1,9 +1,11 @@
 -- CEMS PostgreSQL Schema for Server Deployment
 -- This schema supports multi-user, multi-team memory management
+-- Uses pgvector for unified vector + metadata storage (replaces Qdrant)
 -- NOTE: SQLAlchemy models auto-create tables, this file is for reference/manual setup
 
--- Enable UUID extension
+-- Enable extensions
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+CREATE EXTENSION IF NOT EXISTS vector;
 
 -- Users table
 CREATE TABLE IF NOT EXISTS users (
@@ -40,6 +42,82 @@ CREATE TABLE IF NOT EXISTS team_members (
     PRIMARY KEY (user_id, team_id)
 );
 
+-- =============================================================================
+-- Unified Memories Table (pgvector - replaces Qdrant + memory_metadata)
+-- =============================================================================
+-- This is the primary storage for all memories, combining:
+-- - Vector embeddings (pgvector VECTOR type)
+-- - Full-text search (tsvector for BM25-style hybrid search)
+-- - All metadata in one table for ACID transactions
+-- =============================================================================
+
+CREATE TABLE IF NOT EXISTS memories (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    content TEXT NOT NULL,
+    embedding VECTOR(1536) NOT NULL,  -- OpenAI text-embedding-3-small dimensions
+    user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+    team_id UUID REFERENCES teams(id) ON DELETE SET NULL,
+    scope VARCHAR(50) NOT NULL DEFAULT 'personal',
+    category VARCHAR(255) DEFAULT 'general',
+    tags TEXT[] DEFAULT '{}',
+    source VARCHAR(255),
+    source_ref VARCHAR(500),
+    priority REAL DEFAULT 1.0,
+    pinned BOOLEAN DEFAULT FALSE,
+    pin_reason TEXT,
+    pin_category VARCHAR(100),
+    archived BOOLEAN DEFAULT FALSE,
+    access_count INTEGER DEFAULT 0,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    last_accessed TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    expires_at TIMESTAMP WITH TIME ZONE,
+    -- Generated column for full-text search
+    content_tsv TSVECTOR GENERATED ALWAYS AS (to_tsvector('english', content)) STORED,
+    CONSTRAINT valid_scope CHECK (scope IN ('personal', 'team', 'company', 'shared'))
+);
+
+-- HNSW index for fast approximate nearest neighbor search
+-- Using cosine distance (most common for text embeddings)
+CREATE INDEX IF NOT EXISTS idx_memories_embedding ON memories USING hnsw (embedding vector_cosine_ops);
+
+-- GIN index for full-text search (BM25-style ranking)
+CREATE INDEX IF NOT EXISTS idx_memories_tsv ON memories USING gin(content_tsv);
+
+-- Standard lookup indexes
+CREATE INDEX IF NOT EXISTS idx_memories_user_id ON memories(user_id);
+CREATE INDEX IF NOT EXISTS idx_memories_team_id ON memories(team_id);
+CREATE INDEX IF NOT EXISTS idx_memories_scope ON memories(scope);
+CREATE INDEX IF NOT EXISTS idx_memories_category ON memories(category);
+CREATE INDEX IF NOT EXISTS idx_memories_pinned ON memories(pinned);
+CREATE INDEX IF NOT EXISTS idx_memories_archived ON memories(archived);
+CREATE INDEX IF NOT EXISTS idx_memories_last_accessed ON memories(last_accessed);
+CREATE INDEX IF NOT EXISTS idx_memories_tags ON memories USING gin(tags);
+CREATE INDEX IF NOT EXISTS idx_memories_expires_at ON memories(expires_at) WHERE expires_at IS NOT NULL;
+
+-- Composite index for common queries
+CREATE INDEX IF NOT EXISTS idx_memories_user_scope ON memories(user_id, scope) WHERE archived = FALSE;
+
+-- =============================================================================
+-- Memory Relations Table (replaces Kuzu graph for simple relationships)
+-- =============================================================================
+
+CREATE TABLE IF NOT EXISTS memory_relations (
+    source_id UUID REFERENCES memories(id) ON DELETE CASCADE,
+    target_id UUID REFERENCES memories(id) ON DELETE CASCADE,
+    relation_type VARCHAR(50) DEFAULT 'similar',
+    similarity REAL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (source_id, target_id, relation_type)
+);
+
+CREATE INDEX IF NOT EXISTS idx_memory_relations_source ON memory_relations(source_id);
+CREATE INDEX IF NOT EXISTS idx_memory_relations_target ON memory_relations(target_id);
+CREATE INDEX IF NOT EXISTS idx_memory_relations_type ON memory_relations(relation_type);
+
+-- =============================================================================
+-- Legacy memory_metadata table (kept for migration, will be deprecated)
+-- =============================================================================
 -- Memory metadata (extended for server mode)
 CREATE TABLE IF NOT EXISTS memory_metadata (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -183,7 +261,7 @@ CREATE TABLE IF NOT EXISTS audit_log (
 CREATE INDEX IF NOT EXISTS idx_audit_user ON audit_log(user_id);
 CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_log(created_at);
 
--- Function to update last_accessed on memory access
+-- Function to update last_accessed on memory access (for memory_metadata - legacy)
 CREATE OR REPLACE FUNCTION update_memory_access()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -192,6 +270,41 @@ BEGIN
     RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
+
+-- Function to update updated_at timestamp
+CREATE OR REPLACE FUNCTION update_updated_at()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at = CURRENT_TIMESTAMP;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Trigger to auto-update updated_at on memories table
+DROP TRIGGER IF EXISTS memories_updated_at ON memories;
+CREATE TRIGGER memories_updated_at
+    BEFORE UPDATE ON memories
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at();
+
+-- =============================================================================
+-- Views for unified memories table
+-- =============================================================================
+
+-- View for active (non-archived, non-expired) memories
+CREATE OR REPLACE VIEW active_memories_v2 AS
+SELECT * FROM memories
+WHERE archived = FALSE
+AND (expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP);
+
+-- View for pinned memories (never decay)
+CREATE OR REPLACE VIEW pinned_memories_v2 AS
+SELECT * FROM memories
+WHERE pinned = TRUE AND archived = FALSE;
+
+-- =============================================================================
+-- Legacy views (for memory_metadata - kept for migration)
+-- =============================================================================
 
 -- View for active (non-archived, non-expired) memories
 CREATE OR REPLACE VIEW active_memories AS

@@ -73,10 +73,7 @@ def get_memory() -> CEMSMemory:
                 mem0_model=base.mem0_model,
                 embedding_model=base.embedding_model,
                 llm_model=base.llm_model,
-                vector_store=base.vector_store,
-                qdrant_url=base.qdrant_url,
                 enable_graph=base.enable_graph,
-                graph_store=base.graph_store,
                 enable_scheduler=False,  # Scheduler runs separately
                 enable_query_synthesis=base.enable_query_synthesis,
                 relevance_threshold=base.relevance_threshold,
@@ -181,8 +178,8 @@ def create_http_app():
                             status_code=403,
                         )
 
-                    # Set user context from database
-                    user_id = user.username
+                    # Set user context from database (using UUID for pgvector)
+                    user_id = str(user.id)
                     # Get team from header (optional, to select team context)
                     team_id = request.headers.get("x-team-id")
             except Exception as e:
@@ -272,7 +269,7 @@ def create_http_app():
             pin_reason = body.get("pin_reason")  # Optional: reason for pinning
 
             memory = get_memory()
-            result = memory.add(
+            result = await memory.add_async(
                 content,
                 scope=scope,
                 category=category,
@@ -352,7 +349,7 @@ def create_http_app():
 
             if raw_mode:
                 # Debug mode: use raw search without filtering
-                results = memory.search(query, scope=scope, limit=limit)
+                results = await memory.search_async(query, scope=scope, limit=limit)
                 serialized_results = [r.model_dump(mode="json") for r in results]
                 logger.info(f"[API] Raw search: {len(serialized_results)} results")
                 return JSONResponse({
@@ -363,7 +360,7 @@ def create_http_app():
                 })
 
             # Production mode: use enhanced retrieval pipeline
-            result = memory.retrieve_for_inference(
+            result = await memory.retrieve_for_inference_async(
                 query=query,
                 scope=scope,
                 max_tokens=max_tokens,
@@ -550,7 +547,7 @@ def create_http_app():
 
                     # Use infer=False since learnings are already extracted by LLM
                     # This bypasses Mem0's fact extraction (much faster, no extra LLM calls)
-                    result = memory.add(
+                    result = await memory.add_async(
                         content=formatted_content,
                         scope="personal",
                         category=category,
@@ -603,7 +600,7 @@ def create_http_app():
             hard_delete = body.get("hard_delete", False)
 
             memory = get_memory()
-            memory.delete(memory_id, hard=hard_delete)
+            await memory.delete_async(memory_id, hard=hard_delete)
 
             action = "deleted" if hard_delete else "archived"
             return JSONResponse({
@@ -632,7 +629,7 @@ def create_http_app():
                 return JSONResponse({"error": "content is required"}, status_code=400)
 
             memory = get_memory()
-            memory.update(memory_id, content)
+            await memory.update_async(memory_id, content)
 
             return JSONResponse({
                 "success": True,
@@ -703,8 +700,8 @@ def create_http_app():
                 "team_id": config.team_id,
                 "storage_dir": str(config.storage_dir),  # Convert Path to string for JSON
                 "backend": config.memory_backend,
-                "vector_store": config.vector_store,
-                "graph_store": config.graph_store if config.enable_graph else None,
+                "vector_store": "pgvector",  # Using native pgvector
+                "graph_store": "postgresql" if config.enable_graph else None,
                 "scheduler": scheduler_running,
                 "scheduler_jobs": scheduler_jobs,
                 "query_synthesis": config.enable_query_synthesis,
@@ -730,7 +727,7 @@ def create_http_app():
         try:
             memory = get_memory()
             # Use efficient GROUP BY query instead of N+1 queries
-            categories = memory.get_category_counts(scope="personal")
+            categories = await memory.get_category_counts_async(scope="personal")
             total = sum(categories.values())
 
             return JSONResponse({
@@ -759,7 +756,7 @@ def create_http_app():
                 })
 
             # Use efficient GROUP BY query instead of N+1 queries
-            categories = memory.get_category_counts(scope="shared")
+            categories = await memory.get_category_counts_async(scope="shared")
             total = sum(categories.values())
 
             return JSONResponse({
@@ -809,38 +806,6 @@ def create_http_app():
     return app
 
 
-def wait_for_qdrant(url: str, max_retries: int = 30, delay: float = 2.0) -> bool:
-    """Wait for Qdrant to be available.
-
-    Args:
-        url: Qdrant URL (e.g., http://cems-qdrant:6333)
-        max_retries: Maximum number of retries
-        delay: Delay between retries in seconds
-
-    Returns:
-        True if Qdrant is available, False otherwise
-    """
-    import time
-    import urllib.request
-    import urllib.error
-
-    health_url = f"{url.rstrip('/')}/healthz"
-
-    for attempt in range(max_retries):
-        try:
-            req = urllib.request.Request(health_url, method='GET')
-            with urllib.request.urlopen(req, timeout=5) as response:
-                if response.status == 200:
-                    logger.info(f"Qdrant is available at {url}")
-                    return True
-        except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError) as e:
-            logger.warning(f"Waiting for Qdrant (attempt {attempt + 1}/{max_retries}): {e}")
-            time.sleep(delay)
-
-    logger.error(f"Qdrant not available at {url} after {max_retries} attempts")
-    return False
-
-
 def run_http_server(host: str = "0.0.0.0", port: int = 8765) -> None:
     """Run the CEMS MCP server in HTTP mode.
 
@@ -874,8 +839,7 @@ def run_http_server(host: str = "0.0.0.0", port: int = 8765) -> None:
         raise RuntimeError("Missing required configuration:\n" + "\n".join(f"  - {e}" for e in errors))
 
     logger.info(f"Starting CEMS HTTP server on {host}:{port}")
-    logger.info(f"Vector store: {config.vector_store}")
-    logger.info(f"Qdrant URL: {config.qdrant_url}")
+    logger.info("Vector store: pgvector (unified PostgreSQL)")
     logger.info("Authentication: per-user API keys via PostgreSQL")
 
     # Initialize PostgreSQL database (required for HTTP mode)
@@ -888,12 +852,6 @@ def run_http_server(host: str = "0.0.0.0", port: int = 8765) -> None:
     logger.info("PostgreSQL database initialized")
     if not config.admin_key:
         logger.warning("CEMS_ADMIN_KEY not set - admin API will be inaccessible")
-
-    # Wait for Qdrant if URL is configured
-    if config.qdrant_url:
-        if not wait_for_qdrant(config.qdrant_url):
-            logger.error("Cannot start server: Qdrant is not available")
-            raise RuntimeError(f"Qdrant not available at {config.qdrant_url}")
 
     # Start scheduler if enabled (runs for all users)
     if config.enable_scheduler:

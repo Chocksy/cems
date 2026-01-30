@@ -18,23 +18,25 @@ classifiers = [
 ]
 
 dependencies = [
-    "mem0ai>=0.1.0",
+    # Core
     "mcp>=1.0.0",
     "apscheduler>=3.10.0",
     "pydantic>=2.0.0",
     "pydantic-settings>=2.0.0",
     "click>=8.0.0",
     "rich>=13.0.0",
+    "tiktoken>=0.5.0",
+    # LLM clients
     "openai>=1.0.0",
     "anthropic>=0.25.0",
-    "kuzu>=0.4.0",
-    "tiktoken>=0.5.0",
+    "httpx>=0.27.0",  # For embedding API calls
     # HTTP server dependencies
     "uvicorn>=0.30.0",
     "starlette>=0.35.0",
-    # PostgreSQL + Admin API dependencies
+    # PostgreSQL + pgvector (unified storage)
     "sqlalchemy[asyncio]>=2.0.0",
     "asyncpg>=0.29.0",
+    "pgvector>=0.2.0",  # pgvector support for asyncpg
     "bcrypt>=4.0.0",
     "psycopg2-binary>=2.9.0",
 ]

@@ -552,7 +552,7 @@ async def debug_config(request: Request) -> JSONResponse:
         "CEMS_MEM0_MODEL": os.environ.get("CEMS_MEM0_MODEL", "openai/gpt-4o-mini (default)"),
         "CEMS_EMBEDDING_MODEL": os.environ.get("CEMS_EMBEDDING_MODEL", "openai/text-embedding-3-small (default)"),
         "CEMS_LLM_MODEL": os.environ.get("CEMS_LLM_MODEL", "anthropic/claude-3-haiku (default)"),
-        "CEMS_QDRANT_URL": os.environ.get("CEMS_QDRANT_URL", "not set"),
+        "VECTOR_STORE": "pgvector (unified PostgreSQL)",
         # Legacy env vars (no longer required)
         "OPENAI_API_KEY": "set (legacy)" if os.environ.get("OPENAI_API_KEY") else "not set (not required)",
     }

@@ -1,21 +1,12 @@
-"""Tests for CEMS MCP server tools and resources.
+"""Tests for CEMS REST API server.
 
-The server provides 5 essential tools:
-- memory_add: Store memories
-- memory_search: Unified search with 5-stage pipeline
-- memory_forget: Delete or archive memories
-- memory_update: Update existing memories
-- memory_maintenance: Run maintenance jobs
-
-And 3 resources:
-- memory://status
-- memory://personal/summary
-- memory://shared/summary
+Tests the REST API endpoints with mocked dependencies.
+Uses Starlette TestClient for HTTP testing.
 """
 
-from unittest.mock import MagicMock, patch
-
 import pytest
+from starlette.testclient import TestClient
+from unittest.mock import MagicMock, patch, AsyncMock
 
 import cems.server as server_module
 
@@ -25,349 +16,352 @@ def mock_memory():
     """Create a mock memory instance."""
     mock = MagicMock()
     mock.config = MagicMock()
-    mock.config.user_id = "test-user"
+    mock.config.user_id = "test-user-uuid"
     mock.config.team_id = "test-team"
     mock.config.storage_dir = "/tmp/cems"
-    mock.config.memory_backend = "mem0"
-    mock.config.vector_store = "qdrant"
-    mock.config.graph_store = "kuzu"
+    mock.config.memory_backend = "pgvector"
     mock.config.enable_graph = True
     mock.config.enable_scheduler = True
     mock.config.enable_query_synthesis = True
-    mock.config.relevance_threshold = 0.5
+    mock.config.relevance_threshold = 0.01
     mock.config.default_max_tokens = 2000
     mock.config.llm_model = "anthropic/claude-3-haiku"
-    mock.config.get_mem0_provider.return_value = "openai"
-    mock.config.get_mem0_model.return_value = "gpt-4o-mini"
-    mock.graph_store = MagicMock()
+    mock.graph_store = None
+
+    # Set up async methods
+    mock.add_async = AsyncMock(return_value={"results": [{"id": "mem-123", "event": "ADD"}]})
+    mock.search_async = AsyncMock(return_value=[])
+    mock.delete_async = AsyncMock()
+    mock.update_async = AsyncMock(return_value={"success": True})
+    mock.retrieve_for_inference_async = AsyncMock(return_value={
+        "results": [],
+        "tokens_used": 0,
+        "formatted_context": "",
+        "queries_used": [],
+        "total_candidates": 0,
+        "filtered_count": 0,
+        "mode": "vector",
+        "intent": None,
+    })
+    mock.get_category_counts_async = AsyncMock(return_value={"general": 5})
+
     return mock
+
+
+@pytest.fixture
+def mock_user():
+    """Create a mock user for authentication."""
+    user = MagicMock()
+    user.id = "test-user-uuid"
+    user.username = "test-user"
+    user.is_active = True
+    return user
 
 
 @pytest.fixture(autouse=True)
 def reset_server_state():
     """Reset server global state before each test."""
-    server_module._memory = None
-    server_module._scheduler = None
+    server_module._memory_cache.clear()
+    server_module._scheduler_cache.clear()
     yield
-    server_module._memory = None
-    server_module._scheduler = None
+    server_module._memory_cache.clear()
+    server_module._scheduler_cache.clear()
 
 
-class TestMemoryTools:
-    """Tests for MCP memory tools (5 essential tools)."""
+class TestHealthEndpoints:
+    """Tests for health check endpoints."""
 
-    @patch("cems.server.get_memory")
-    def test_memory_add(self, mock_get_memory, mock_memory):
-        """Test memory_add tool."""
-        from cems.server import memory_add
+    @patch("cems.db.database.get_database")
+    @patch("cems.db.database.is_database_initialized", return_value=True)
+    def test_health_endpoint(self, mock_is_db, mock_get_db):
+        """Test /health returns healthy status."""
+        mock_get_db.return_value.check_connection.return_value = True
 
+        from cems.server import create_http_app
+        app = create_http_app()
+        client = TestClient(app)
+
+        response = client.get("/health")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "healthy"
+
+    @patch("cems.db.database.is_database_initialized", return_value=True)
+    def test_ping_requires_auth(self, mock_is_db):
+        """Test /ping requires authentication."""
+        from cems.server import create_http_app
+        app = create_http_app()
+        client = TestClient(app)
+
+        response = client.get("/ping")
+        assert response.status_code == 401
+
+
+class TestMemoryAPI:
+    """Tests for memory REST API endpoints."""
+
+    @patch("cems.db.database.is_database_initialized", return_value=True)
+    @patch("cems.db.database.get_database")
+    @patch.object(server_module, "get_memory")
+    def test_memory_add(self, mock_get_memory, mock_db, mock_is_db, mock_memory, mock_user):
+        """Test POST /api/memory/add endpoint."""
         mock_get_memory.return_value = mock_memory
-        mock_memory.add.return_value = {"results": [{"id": "mem-123"}]}
 
-        result = memory_add("Test content", scope="personal", category="test")
+        # Mock authentication
+        mock_session = MagicMock()
+        mock_user_service = MagicMock()
+        mock_user_service.get_user_by_api_key.return_value = mock_user
+        mock_db.return_value.session.return_value.__enter__ = MagicMock(return_value=mock_session)
+        mock_db.return_value.session.return_value.__exit__ = MagicMock(return_value=False)
 
-        assert result["success"] is True
-        assert "mem-123" in result["memory_ids"]
-        mock_memory.add.assert_called_once()
+        with patch("cems.admin.services.UserService", return_value=mock_user_service):
+            from cems.server import create_http_app
+            app = create_http_app()
+            client = TestClient(app)
 
-    @patch("cems.server.get_memory")
-    def test_memory_add_with_tags(self, mock_get_memory, mock_memory):
-        """Test memory_add tool with tags."""
-        from cems.server import memory_add
+            response = client.post(
+                "/api/memory/add",
+                json={"content": "Test memory", "category": "test"},
+                headers={"Authorization": "Bearer test-api-key"}
+            )
 
+            assert response.status_code == 200
+            data = response.json()
+            assert data["success"] is True
+
+    @patch("cems.db.database.is_database_initialized", return_value=True)
+    @patch("cems.db.database.get_database")
+    @patch.object(server_module, "get_memory")
+    def test_memory_add_requires_content(self, mock_get_memory, mock_db, mock_is_db, mock_memory, mock_user):
+        """Test POST /api/memory/add requires content field."""
         mock_get_memory.return_value = mock_memory
-        mock_memory.add.return_value = {"results": [{"id": "mem-123"}]}
 
-        result = memory_add(
-            "Test content",
-            scope="shared",
-            category="decisions",
-            tags=["python", "backend"],
-        )
+        mock_session = MagicMock()
+        mock_user_service = MagicMock()
+        mock_user_service.get_user_by_api_key.return_value = mock_user
+        mock_db.return_value.session.return_value.__enter__ = MagicMock(return_value=mock_session)
+        mock_db.return_value.session.return_value.__exit__ = MagicMock(return_value=False)
 
-        assert result["success"] is True
-        mock_memory.add.assert_called_with(
-            content="Test content",
-            scope="shared",
-            category="decisions",
-            tags=["python", "backend"],
-        )
+        with patch("cems.admin.services.UserService", return_value=mock_user_service):
+            from cems.server import create_http_app
+            app = create_http_app()
+            client = TestClient(app)
 
-    @patch("cems.server.get_memory")
-    def test_memory_add_error(self, mock_get_memory, mock_memory):
-        """Test memory_add handles errors."""
-        from cems.server import memory_add
+            response = client.post(
+                "/api/memory/add",
+                json={"category": "test"},  # Missing content
+                headers={"Authorization": "Bearer test-api-key"}
+            )
 
-        mock_get_memory.return_value = mock_memory
-        mock_memory.add.side_effect = Exception("Storage error")
+            assert response.status_code == 400
+            assert "content is required" in response.json()["error"]
 
-        result = memory_add("Test content")
-
-        assert result["success"] is False
-        assert "Storage error" in result["message"]
-
-    @patch("cems.server.get_memory")
-    def test_memory_search(self, mock_get_memory, mock_memory):
-        """Test memory_search tool uses 5-stage pipeline."""
-        from cems.server import memory_search
-
-        mock_get_memory.return_value = mock_memory
-        mock_memory.retrieve_for_inference.return_value = {
+    @patch("cems.db.database.is_database_initialized", return_value=True)
+    @patch("cems.db.database.get_database")
+    @patch.object(server_module, "get_memory")
+    def test_memory_search(self, mock_get_memory, mock_db, mock_is_db, mock_memory, mock_user):
+        """Test POST /api/memory/search endpoint."""
+        mock_memory.retrieve_for_inference_async.return_value = {
             "results": [
-                {
-                    "memory_id": "mem-123",
-                    "content": "Found content",
-                    "score": 0.95,
-                    "scope": "personal",
-                    "category": "test",
-                }
+                {"memory_id": "mem-123", "content": "Found", "score": 0.9, "scope": "personal", "category": "test"}
             ],
             "tokens_used": 50,
-            "formatted_context": "=== RELEVANT MEMORIES ===\n...",
-            "queries_used": ["test query"],
+            "formatted_context": "=== MEMORIES ===",
+            "queries_used": ["test"],
             "total_candidates": 5,
-            "filtered_count": 3,
+            "filtered_count": 1,
+            "mode": "vector",
+            "intent": None,
         }
-
-        result = memory_search("test query", scope="personal", max_results=5)
-
-        assert result["success"] is True
-        assert len(result["results"]) == 1
-        assert result["tokens_used"] == 50
-        assert "formatted_context" in result
-        mock_memory.retrieve_for_inference.assert_called_once()
-
-    @patch("cems.server.get_memory")
-    def test_memory_search_error(self, mock_get_memory, mock_memory):
-        """Test memory_search handles errors."""
-        from cems.server import memory_search
-
-        mock_get_memory.return_value = mock_memory
-        mock_memory.retrieve_for_inference.side_effect = Exception("Search failed")
-
-        result = memory_search("test query")
-
-        assert result["success"] is False
-        assert "Search failed" in result["error"]
-
-    @patch("cems.server.get_memory")
-    def test_memory_forget_soft_delete(self, mock_get_memory, mock_memory):
-        """Test memory_forget tool with soft delete (archive)."""
-        from cems.server import memory_forget
-
         mock_get_memory.return_value = mock_memory
 
-        result = memory_forget("mem-123", hard_delete=False)
+        mock_session = MagicMock()
+        mock_user_service = MagicMock()
+        mock_user_service.get_user_by_api_key.return_value = mock_user
+        mock_db.return_value.session.return_value.__enter__ = MagicMock(return_value=mock_session)
+        mock_db.return_value.session.return_value.__exit__ = MagicMock(return_value=False)
 
-        assert result["success"] is True
-        assert "archived" in result["message"]
-        mock_memory.delete.assert_called_with("mem-123", hard=False)
+        with patch("cems.admin.services.UserService", return_value=mock_user_service):
+            from cems.server import create_http_app
+            app = create_http_app()
+            client = TestClient(app)
 
-    @patch("cems.server.get_memory")
-    def test_memory_forget_hard_delete(self, mock_get_memory, mock_memory):
-        """Test memory_forget tool with hard delete."""
-        from cems.server import memory_forget
+            response = client.post(
+                "/api/memory/search",
+                json={"query": "test search"},
+                headers={"Authorization": "Bearer test-api-key"}
+            )
 
+            assert response.status_code == 200
+            data = response.json()
+            assert data["success"] is True
+            assert len(data["results"]) == 1
+
+    @patch("cems.db.database.is_database_initialized", return_value=True)
+    @patch("cems.db.database.get_database")
+    @patch.object(server_module, "get_memory")
+    def test_memory_forget(self, mock_get_memory, mock_db, mock_is_db, mock_memory, mock_user):
+        """Test POST /api/memory/forget endpoint."""
         mock_get_memory.return_value = mock_memory
 
-        result = memory_forget("mem-123", hard_delete=True)
+        mock_session = MagicMock()
+        mock_user_service = MagicMock()
+        mock_user_service.get_user_by_api_key.return_value = mock_user
+        mock_db.return_value.session.return_value.__enter__ = MagicMock(return_value=mock_session)
+        mock_db.return_value.session.return_value.__exit__ = MagicMock(return_value=False)
 
-        assert result["success"] is True
-        assert "deleted" in result["message"]
-        mock_memory.delete.assert_called_with("mem-123", hard=True)
+        with patch("cems.admin.services.UserService", return_value=mock_user_service):
+            from cems.server import create_http_app
+            app = create_http_app()
+            client = TestClient(app)
 
-    @patch("cems.server.get_memory")
-    def test_memory_forget_error(self, mock_get_memory, mock_memory):
-        """Test memory_forget handles errors."""
-        from cems.server import memory_forget
+            response = client.post(
+                "/api/memory/forget",
+                json={"memory_id": "mem-123"},
+                headers={"Authorization": "Bearer test-api-key"}
+            )
 
+            assert response.status_code == 200
+            data = response.json()
+            assert data["success"] is True
+            assert "archived" in data["message"]
+
+    @patch("cems.db.database.is_database_initialized", return_value=True)
+    @patch("cems.db.database.get_database")
+    @patch.object(server_module, "get_memory")
+    def test_memory_update(self, mock_get_memory, mock_db, mock_is_db, mock_memory, mock_user):
+        """Test POST /api/memory/update endpoint."""
         mock_get_memory.return_value = mock_memory
-        mock_memory.delete.side_effect = Exception("Delete failed")
 
-        result = memory_forget("mem-123")
+        mock_session = MagicMock()
+        mock_user_service = MagicMock()
+        mock_user_service.get_user_by_api_key.return_value = mock_user
+        mock_db.return_value.session.return_value.__enter__ = MagicMock(return_value=mock_session)
+        mock_db.return_value.session.return_value.__exit__ = MagicMock(return_value=False)
 
-        assert result["success"] is False
-        assert "Delete failed" in result["message"]
+        with patch("cems.admin.services.UserService", return_value=mock_user_service):
+            from cems.server import create_http_app
+            app = create_http_app()
+            client = TestClient(app)
 
-    @patch("cems.server.get_memory")
-    def test_memory_update(self, mock_get_memory, mock_memory):
-        """Test memory_update tool."""
-        from cems.server import memory_update
+            response = client.post(
+                "/api/memory/update",
+                json={"memory_id": "mem-123", "content": "Updated content"},
+                headers={"Authorization": "Bearer test-api-key"}
+            )
 
+            assert response.status_code == 200
+            data = response.json()
+            assert data["success"] is True
+
+
+class TestSummaryEndpoints:
+    """Tests for summary endpoints."""
+
+    @patch("cems.db.database.is_database_initialized", return_value=True)
+    @patch("cems.db.database.get_database")
+    @patch.object(server_module, "get_memory")
+    def test_personal_summary(self, mock_get_memory, mock_db, mock_is_db, mock_memory, mock_user):
+        """Test GET /api/memory/summary/personal endpoint."""
+        mock_memory.get_category_counts_async.return_value = {"general": 5, "decisions": 3}
         mock_get_memory.return_value = mock_memory
 
-        result = memory_update("mem-123", "New content")
+        mock_session = MagicMock()
+        mock_user_service = MagicMock()
+        mock_user_service.get_user_by_api_key.return_value = mock_user
+        mock_db.return_value.session.return_value.__enter__ = MagicMock(return_value=mock_session)
+        mock_db.return_value.session.return_value.__exit__ = MagicMock(return_value=False)
 
-        assert result["success"] is True
-        mock_memory.update.assert_called_with("mem-123", "New content")
+        with patch("cems.admin.services.UserService", return_value=mock_user_service):
+            from cems.server import create_http_app
+            app = create_http_app()
+            client = TestClient(app)
 
-    @patch("cems.server.get_memory")
-    def test_memory_update_error(self, mock_get_memory, mock_memory):
-        """Test memory_update handles errors."""
-        from cems.server import memory_update
+            response = client.get(
+                "/api/memory/summary/personal",
+                headers={"Authorization": "Bearer test-api-key"}
+            )
 
-        mock_get_memory.return_value = mock_memory
-        mock_memory.update.side_effect = Exception("Update failed")
-
-        result = memory_update("mem-123", "New content")
-
-        assert result["success"] is False
-        assert "Update failed" in result["message"]
+            assert response.status_code == 200
+            data = response.json()
+            assert data["success"] is True
+            assert data["total"] == 8
+            assert "general" in data["categories"]
 
 
-class TestMaintenanceTool:
-    """Tests for maintenance tool."""
+class TestMaintenanceEndpoint:
+    """Tests for maintenance endpoint."""
 
-    @patch("cems.server.get_scheduler")
-    def test_memory_maintenance_consolidation(self, mock_get_scheduler):
-        """Test running consolidation maintenance."""
-        from cems.server import memory_maintenance
-
+    @patch("cems.db.database.is_database_initialized", return_value=True)
+    @patch("cems.db.database.get_database")
+    @patch.object(server_module, "get_scheduler")
+    def test_maintenance_consolidation(self, mock_get_scheduler, mock_db, mock_is_db, mock_user):
+        """Test POST /api/memory/maintenance endpoint."""
         mock_scheduler = MagicMock()
         mock_scheduler.run_now.return_value = {"duplicates_merged": 2}
         mock_get_scheduler.return_value = mock_scheduler
 
-        result = memory_maintenance("consolidation")
+        mock_session = MagicMock()
+        mock_user_service = MagicMock()
+        mock_user_service.get_user_by_api_key.return_value = mock_user
+        mock_db.return_value.session.return_value.__enter__ = MagicMock(return_value=mock_session)
+        mock_db.return_value.session.return_value.__exit__ = MagicMock(return_value=False)
 
-        assert result["success"] is True
-        assert result["job_type"] == "consolidation"
+        with patch("cems.admin.services.UserService", return_value=mock_user_service):
+            from cems.server import create_http_app
+            app = create_http_app()
+            client = TestClient(app)
 
-    @patch("cems.server.get_scheduler")
-    def test_memory_maintenance_all(self, mock_get_scheduler):
-        """Test running all maintenance jobs."""
-        from cems.server import memory_maintenance
+            response = client.post(
+                "/api/memory/maintenance",
+                json={"job_type": "consolidation"},
+                headers={"Authorization": "Bearer test-api-key"}
+            )
 
-        mock_scheduler = MagicMock()
-        mock_scheduler.run_now.return_value = {}
-        mock_get_scheduler.return_value = mock_scheduler
-
-        result = memory_maintenance("all")
-
-        assert result["success"] is True
-        assert result["job_type"] == "all"
-        assert mock_scheduler.run_now.call_count == 3
-
-    @patch("cems.server.get_scheduler")
-    def test_memory_maintenance_error(self, mock_get_scheduler):
-        """Test maintenance handles errors."""
-        from cems.server import memory_maintenance
-
-        mock_scheduler = MagicMock()
-        mock_scheduler.run_now.side_effect = Exception("Scheduler error")
-        mock_get_scheduler.return_value = mock_scheduler
-
-        result = memory_maintenance("consolidation")
-
-        assert result["success"] is False
-        assert "Scheduler error" in result["message"]
+            assert response.status_code == 200
+            data = response.json()
+            assert data["success"] is True
+            assert data["job_type"] == "consolidation"
 
 
-class TestResources:
-    """Tests for MCP resources (3 essential resources)."""
+class TestAuthentication:
+    """Tests for authentication."""
 
-    @patch("cems.server.get_memory")
-    def test_memory_status_resource(self, mock_get_memory, mock_memory):
-        """Test memory://status resource."""
-        from cems.server import memory_status
+    @patch("cems.db.database.is_database_initialized", return_value=True)
+    def test_missing_auth_header(self, mock_is_db):
+        """Test that missing auth header returns 401."""
+        from cems.server import create_http_app
+        app = create_http_app()
+        client = TestClient(app)
 
-        mock_get_memory.return_value = mock_memory
-        mock_memory.get_graph_stats.return_value = {"nodes": 10, "edges": 5}
+        response = client.post(
+            "/api/memory/add",
+            json={"content": "Test"}
+        )
 
-        result = memory_status()
+        assert response.status_code == 401
+        assert "Authorization" in response.json()["error"]
 
-        assert "CEMS Memory System Status" in result
-        assert "test-user" in result
-        assert "test-team" in result
-        assert "Retrieval Settings" in result
-        assert "Query Synthesis" in result
+    @patch("cems.db.database.is_database_initialized", return_value=True)
+    @patch("cems.db.database.get_database")
+    def test_invalid_api_key(self, mock_db, mock_is_db):
+        """Test that invalid API key returns 401."""
+        mock_session = MagicMock()
+        mock_user_service = MagicMock()
+        mock_user_service.get_user_by_api_key.return_value = None  # User not found
+        mock_db.return_value.session.return_value.__enter__ = MagicMock(return_value=mock_session)
+        mock_db.return_value.session.return_value.__exit__ = MagicMock(return_value=False)
 
-    @patch("cems.server.get_memory")
-    def test_personal_summary_resource(self, mock_get_memory, mock_memory):
-        """Test memory://personal/summary resource."""
-        from cems.server import personal_summary
+        with patch("cems.admin.services.UserService", return_value=mock_user_service):
+            from cems.server import create_http_app
+            app = create_http_app()
+            client = TestClient(app)
 
-        mock_get_memory.return_value = mock_memory
-        mock_memory.get_all.return_value = [
-            {"id": "mem-1"},
-            {"id": "mem-2"},
-        ]
-        mock_memory.get_metadata.return_value = MagicMock(category="general")
+            response = client.post(
+                "/api/memory/add",
+                json={"content": "Test"},
+                headers={"Authorization": "Bearer invalid-key"}
+            )
 
-        result = personal_summary()
-
-        assert "Personal Memory Summary" in result
-        assert "2" in result  # Total memories
-
-    @patch("cems.server.get_memory")
-    def test_personal_summary_empty(self, mock_get_memory, mock_memory):
-        """Test personal_summary when no memories exist."""
-        from cems.server import personal_summary
-
-        mock_get_memory.return_value = mock_memory
-        mock_memory.get_all.return_value = []
-
-        result = personal_summary()
-
-        assert "No personal memories stored yet" in result
-
-    @patch("cems.server.get_memory")
-    def test_shared_summary_resource(self, mock_get_memory, mock_memory):
-        """Test memory://shared/summary resource."""
-        from cems.server import shared_summary
-
-        mock_get_memory.return_value = mock_memory
-        mock_memory.get_all.return_value = [
-            {"id": "mem-1"},
-        ]
-        mock_memory.get_metadata.return_value = MagicMock(category="decisions")
-
-        result = shared_summary()
-
-        assert "Shared Memory Summary" in result
-        assert "test-team" in result
-
-    @patch("cems.server.get_memory")
-    def test_shared_summary_no_team(self, mock_get_memory, mock_memory):
-        """Test shared_summary when no team configured."""
-        from cems.server import shared_summary
-
-        mock_memory.config.team_id = None
-        mock_get_memory.return_value = mock_memory
-
-        result = shared_summary()
-
-        assert "No team configured" in result
-
-    @patch("cems.server.get_memory")
-    def test_shared_summary_empty(self, mock_get_memory, mock_memory):
-        """Test shared_summary when no memories exist."""
-        from cems.server import shared_summary
-
-        mock_get_memory.return_value = mock_memory
-        mock_memory.get_all.return_value = []
-
-        result = shared_summary()
-
-        assert "No shared memories" in result
-
-
-class TestToolCount:
-    """Verify the simplified API has the expected number of tools."""
-
-    def test_server_has_5_tools(self):
-        """Server should have exactly 5 MCP tools."""
-        # Import fresh to get tool count
-        from cems.server import mcp
-
-        # The FastMCP server registers tools when decorated
-        # We check that we have the expected tools
-        expected_tools = {
-            "memory_add",
-            "memory_search",
-            "memory_forget",
-            "memory_update",
-            "memory_maintenance",
-        }
-
-        # This test verifies our design intent - 5 essential tools
-        assert len(expected_tools) == 5
+            assert response.status_code == 401
+            assert "Invalid API key" in response.json()["error"]

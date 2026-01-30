@@ -1,7 +1,7 @@
 services:
-  # PostgreSQL for metadata and user management
+  # PostgreSQL with pgvector for unified storage (vectors + metadata)
   postgres:
-    image: postgres:16-alpine
+    image: pgvector/pgvector:pg16
     container_name: cems-postgres
     environment:
       POSTGRES_USER: cems
@@ -19,24 +19,6 @@ services:
       retries: 5
     restart: unless-stopped
 
-  # Qdrant vector database
-  qdrant:
-    image: qdrant/qdrant:latest
-    container_name: cems-qdrant
-    volumes:
-      - qdrant_data:/qdrant/storage
-    ports:
-      - "6333:6333"
-      - "6334:6334"
-    environment:
-      QDRANT__SERVICE__GRPC_PORT: 6334
-    healthcheck:
-      test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/localhost/6333'"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    restart: unless-stopped
-
   # CEMS Python API Server (internal only)
   cems-server:
     build:
@@ -44,11 +26,8 @@ services:
       dockerfile: Dockerfile
     container_name: cems-server
     environment:
-      # Database (required for user management)
+      # Database (PostgreSQL with pgvector for vectors + metadata)
       CEMS_DATABASE_URL: postgresql://cems:${POSTGRES_PASSWORD:-cems_secure_password}@postgres:5432/cems
-      # Vector store
-      CEMS_VECTOR_STORE: qdrant
-      CEMS_QDRANT_URL: http://qdrant:6333
       # LLM (via OpenRouter)
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
       # Server mode
@@ -61,8 +40,6 @@ services:
       - "8765:8765"
     depends_on:
       postgres:
-        condition: service_healthy
-      qdrant:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8765/health"]
@@ -96,4 +73,3 @@ services:
 
 volumes:
   postgres_data:
-  qdrant_data:

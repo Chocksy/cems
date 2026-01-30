@@ -88,35 +88,26 @@ class CEMSConfig(BaseSettings):
     )
 
     # =========================================================================
-    # Vector Store Settings
+    # Vector Store Settings (pgvector - unified with PostgreSQL)
     # =========================================================================
-    vector_store: Literal["qdrant", "chroma", "lancedb"] = Field(
-        default="qdrant",
-        description="Vector store backend",
+    # pgvector uses the same PostgreSQL database as metadata storage
+    # No separate vector store URL needed - uses CEMS_DATABASE_URL
+    hybrid_vector_weight: float = Field(
+        default=0.7,
+        description="Weight for vector similarity in hybrid search (0-1). Text gets 1-vector_weight.",
     )
-    qdrant_path: Path | None = Field(
-        default=None,
-        description="Path for Qdrant storage (uses storage_dir/qdrant if not set)",
-    )
-    qdrant_url: str | None = Field(
-        default=None,
-        description="URL for Qdrant server (e.g., http://localhost:6333). If set, uses server instead of local storage.",
+    embedding_dimension: int = Field(
+        default=1536,
+        description="Embedding dimension (1536 for OpenAI text-embedding-3-small)",
     )
 
     # =========================================================================
-    # Graph Store Settings (for relationship tracking)
+    # Graph/Relations Settings
     # =========================================================================
+    # Relations are now stored in PostgreSQL memory_relations table
     enable_graph: bool = Field(
         default=True,
-        description="Enable knowledge graph for relationship tracking",
-    )
-    graph_store: Literal["kuzu", "none"] = Field(
-        default="kuzu",
-        description="Graph database backend (kuzu for embedded, none to disable)",
-    )
-    kuzu_path: Path | None = Field(
-        default=None,
-        description="Path for Kuzu database (uses storage_dir/graph if not set)",
+        description="Enable memory relations for relationship tracking",
     )
 
     # =========================================================================
@@ -140,7 +131,7 @@ class CEMSConfig(BaseSettings):
         description="Enable LLM query expansion (Stage 1 of retrieval pipeline)",
     )
     relevance_threshold: float = Field(
-        default=0.4,
+        default=0.01,  # Lowered for RRF scoring (scores ~0.01-0.02)
         description="Minimum similarity score to include in results (Stage 3)",
     )
     default_max_tokens: int = Field(
@@ -194,34 +185,20 @@ class CEMSConfig(BaseSettings):
 
     @property
     def personal_collection(self) -> str:
-        """Collection name for personal memories."""
+        """Collection name for personal memories (legacy compatibility)."""
         return f"personal_{self.user_id}"
 
     @property
     def shared_collection(self) -> str | None:
-        """Collection name for shared memories."""
+        """Collection name for shared memories (legacy compatibility)."""
         if self.team_id:
             return f"shared_{self.team_id}"
         return None
 
-    @property
-    def qdrant_storage_path(self) -> Path:
-        """Path for Qdrant storage."""
-        return self.qdrant_path or (self.storage_dir / "qdrant")
-
-    @property
-    def kuzu_storage_path(self) -> Path:
-        """Path for Kuzu graph database."""
-        return self.kuzu_path or (self.storage_dir / "graph")
-
     def ensure_dirs(self) -> None:
         """Ensure all required directories exist."""
         self.storage_dir.mkdir(parents=True, exist_ok=True)
-        # Only create local Qdrant storage if not using remote URL
-        if not self.qdrant_url:
-            self.qdrant_storage_path.mkdir(parents=True, exist_ok=True)
-        # Note: Don't create kuzu_storage_path - Kuzu creates its own database directory
 
     def get_mem0_model(self) -> str:
-        """Get the LLM model for Mem0."""
+        """Get the LLM model for fact extraction (legacy compatibility)."""
         return self.mem0_model

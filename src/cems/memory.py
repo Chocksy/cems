@@ -1,13 +1,25 @@
-"""CEMS Memory wrapper around Mem0 with namespace isolation."""
+"""CEMS Memory with native pgvector storage.
+
+This module provides unified memory management using PostgreSQL with pgvector
+for both vector embeddings and metadata storage. It replaces the previous
+Mem0 + Qdrant architecture with a simpler, ACID-compliant solution.
+
+Key features:
+- Vector similarity search (HNSW index)
+- Full-text search (GIN index on tsvector)
+- Hybrid search using RRF (Reciprocal Rank Fusion)
+- ACID transactions for data consistency
+- Namespace isolation (personal vs shared memories)
+- Extended metadata tracking (access counts, priorities)
+"""
 
 from __future__ import annotations
 
+import asyncio
 import json
-import os
-from datetime import UTC, datetime
+import logging
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, Literal
-
-from mem0 import Memory
 
 from cems.config import CEMSConfig
 from cems.models import (
@@ -18,16 +30,44 @@ from cems.models import (
 
 if TYPE_CHECKING:
     from cems.db.metadata_store import PostgresMetadataStore
-    from cems.graph import KuzuGraphStore
+    from cems.embedding import EmbeddingClient
+    from cems.fact_extraction import FactExtractor
+    from cems.vectorstore import PgVectorStore
+
+logger = logging.getLogger(__name__)
+
+
+def _run_async(coro):
+    """Run an async coroutine in a sync context.
+
+    NOTE: This is for sync contexts only (CLI, MCP stdio).
+    For async contexts (HTTP server), use the async methods directly.
+    """
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+
+    if loop is not None:
+        # Already in async context - caller should use async methods
+        raise RuntimeError(
+            "Cannot use sync method from async context. "
+            "Use the async version (e.g., add_async instead of add)."
+        )
+    else:
+        # No running loop - create one
+        return asyncio.run(coro)
 
 
 class CEMSMemory:
     """Memory system with personal/shared namespace isolation.
 
-    Built on top of Mem0, this class provides:
+    Built on PostgreSQL + pgvector, this class provides:
     - Namespace isolation (personal vs shared memories)
     - Extended metadata tracking (access counts, priorities)
     - Unified search across namespaces
+    - Hybrid search (vector + full-text)
+    - ACID transactions for consistency
     """
 
     def __init__(self, config: CEMSConfig | None = None):
@@ -38,116 +78,80 @@ class CEMSMemory:
         """
         self.config = config or CEMSConfig()
 
-        # Initialize Mem0 with local Qdrant
-        mem0_config = self._build_mem0_config()
-        self._memory = Memory.from_config(mem0_config)
-
-        # Initialize metadata store (PostgreSQL only - Docker/server mode)
+        # Validate database URL
         if not self.config.database_url:
             raise ValueError(
                 "CEMS_DATABASE_URL is required. "
                 "CEMS runs in Docker/server mode only (no local SQLite mode)."
             )
 
+        # Initialize components lazily
+        self._vectorstore: PgVectorStore | None = None
+        self._embedder: EmbeddingClient | None = None
+        self._fact_extractor: FactExtractor | None = None
+        self._metadata: PostgresMetadataStore | None = None
+        self._initialized = False
+
+        # Initialize legacy metadata store for backwards compatibility
+        # This will be deprecated once migration is complete
         from cems.db.database import init_database, is_database_initialized
         from cems.db.metadata_store import PostgresMetadataStore
 
-        # Initialize database if not already done (e.g., by server.py)
         if not is_database_initialized():
             init_database(self.config.database_url)
         self._metadata = PostgresMetadataStore()
 
-        # Initialize graph store (optional)
-        self._graph: KuzuGraphStore | None = None
-        if self.config.enable_graph and self.config.graph_store == "kuzu":
-            try:
-                from cems.graph import KuzuGraphStore
+        # Graph store (using PostgreSQL relations table instead of Kuzu)
+        self._use_pg_relations = True
 
-                self._graph = KuzuGraphStore(self.config.kuzu_storage_path)
-            except ImportError:
-                import logging
+    def _ensure_initialized(self) -> None:
+        """Ensure all components are initialized (sync version for CLI/MCP)."""
+        if self._initialized:
+            return
 
-                logging.getLogger(__name__).warning(
-                    "Kuzu not installed. Graph features disabled. "
-                    "Install with: pip install kuzu"
-                )
+        from cems.embedding import EmbeddingClient
+        from cems.fact_extraction import FactExtractor
+        from cems.vectorstore import PgVectorStore
 
-    def _build_mem0_config(self) -> dict[str, Any]:
-        """Build Mem0 configuration dict.
+        # Initialize vectorstore
+        if self._vectorstore is None:
+            self._vectorstore = PgVectorStore(self.config.database_url)
+            # Connect synchronously - only works in sync contexts
+            _run_async(self._vectorstore.connect())
 
-        Uses OpenRouter for ALL operations (LLM + embeddings) via single API key.
+        # Initialize embedder
+        if self._embedder is None:
+            self._embedder = EmbeddingClient(model=self.config.embedding_model)
 
-        LLM: OpenAI provider with openrouter_base_url parameter
-        Embeddings: OpenAI embedder with openai_base_url pointing to OpenRouter
+        # Initialize fact extractor
+        if self._fact_extractor is None:
+            self._fact_extractor = FactExtractor()
 
-        Required env vars:
-            - OPENROUTER_API_KEY: For all LLM and embedding calls
+        self._initialized = True
 
-        See:
-            - https://github.com/mem0ai/mem0/blob/main/mem0/llms/openai.py
-            - https://github.com/mem0ai/mem0/blob/main/mem0/embeddings/openai.py
-        """
-        api_key = os.environ.get("OPENROUTER_API_KEY")
-        model = self.config.get_mem0_model()
+    async def _ensure_initialized_async(self) -> None:
+        """Ensure all components are initialized (async version for HTTP server)."""
+        if self._initialized:
+            return
 
-        return {
-            "llm": {
-                "provider": "openai",  # Use OpenAI provider with OpenRouter base URL
-                "config": {
-                    "model": model,
-                    "api_key": api_key,
-                    "openrouter_base_url": "https://openrouter.ai/api/v1",
-                    "site_url": "https://github.com/cems",
-                    "app_name": "CEMS Memory Server",
-                },
-            },
-            "embedder": {
-                "provider": "openai",  # OpenAI embedder with OpenRouter base URL
-                "config": {
-                    "model": self.config.embedding_model,
-                    "api_key": api_key,
-                    "openai_base_url": "https://openrouter.ai/api/v1",
-                },
-            },
-            "vector_store": {
-                "provider": self.config.vector_store,
-                "config": self._get_vector_store_config(),
-            },
-            "version": "v1.1",
-            "custom_fact_extraction_prompt": """Extract actionable facts from developer conversations.
+        from cems.embedding import EmbeddingClient
+        from cems.fact_extraction import FactExtractor
+        from cems.vectorstore import PgVectorStore
 
-For each fact, capture:
-- SPECIFIC commands, file paths, URLs (not "uses scripts" but "uses ~/.claude/servers/gsc/seo_daily.sh")
-- CONCRETE preferences (not "likes Python" but "prefers Python 3.12+ with strict type hints")
-- WORKFLOW steps (not "does SEO" but "runs GSC scripts daily, updates GitHub issue #579 weekly")
-- DECISIONS with context (not "uses Coolify" but "deploys EpicPxls via Coolify GitHub integration, never CLI")
+        # Initialize vectorstore
+        if self._vectorstore is None:
+            self._vectorstore = PgVectorStore(self.config.database_url)
+            await self._vectorstore.connect()
 
-Rules:
-- Be specific: include file paths, commands, URLs, version numbers
-- Be actionable: facts should tell an AI what to DO, not just what exists
-- Preserve context: "for EpicPxls", "in production", "when debugging"
-- Skip vague context markers like "Context: X" - extract the actual workflow instead
+        # Initialize embedder
+        if self._embedder is None:
+            self._embedder = EmbeddingClient(model=self.config.embedding_model)
 
-Return JSON: {"facts": ["specific actionable fact 1", "specific actionable fact 2"]}""",
-        }
+        # Initialize fact extractor
+        if self._fact_extractor is None:
+            self._fact_extractor = FactExtractor()
 
-    def _get_vector_store_config(self) -> dict[str, Any]:
-        """Get vector store configuration.
-
-        Returns URL-based config if qdrant_url is set, otherwise local path config.
-        """
-        if self.config.qdrant_url:
-            return {"url": self.config.qdrant_url}
-        return {"path": str(self.config.qdrant_storage_path)}
-
-    def _get_mem0_user_id(self, scope: MemoryScope) -> str:
-        """Get the Mem0 user_id for a scope."""
-        if scope == MemoryScope.PERSONAL:
-            return f"personal:{self.config.user_id}"
-        else:
-            if not self.config.team_id:
-                raise ValueError("Cannot use shared scope without team_id configured")
-            return f"shared:{self.config.team_id}"
+        self._initialized = True
 
     def _infer_category_from_query(self, query: str) -> str | None:
         """Infer the likely category from a search query.
@@ -202,94 +206,203 @@ Return JSON: {"facts": ["specific actionable fact 1", "specific actionable fact 
             category: Category for organization
             source: Optional source identifier
             tags: Optional tags for organization
-            infer: If True (default), use LLM for fact extraction and deduplication.
-                   If False, store raw content directly (100-200ms vs 1-10s per memory).
-                   Use infer=False for bulk imports where speed matters.
-            source_ref: Optional project reference for scoped recall (e.g., "project:org/repo")
+            infer: If True (default), use LLM for fact extraction.
+                   If False, store raw content directly (faster).
+            source_ref: Optional project reference for scoped recall
             ttl_hours: Optional TTL in hours. If set, memory expires after this time.
-                       Use for short-term session memories. None = permanent memory.
-            pinned: If True, memory is pinned and never auto-pruned. Useful for
-                    important guidelines or gate rules.
+            pinned: If True, memory is pinned and never auto-pruned.
             pin_reason: Optional reason for pinning the memory.
 
         Returns:
             Dict with memory operation results
         """
+        self._ensure_initialized()
+        assert self._vectorstore is not None
+        assert self._embedder is not None
+
         memory_scope = MemoryScope(scope)
-        user_id = self._get_mem0_user_id(memory_scope)
 
-        # Add to Mem0
-        # infer=False skips LLM fact extraction and deduplication (much faster)
-        result = self._memory.add(
-            content,
-            user_id=user_id,
-            metadata={
-                "category": category,
-                "source": source,
-                "source_ref": source_ref,
-                "tags": tags or [],
-            },
-            infer=infer,
-        )
+        # Extract facts if infer is enabled
+        contents_to_store = [content]
+        if infer and self._fact_extractor:
+            try:
+                facts = self._fact_extractor.extract(content)
+                if facts:
+                    contents_to_store = facts
+            except Exception as e:
+                logger.warning(f"Fact extraction failed, storing raw content: {e}")
 
-        # Track extended metadata for each created memory
-        if result and "results" in result:
-            for mem_result in result["results"]:
-                if mem_result.get("event") in ("ADD", "UPDATE"):
-                    memory_id = mem_result.get("id")
-                    if memory_id:
-                        # Calculate expires_at if TTL is set
-                        expires_at = None
-                        if ttl_hours:
-                            from datetime import timedelta
-                            expires_at = datetime.now(UTC) + timedelta(hours=ttl_hours)
+        # Calculate expires_at if TTL is set
+        expires_at = None
+        if ttl_hours:
+            expires_at = datetime.now(UTC) + timedelta(hours=ttl_hours)
 
-                        metadata = MemoryMetadata(
-                            memory_id=memory_id,
-                            user_id=self.config.user_id,
-                            scope=memory_scope,
-                            category=category,
-                            source=source,
-                            source_ref=source_ref,
-                            tags=tags or [],
-                            expires_at=expires_at,
-                            pinned=pinned,
-                            pin_reason=pin_reason,
-                        )
-                        self._metadata.save_metadata(metadata)
+        # Get user/team IDs
+        user_id = self.config.user_id
+        team_id = self.config.team_id if scope == "shared" else None
 
-                        # Add to graph store if enabled
-                        if self._graph:
-                            # Find similar memories for RELATES_TO edges
-                            # This is the FIX: we now auto-populate graph relationships!
-                            similar_memories: list[tuple[str, float]] = []
-                            try:
-                                # Search for similar memories using the content
-                                similar_results = self._memory.search(
-                                    content[:500],  # Use first 500 chars for similarity search
-                                    user_id=user_id,
-                                    limit=5,
-                                )
-                                for sim_mem in similar_results.get("results", []):
-                                    sim_id = sim_mem.get("id")
-                                    sim_score = sim_mem.get("score", 0.0)
-                                    if sim_id and sim_id != memory_id:
-                                        similar_memories.append((sim_id, sim_score))
-                            except Exception as e:
-                                import logging
-                                logging.getLogger(__name__).debug(f"Similar memory search failed: {e}")
+        results = []
+        for fact_content in contents_to_store:
+            try:
+                # Generate embedding
+                embedding = self._embedder.embed(fact_content)
 
-                            self._graph.process_memory(
-                                memory_id=memory_id,
-                                content=content,
+                # Store in pgvector
+                memory_id = _run_async(
+                    self._vectorstore.add(
+                        content=fact_content,
+                        embedding=embedding,
+                        user_id=user_id,
+                        team_id=team_id,
+                        scope=scope,
+                        category=category,
+                        tags=tags,
+                        source=source,
+                        source_ref=source_ref,
+                        priority=1.0,
+                        pinned=pinned,
+                        pin_reason=pin_reason,
+                        expires_at=expires_at,
+                    )
+                )
+
+                results.append({
+                    "id": memory_id,
+                    "event": "ADD",
+                    "memory": fact_content,
+                })
+
+                # Add relations to similar memories
+                if self._use_pg_relations:
+                    try:
+                        similar = _run_async(
+                            self._vectorstore.search(
+                                query_embedding=embedding,
+                                user_id=user_id,
+                                team_id=team_id,
                                 scope=scope,
-                                user_id=self.config.user_id,
-                                category=category,
-                                tags=tags,
-                                similar_memories=similar_memories,  # Pass similar memories for RELATES_TO edges
+                                limit=5,
                             )
+                        )
+                        for sim_mem in similar:
+                            if sim_mem["id"] != memory_id and sim_mem.get("score", 0) > 0.7:
+                                _run_async(
+                                    self._vectorstore.add_relation(
+                                        source_id=memory_id,
+                                        target_id=sim_mem["id"],
+                                        relation_type="similar",
+                                        similarity=sim_mem.get("score"),
+                                    )
+                                )
+                    except Exception as e:
+                        logger.debug(f"Failed to add relations: {e}")
 
-        return result
+            except Exception as e:
+                logger.error(f"Failed to add memory: {e}")
+                results.append({
+                    "event": "ERROR",
+                    "error": str(e),
+                })
+
+        return {"results": results}
+
+    async def add_async(
+        self,
+        content: str,
+        scope: Literal["personal", "shared"] = "personal",
+        category: str = "general",
+        source: str | None = None,
+        tags: list[str] | None = None,
+        infer: bool = True,
+        source_ref: str | None = None,
+        ttl_hours: int | None = None,
+        pinned: bool = False,
+        pin_reason: str | None = None,
+    ) -> dict[str, Any]:
+        """Async version of add(). Use this from async contexts (HTTP server)."""
+        await self._ensure_initialized_async()
+        assert self._vectorstore is not None
+        assert self._embedder is not None
+
+        memory_scope = MemoryScope(scope)
+
+        # Extract facts if infer is enabled
+        contents_to_store = [content]
+        if infer and self._fact_extractor:
+            try:
+                facts = self._fact_extractor.extract(content)
+                if facts:
+                    contents_to_store = facts
+            except Exception as e:
+                logger.warning(f"Fact extraction failed, storing raw content: {e}")
+
+        # Calculate expires_at if TTL is set
+        expires_at = None
+        if ttl_hours:
+            expires_at = datetime.now(UTC) + timedelta(hours=ttl_hours)
+
+        # Get user/team IDs
+        user_id = self.config.user_id
+        team_id = self.config.team_id if scope == "shared" else None
+
+        results = []
+        for fact_content in contents_to_store:
+            try:
+                # Generate embedding
+                embedding = self._embedder.embed(fact_content)
+
+                # Store in pgvector
+                memory_id = await self._vectorstore.add(
+                    content=fact_content,
+                    embedding=embedding,
+                    user_id=user_id,
+                    team_id=team_id,
+                    scope=scope,
+                    category=category,
+                    tags=tags,
+                    source=source,
+                    source_ref=source_ref,
+                    priority=1.0,
+                    pinned=pinned,
+                    pin_reason=pin_reason,
+                    expires_at=expires_at,
+                )
+
+                results.append({
+                    "id": memory_id,
+                    "event": "ADD",
+                    "memory": fact_content,
+                })
+
+                # Add relations to similar memories
+                if self._use_pg_relations:
+                    try:
+                        similar = await self._vectorstore.search(
+                            query_embedding=embedding,
+                            user_id=user_id,
+                            team_id=team_id,
+                            scope=scope,
+                            limit=5,
+                        )
+                        for sim_mem in similar:
+                            if sim_mem["id"] != memory_id and sim_mem.get("score", 0) > 0.7:
+                                await self._vectorstore.add_relation(
+                                    source_id=memory_id,
+                                    target_id=sim_mem["id"],
+                                    relation_type="similar",
+                                    similarity=sim_mem.get("score"),
+                                )
+                    except Exception as e:
+                        logger.debug(f"Failed to add relations: {e}")
+
+            except Exception as e:
+                logger.error(f"Failed to add memory: {e}")
+                results.append({
+                    "event": "ERROR",
+                    "error": str(e),
+                })
+
+        return {"results": results}
 
     def search(
         self,
@@ -309,63 +422,72 @@ Return JSON: {"facts": ["specific actionable fact 1", "specific actionable fact 
         Returns:
             List of SearchResult objects
         """
-        results: list[SearchResult] = []
+        self._ensure_initialized()
+        assert self._vectorstore is not None
+        assert self._embedder is not None
 
-        # Determine which scopes to search
-        scopes_to_search = []
-        if scope in ("personal", "both"):
-            scopes_to_search.append(MemoryScope.PERSONAL)
-        if scope in ("shared", "both") and self.config.team_id:
-            scopes_to_search.append(MemoryScope.SHARED)
+        # Generate query embedding
+        query_embedding = self._embedder.embed(query)
 
-        # Collect all results first, then batch fetch metadata
-        raw_results: list[tuple[dict, MemoryScope]] = []
-        
-        for memory_scope in scopes_to_search:
-            user_id = self._get_mem0_user_id(memory_scope)
+        # Determine user/team for filtering
+        user_id = self.config.user_id
+        team_id = self.config.team_id if scope in ("shared", "both") else None
 
-            # Search in Mem0
-            mem0_results = self._memory.search(
-                query,
+        # Search with hybrid (vector + full-text)
+        raw_results = _run_async(
+            self._vectorstore.hybrid_search(
+                query=query,
+                query_embedding=query_embedding,
                 user_id=user_id,
-                limit=limit,
+                team_id=team_id,
+                scope=scope,
+                category=category,
+                limit=limit * 2,  # Fetch extra for filtering
+                vector_weight=self.config.hybrid_vector_weight if hasattr(self.config, 'hybrid_vector_weight') else 0.7,
             )
+        )
 
-            for mem in mem0_results.get("results", []):
-                raw_results.append((mem, memory_scope))
+        # Convert to SearchResult objects
+        results: list[SearchResult] = []
+        memory_ids: list[str] = []
 
-        # Batch fetch all metadata in a single query
-        memory_ids = [mem.get("id") for mem, _ in raw_results if mem.get("id")]
-        metadata_map: dict[str, MemoryMetadata] = {}
-        if memory_ids:
-            metadata_map = self._metadata.get_metadata_batch(memory_ids)
+        for mem in raw_results:
+            memory_scope = MemoryScope(mem.get("scope", "personal"))
 
-        # Build results and collect IDs to record access
-        access_ids: list[str] = []
-        for mem, memory_scope in raw_results:
-            memory_id = mem.get("id")
-            metadata = metadata_map.get(memory_id) if memory_id else None
-
-            # Apply category filter if metadata exists
-            if category and metadata and metadata.category != category:
-                continue
-
-            if memory_id:
-                access_ids.append(memory_id)
+            # Create MemoryMetadata from the result
+            metadata = MemoryMetadata(
+                memory_id=mem["id"],
+                user_id=mem.get("user_id", user_id),
+                scope=memory_scope,
+                category=mem.get("category", "general"),
+                source=mem.get("source"),
+                source_ref=mem.get("source_ref"),
+                tags=mem.get("tags", []),
+                priority=mem.get("priority", 1.0),
+                pinned=mem.get("pinned", False),
+                pin_reason=mem.get("pin_reason"),
+                archived=mem.get("archived", False),
+                access_count=mem.get("access_count", 0),
+                created_at=mem.get("created_at", datetime.now(UTC)),
+                updated_at=mem.get("updated_at", datetime.now(UTC)),
+                last_accessed=mem.get("last_accessed", datetime.now(UTC)),
+                expires_at=mem.get("expires_at"),
+            )
 
             results.append(
                 SearchResult(
-                    memory_id=memory_id or "",
-                    content=mem.get("memory", ""),
+                    memory_id=mem["id"],
+                    content=mem.get("content", ""),
                     score=mem.get("score", 0.0),
                     scope=memory_scope,
                     metadata=metadata,
                 )
             )
+            memory_ids.append(mem["id"])
 
-        # Batch record access in a single query
-        if access_ids:
-            self._metadata.record_access_batch(access_ids)
+        # Record access
+        if memory_ids:
+            _run_async(self._vectorstore.record_access_batch(memory_ids))
 
         # Apply priority boost and time decay to scores
         now = datetime.now(UTC)
@@ -377,7 +499,6 @@ Return JSON: {"facts": ["specific actionable fact 1", "specific actionable fact 
                 result.score *= result.metadata.priority
 
                 # Time decay: 50% penalty per month since last access
-                # More recently accessed memories get higher scores
                 days_since_access = (now - result.metadata.last_accessed).days
                 time_decay = 1.0 / (1.0 + (days_since_access / 30))
                 result.score *= time_decay
@@ -386,8 +507,7 @@ Return JSON: {"facts": ["specific actionable fact 1", "specific actionable fact 
                 if result.metadata.pinned:
                     result.score *= 1.1
 
-                # Cross-category penalty: 20% reduction if memory category
-                # doesn't match the inferred query category
+                # Cross-category penalty
                 if inferred_category and result.metadata.category:
                     if result.metadata.category.lower() != inferred_category:
                         result.score *= 0.8
@@ -395,6 +515,140 @@ Return JSON: {"facts": ["specific actionable fact 1", "specific actionable fact 
         # Sort by adjusted score and limit
         results.sort(key=lambda x: x.score, reverse=True)
         return results[:limit]
+
+    async def search_async(
+        self,
+        query: str,
+        scope: Literal["personal", "shared", "both"] = "both",
+        category: str | None = None,
+        limit: int = 5,
+    ) -> list[SearchResult]:
+        """Async version of search(). Use this from async contexts (HTTP server)."""
+        await self._ensure_initialized_async()
+        assert self._vectorstore is not None
+        assert self._embedder is not None
+
+        # Generate query embedding
+        query_embedding = self._embedder.embed(query)
+
+        # Determine user/team for filtering
+        user_id = self.config.user_id
+        team_id = self.config.team_id if scope in ("shared", "both") else None
+
+        # Search with hybrid (vector + full-text)
+        raw_results = await self._vectorstore.hybrid_search(
+            query=query,
+            query_embedding=query_embedding,
+            user_id=user_id,
+            team_id=team_id,
+            scope=scope,
+            category=category,
+            limit=limit * 2,  # Fetch extra for filtering
+            vector_weight=self.config.hybrid_vector_weight if hasattr(self.config, 'hybrid_vector_weight') else 0.7,
+        )
+
+        # Convert to SearchResult objects
+        results: list[SearchResult] = []
+        memory_ids: list[str] = []
+
+        for mem in raw_results:
+            memory_scope = MemoryScope(mem.get("scope", "personal"))
+
+            # Create MemoryMetadata from the result
+            metadata = MemoryMetadata(
+                memory_id=mem["id"],
+                user_id=mem.get("user_id", user_id),
+                scope=memory_scope,
+                category=mem.get("category", "general"),
+                source=mem.get("source"),
+                source_ref=mem.get("source_ref"),
+                tags=mem.get("tags", []),
+                priority=mem.get("priority", 1.0),
+                pinned=mem.get("pinned", False),
+                pin_reason=mem.get("pin_reason"),
+                archived=mem.get("archived", False),
+                access_count=mem.get("access_count", 0),
+                created_at=mem.get("created_at", datetime.now(UTC)),
+                updated_at=mem.get("updated_at", datetime.now(UTC)),
+                last_accessed=mem.get("last_accessed", datetime.now(UTC)),
+                expires_at=mem.get("expires_at"),
+            )
+
+            results.append(
+                SearchResult(
+                    memory_id=mem["id"],
+                    content=mem.get("content", ""),
+                    score=mem.get("score", 0.0),
+                    scope=memory_scope,
+                    metadata=metadata,
+                )
+            )
+            memory_ids.append(mem["id"])
+
+        # Record access
+        if memory_ids:
+            await self._vectorstore.record_access_batch(memory_ids)
+
+        # Apply priority boost and time decay to scores
+        now = datetime.now(UTC)
+        inferred_category = self._infer_category_from_query(query)
+
+        for result in results:
+            if result.metadata:
+                result.score *= result.metadata.priority
+                days_since_access = (now - result.metadata.last_accessed).days
+                time_decay = 1.0 / (1.0 + (days_since_access / 30))
+                result.score *= time_decay
+                if result.metadata.pinned:
+                    result.score *= 1.1
+                if inferred_category and result.metadata.category:
+                    if result.metadata.category.lower() != inferred_category:
+                        result.score *= 0.8
+
+        results.sort(key=lambda x: x.score, reverse=True)
+        return results[:limit]
+
+    async def delete_async(self, memory_id: str, hard: bool = False) -> None:
+        """Async version of delete(). Use this from async contexts (HTTP server)."""
+        await self._ensure_initialized_async()
+        assert self._vectorstore is not None
+
+        if hard:
+            await self._vectorstore.delete(memory_id)
+        else:
+            await self._vectorstore.update(memory_id, archived=True)
+
+    async def update_async(self, memory_id: str, content: str) -> dict[str, Any]:
+        """Async version of update(). Use this from async contexts (HTTP server)."""
+        await self._ensure_initialized_async()
+        assert self._vectorstore is not None
+        assert self._embedder is not None
+
+        # Generate new embedding
+        embedding = self._embedder.embed(content)
+
+        await self._vectorstore.update(
+            memory_id=memory_id,
+            content=content,
+            embedding=embedding,
+        )
+
+        return {"success": True, "memory_id": memory_id}
+
+    async def get_category_counts_async(
+        self,
+        scope: Literal["personal", "shared", "both"] = "both",
+    ) -> dict[str, int]:
+        """Async version of get_category_counts()."""
+        await self._ensure_initialized_async()
+        assert self._vectorstore is not None
+
+        user_id = self.config.user_id
+
+        return await self._vectorstore.get_category_counts(
+            user_id=user_id,
+            scope=scope if scope != "both" else None,
+        )
 
     def get(self, memory_id: str) -> dict[str, Any] | None:
         """Get a specific memory by ID.
@@ -405,10 +659,23 @@ Return JSON: {"facts": ["specific actionable fact 1", "specific actionable fact 
         Returns:
             Memory dict or None if not found
         """
-        result = self._memory.get(memory_id)
+        self._ensure_initialized()
+        assert self._vectorstore is not None
+
+        result = _run_async(self._vectorstore.get(memory_id))
         if result:
-            self._metadata.record_access(memory_id)
-        return result
+            _run_async(self._vectorstore.record_access(memory_id))
+            # Return in Mem0-compatible format
+            return {
+                "id": result["id"],
+                "memory": result["content"],
+                "metadata": {
+                    "category": result.get("category"),
+                    "source": result.get("source"),
+                    "tags": result.get("tags", []),
+                },
+            }
+        return None
 
     def get_all(
         self,
@@ -424,33 +691,43 @@ Return JSON: {"facts": ["specific actionable fact 1", "specific actionable fact 
         Returns:
             List of memory dicts
         """
-        all_memories: list[dict[str, Any]] = []
+        self._ensure_initialized()
+        assert self._vectorstore is not None
+        assert self._embedder is not None
 
-        scopes_to_get = []
-        if scope in ("personal", "both"):
-            scopes_to_get.append(MemoryScope.PERSONAL)
-        if scope in ("shared", "both") and self.config.team_id:
-            scopes_to_get.append(MemoryScope.SHARED)
+        user_id = self.config.user_id
+        team_id = self.config.team_id if scope in ("shared", "both") else None
 
-        # Get archived IDs in a single batch query (if filtering)
-        archived_ids: set[str] = set()
-        if not include_archived and hasattr(self._metadata, "get_archived_memory_ids"):
-            archived_ids = self._metadata.get_archived_memory_ids()
+        # Use a dummy embedding to get all (or use a dedicated method)
+        # For now, we'll do a broad search with high limit
+        dummy_embedding = self._embedder.embed("memory")
 
-        for memory_scope in scopes_to_get:
-            user_id = self._get_mem0_user_id(memory_scope)
-            result = self._memory.get_all(user_id=user_id)
+        results = _run_async(
+            self._vectorstore.search(
+                query_embedding=dummy_embedding,
+                user_id=user_id,
+                team_id=team_id,
+                scope=scope,
+                limit=1000,
+                include_archived=include_archived,
+            )
+        )
 
-            if result and "results" in result:
-                for mem in result["results"]:
-                    memory_id = mem.get("id")
-                    # Fast O(1) set lookup instead of N database queries
-                    if memory_id and not include_archived and memory_id in archived_ids:
-                        continue
-                    mem["scope"] = memory_scope.value
-                    all_memories.append(mem)
+        # Convert to Mem0-compatible format
+        memories = []
+        for mem in results:
+            memories.append({
+                "id": mem["id"],
+                "memory": mem["content"],
+                "scope": mem.get("scope", "personal"),
+                "metadata": {
+                    "category": mem.get("category"),
+                    "source": mem.get("source"),
+                    "tags": mem.get("tags", []),
+                },
+            })
 
-        return all_memories
+        return memories
 
     def update(self, memory_id: str, content: str) -> dict[str, Any]:
         """Update a memory's content.
@@ -462,15 +739,24 @@ Return JSON: {"facts": ["specific actionable fact 1", "specific actionable fact 
         Returns:
             Update result dict
         """
-        result = self._memory.update(memory_id, content)
+        self._ensure_initialized()
+        assert self._vectorstore is not None
+        assert self._embedder is not None
 
-        # Update metadata timestamp
-        metadata = self._metadata.get_metadata(memory_id)
-        if metadata:
-            metadata.updated_at = datetime.now(UTC)
-            self._metadata.save_metadata(metadata)
+        # Generate new embedding
+        embedding = self._embedder.embed(content)
 
-        return result
+        success = _run_async(
+            self._vectorstore.update(
+                memory_id=memory_id,
+                content=content,
+                embedding=embedding,
+            )
+        )
+
+        if success:
+            return {"status": "updated", "id": memory_id}
+        return {"status": "not_found", "id": memory_id}
 
     def delete(self, memory_id: str, hard: bool = False) -> dict[str, Any]:
         """Delete or archive a memory.
@@ -482,17 +768,15 @@ Return JSON: {"facts": ["specific actionable fact 1", "specific actionable fact 
         Returns:
             Delete result dict
         """
-        if hard:
-            result = self._memory.delete(memory_id)
-            self._metadata.delete_metadata(memory_id)
-            # Also remove from graph
-            if self._graph:
-                self._graph.delete_memory_node(memory_id)
-        else:
-            self._metadata.archive_memory(memory_id)
-            result = {"status": "archived", "memory_id": memory_id}
+        self._ensure_initialized()
+        assert self._vectorstore is not None
 
-        return result
+        success = _run_async(self._vectorstore.delete(memory_id, hard=hard))
+
+        if success:
+            status = "deleted" if hard else "archived"
+            return {"status": status, "memory_id": memory_id}
+        return {"status": "not_found", "memory_id": memory_id}
 
     def forget(self, memory_id: str) -> dict[str, Any]:
         """Forget (soft delete) a memory.
@@ -508,13 +792,18 @@ Return JSON: {"facts": ["specific actionable fact 1", "specific actionable fact 
     def history(self, memory_id: str) -> list[dict[str, Any]]:
         """Get the history of a memory.
 
+        Note: pgvector doesn't track history by default.
+        This returns an empty list for compatibility.
+
         Args:
             memory_id: The memory ID
 
         Returns:
-            List of history entries
+            List of history entries (empty for pgvector)
         """
-        return self._memory.history(memory_id)
+        # History tracking not implemented in pgvector
+        # Would need a separate audit table
+        return []
 
     def get_stale_memories(self, days: int | None = None) -> list[str]:
         """Get memories that haven't been accessed in N days.
@@ -525,8 +814,13 @@ Return JSON: {"facts": ["specific actionable fact 1", "specific actionable fact 
         Returns:
             List of stale memory IDs
         """
+        self._ensure_initialized()
+        assert self._vectorstore is not None
+
         days = days or self.config.stale_days
-        return self._metadata.get_stale_memories(self.config.user_id, days)
+        return _run_async(
+            self._vectorstore.get_stale_memories(self.config.user_id, days)
+        )
 
     def get_hot_memories(self, threshold: int | None = None) -> list[str]:
         """Get frequently accessed memories.
@@ -537,8 +831,12 @@ Return JSON: {"facts": ["specific actionable fact 1", "specific actionable fact 
         Returns:
             List of hot memory IDs
         """
-        threshold = threshold or self.config.hot_access_threshold
-        return self._metadata.get_hot_memories(self.config.user_id, threshold)
+        # This requires a query on access_count
+        # For now, delegate to metadata store if available
+        if self._metadata:
+            threshold = threshold or self.config.hot_access_threshold
+            return self._metadata.get_hot_memories(self.config.user_id, threshold)
+        return []
 
     def get_recent_memories(self, hours: int = 24) -> list[str]:
         """Get memories created in the last N hours.
@@ -549,7 +847,9 @@ Return JSON: {"facts": ["specific actionable fact 1", "specific actionable fact 
         Returns:
             List of memory IDs
         """
-        return self._metadata.get_recent_memories(self.config.user_id, hours)
+        if self._metadata:
+            return self._metadata.get_recent_memories(self.config.user_id, hours)
+        return []
 
     def get_old_memories(self, days: int = 30) -> list[str]:
         """Get memories older than N days.
@@ -560,7 +860,9 @@ Return JSON: {"facts": ["specific actionable fact 1", "specific actionable fact 
         Returns:
             List of memory IDs
         """
-        return self._metadata.get_old_memories(self.config.user_id, days)
+        if self._metadata:
+            return self._metadata.get_old_memories(self.config.user_id, days)
+        return []
 
     def promote_memory(self, memory_id: str, boost: float = 0.1) -> None:
         """Increase a memory's priority.
@@ -569,7 +871,16 @@ Return JSON: {"facts": ["specific actionable fact 1", "specific actionable fact 
             memory_id: The memory ID
             boost: Priority boost amount
         """
-        self._metadata.increase_priority(memory_id, boost)
+        self._ensure_initialized()
+        assert self._vectorstore is not None
+
+        # Get current priority
+        mem = _run_async(self._vectorstore.get(memory_id))
+        if mem:
+            new_priority = min(mem.get("priority", 1.0) + boost, 2.0)
+            _run_async(
+                self._vectorstore.update(memory_id, priority=new_priority)
+            )
 
     def archive_memory(self, memory_id: str) -> None:
         """Archive a memory (soft delete).
@@ -577,7 +888,10 @@ Return JSON: {"facts": ["specific actionable fact 1", "specific actionable fact 
         Args:
             memory_id: The memory ID
         """
-        self._metadata.archive_memory(memory_id)
+        self._ensure_initialized()
+        assert self._vectorstore is not None
+
+        _run_async(self._vectorstore.update(memory_id, archived=True))
 
     def get_metadata(self, memory_id: str) -> MemoryMetadata | None:
         """Get extended metadata for a memory.
@@ -588,22 +902,49 @@ Return JSON: {"facts": ["specific actionable fact 1", "specific actionable fact 
         Returns:
             MemoryMetadata or None
         """
-        return self._metadata.get_metadata(memory_id)
+        self._ensure_initialized()
+        assert self._vectorstore is not None
 
-    def get_category_counts(self, scope: Literal["personal", "shared"] | None = None) -> dict[str, int]:
-        """Get memory counts grouped by category using a single efficient query.
+        mem = _run_async(self._vectorstore.get(memory_id))
+        if not mem:
+            return None
+
+        return MemoryMetadata(
+            memory_id=mem["id"],
+            user_id=mem.get("user_id", self.config.user_id),
+            scope=MemoryScope(mem.get("scope", "personal")),
+            category=mem.get("category", "general"),
+            source=mem.get("source"),
+            source_ref=mem.get("source_ref"),
+            tags=mem.get("tags", []),
+            priority=mem.get("priority", 1.0),
+            pinned=mem.get("pinned", False),
+            pin_reason=mem.get("pin_reason"),
+            archived=mem.get("archived", False),
+            access_count=mem.get("access_count", 0),
+            created_at=mem.get("created_at", datetime.now(UTC)),
+            updated_at=mem.get("updated_at", datetime.now(UTC)),
+            last_accessed=mem.get("last_accessed", datetime.now(UTC)),
+            expires_at=mem.get("expires_at"),
+        )
+
+    def get_category_counts(
+        self, scope: Literal["personal", "shared"] | None = None
+    ) -> dict[str, int]:
+        """Get memory counts grouped by category.
 
         Args:
-            scope: Optional filter by scope ("personal" or "shared")
+            scope: Optional filter by scope
 
         Returns:
             Dict mapping category name to count
         """
-        from cems.models import MemoryScope
-        
-        scope_enum = MemoryScope(scope) if scope else None
-        
-        return self._metadata.get_category_counts(self.config.user_id, scope_enum)
+        self._ensure_initialized()
+        assert self._vectorstore is not None
+
+        return _run_async(
+            self._vectorstore.get_category_counts(self.config.user_id, scope)
+        )
 
     @property
     def metadata_store(self) -> "PostgresMetadataStore":
@@ -611,9 +952,10 @@ Return JSON: {"facts": ["specific actionable fact 1", "specific actionable fact 
         return self._metadata
 
     @property
-    def mem0(self) -> Memory:
-        """Access the underlying Mem0 instance."""
-        return self._memory
+    def vectorstore(self) -> "PgVectorStore":
+        """Access the underlying vectorstore instance."""
+        self._ensure_initialized()
+        return self._vectorstore
 
     def get_all_categories(
         self,
@@ -627,16 +969,18 @@ Return JSON: {"facts": ["specific actionable fact 1", "specific actionable fact 
         Returns:
             List of dicts with category name, scope, and count
         """
-        if scope == "personal":
-            return self._metadata.get_all_categories(
-                self.config.user_id, MemoryScope.PERSONAL
-            )
-        elif scope == "shared" and self.config.team_id:
-            return self._metadata.get_all_categories(
-                self.config.user_id, MemoryScope.SHARED
-            )
-        else:
-            return self._metadata.get_all_categories(self.config.user_id)
+        if self._metadata:
+            if scope == "personal":
+                return self._metadata.get_all_categories(
+                    self.config.user_id, MemoryScope.PERSONAL
+                )
+            elif scope == "shared" and self.config.team_id:
+                return self._metadata.get_all_categories(
+                    self.config.user_id, MemoryScope.SHARED
+                )
+            else:
+                return self._metadata.get_all_categories(self.config.user_id)
+        return []
 
     def get_recently_accessed(self, limit: int = 10) -> list[dict]:
         """Get recently accessed memories.
@@ -647,7 +991,9 @@ Return JSON: {"facts": ["specific actionable fact 1", "specific actionable fact 
         Returns:
             List of dicts with memory info and access timestamps
         """
-        return self._metadata.get_recently_accessed(self.config.user_id, limit)
+        if self._metadata:
+            return self._metadata.get_recently_accessed(self.config.user_id, limit)
+        return []
 
     def get_category_summary(
         self,
@@ -663,9 +1009,11 @@ Return JSON: {"facts": ["specific actionable fact 1", "specific actionable fact 
         Returns:
             Summary dict with content, item_count, last_updated, or None
         """
-        return self._metadata.get_category_summary(
-            self.config.user_id, category, scope
-        )
+        if self._metadata:
+            return self._metadata.get_category_summary(
+                self.config.user_id, category, scope
+            )
+        return None
 
     def get_all_category_summaries(
         self,
@@ -679,29 +1027,31 @@ Return JSON: {"facts": ["specific actionable fact 1", "specific actionable fact 
         Returns:
             List of summary dicts
         """
-        if scope == "personal":
-            return self._metadata.get_all_category_summaries(
-                self.config.user_id, "personal"
-            )
-        elif scope == "shared":
-            return self._metadata.get_all_category_summaries(
-                self.config.user_id, "shared"
-            )
-        else:
-            return self._metadata.get_all_category_summaries(self.config.user_id)
+        if self._metadata:
+            if scope == "personal":
+                return self._metadata.get_all_category_summaries(
+                    self.config.user_id, "personal"
+                )
+            elif scope == "shared":
+                return self._metadata.get_all_category_summaries(
+                    self.config.user_id, "shared"
+                )
+            else:
+                return self._metadata.get_all_category_summaries(self.config.user_id)
+        return []
 
     # =========================================================================
-    # Graph Store Methods
+    # Graph Store Methods (using PostgreSQL relations)
     # =========================================================================
 
     @property
-    def graph_store(self) -> KuzuGraphStore | None:
+    def graph_store(self):
         """Access the graph store directly for graph queries.
 
         Returns:
-            KuzuGraphStore instance or None if graph is disabled
+            None (Kuzu replaced by PostgreSQL relations)
         """
-        return self._graph
+        return None
 
     def get_related_memories(
         self,
@@ -709,19 +1059,22 @@ Return JSON: {"facts": ["specific actionable fact 1", "specific actionable fact 
         max_depth: int = 2,
         limit: int = 10,
     ) -> list[dict]:
-        """Find memories related to a given memory via the knowledge graph.
+        """Find memories related to a given memory via relations.
 
         Args:
             memory_id: Starting memory ID
-            max_depth: Maximum path length to traverse
+            max_depth: Maximum path length (not used with PostgreSQL relations)
             limit: Maximum results
 
         Returns:
-            List of related memories, or empty list if graph disabled
+            List of related memories
         """
-        if not self._graph:
-            return []
-        return self._graph.get_related_memories(memory_id, max_depth, limit)
+        self._ensure_initialized()
+        assert self._vectorstore is not None
+
+        return _run_async(
+            self._vectorstore.get_related_memories(memory_id, limit=limit)
+        )
 
     def get_memories_by_entity(
         self,
@@ -731,28 +1084,34 @@ Return JSON: {"facts": ["specific actionable fact 1", "specific actionable fact 
     ) -> list[dict]:
         """Find memories that mention a specific entity.
 
+        Note: This uses full-text search instead of graph traversal.
+
         Args:
             entity_name: Entity name (e.g., "Python", "Docker")
-            entity_type: Entity type (e.g., "tool", "concept")
+            entity_type: Entity type (ignored in pgvector implementation)
             limit: Maximum results
 
         Returns:
             List of memories mentioning the entity
         """
-        if not self._graph:
-            return []
-        entity_id = f"{entity_type}:{entity_name.lower()}"
-        return self._graph.get_memories_by_entity(entity_id, limit)
+        self._ensure_initialized()
+        assert self._vectorstore is not None
+
+        return _run_async(
+            self._vectorstore.full_text_search(
+                query=entity_name,
+                user_id=self.config.user_id,
+                limit=limit,
+            )
+        )
 
     def get_graph_stats(self) -> dict[str, int]:
-        """Get statistics about the knowledge graph.
+        """Get statistics about the memory relations.
 
         Returns:
-            Dict with node and edge counts, or empty dict if graph disabled
+            Dict with counts (empty since Kuzu is removed)
         """
-        if not self._graph:
-            return {}
-        return self._graph.get_graph_stats()
+        return {"nodes": 0, "edges": 0}
 
     # =========================================================================
     # Unified Retrieval Pipeline (5-Stage Inference Retrieval)
@@ -773,12 +1132,12 @@ Return JSON: {"facts": ["specific actionable fact 1", "specific actionable fact 
         """The enhanced inference retrieval pipeline.
 
         Implements 9 stages:
-        1. Query understanding (intent, domains, entities) - NEW
+        1. Query understanding (intent, domains, entities)
         2. Query synthesis (LLM expansion)
-        3. HyDE (hypothetical document generation) - NEW
-        4. Candidate retrieval (vector + graph)
-        5. RRF fusion (combine multi-query results) - NEW
-        6. LLM re-ranking (smarter relevance) - NEW
+        3. HyDE (hypothetical document generation)
+        4. Candidate retrieval (vector + hybrid search)
+        5. RRF fusion (combine multi-query results)
+        6. LLM re-ranking (smarter relevance)
         7. Relevance filtering (threshold)
         8. Scoring adjustments (unified: time decay, priority, project)
         9. Token-budgeted assembly
@@ -790,18 +1149,15 @@ Return JSON: {"facts": ["specific actionable fact 1", "specific actionable fact 
             scope: "personal", "shared", or "both"
             max_tokens: Token budget for results
             enable_query_synthesis: Use LLM to expand query
-            enable_graph: Include graph traversal
+            enable_graph: Include relation traversal
             project: Optional project ID for project-scoped scoring
-            mode: Retrieval mode - "auto" (smart routing), "vector" (fast), "hybrid" (full)
+            mode: Retrieval mode
             enable_hyde: Use HyDE for better vector matching
             enable_rerank: Use LLM re-ranking for smarter results
 
         Returns:
             Dict with results, tokens_used, metadata
         """
-        import logging
-        log = logging.getLogger(__name__)
-        
         from cems.retrieval import (
             apply_score_adjustments,
             assemble_context,
@@ -815,6 +1171,7 @@ Return JSON: {"facts": ["specific actionable fact 1", "specific actionable fact 
             synthesize_query,
         )
 
+        log = logger
         log.info(f"[RETRIEVAL] Starting retrieve_for_inference: query='{query[:50]}...', mode={mode}")
 
         # Get LLM client for advanced features
@@ -832,14 +1189,13 @@ Return JSON: {"facts": ["specific actionable fact 1", "specific actionable fact 
             try:
                 intent = extract_query_intent(query, client)
                 selected_mode = route_to_strategy(intent)
-                log.info(f"[RETRIEVAL] Auto mode selected: {selected_mode} (intent={intent.get('primary_intent')}, complexity={intent.get('complexity')})")
+                log.info(f"[RETRIEVAL] Auto mode selected: {selected_mode}")
             except Exception as e:
                 log.warning(f"[RETRIEVAL] Query understanding failed: {e}")
                 selected_mode = "hybrid"
 
         # Infer category from query for scoring
         inferred_category = self._infer_category_from_query(query)
-        log.debug(f"[RETRIEVAL] Inferred category: {inferred_category}")
 
         # Stage 2: Query synthesis
         queries_to_search = [query]
@@ -857,89 +1213,45 @@ Return JSON: {"facts": ["specific actionable fact 1", "specific actionable fact 
                 hypothetical = generate_hypothetical_memory(query, client)
                 if hypothetical:
                     queries_to_search.append(hypothetical)
-                    log.info(f"[RETRIEVAL] HyDE generated: '{hypothetical[:50]}...'")
+                    log.info(f"[RETRIEVAL] HyDE generated")
             except Exception as e:
                 log.warning(f"[RETRIEVAL] HyDE generation failed: {e}")
 
-        # Stage 4: Candidate retrieval (collect per-query results for RRF)
+        # Stage 4: Candidate retrieval
         query_results: list[list[SearchResult]] = []
 
         for search_query in queries_to_search:
-            # Vector search - use raw search to get base scores
-            vector_results = self._search_raw(search_query, scope, limit=self.config.max_candidates_per_query)
+            vector_results = self._search_raw(
+                search_query, scope, limit=self.config.max_candidates_per_query
+            )
             query_results.append(vector_results)
-            log.debug(f"[RETRIEVAL] Vector search for '{search_query[:30]}...': {len(vector_results)} results")
 
-        # Category summaries integration - use summaries to find relevant categories
-        # then boost memories from those categories
-        category_boost_map: dict[str, float] = {}
-        if selected_mode == "hybrid" and client:
-            try:
-                summaries = self.get_all_category_summaries(scope=scope)
-                if summaries:
-                    # Find categories whose summaries are relevant to the query
-                    summary_text = "\n".join([
-                        f"- {s.category}: {s.summary[:100]}..."
-                        for s in summaries[:20]  # Top 20 categories
-                    ])
-                    cat_prompt = f"""Given this search query, which categories are most relevant?
-
-Query: {query}
-
-Available categories:
-{summary_text}
-
-Return a JSON object with category names as keys and relevance scores (0.0-1.0) as values.
-Only include categories with relevance >= 0.3.
-Example: {{"debugging": 0.9, "deployment": 0.5}}
-
-JSON:"""
-                    response = client.complete(cat_prompt, max_tokens=200, temperature=0.1)
-                    response = response.strip()
-                    if response.startswith("```"):
-                        import re
-                        match = re.search(r"```(?:json)?\s*([\s\S]*?)```", response)
-                        if match:
-                            response = match.group(1).strip()
-                    category_boost_map = json.loads(response)
-                    log.info(f"[RETRIEVAL] Category summaries matched: {list(category_boost_map.keys())}")
-            except Exception as e:
-                log.debug(f"[RETRIEVAL] Category summary matching failed: {e}")
-
-        # Graph traversal (if enabled) - add as separate result list for RRF
-        if enable_graph and self._graph and query_results and query_results[0]:
-            graph_results: list[SearchResult] = []
-            for top_result in query_results[0][:5]:  # Top 5 from primary query for graph seeds
+        # Relation traversal (if enabled)
+        if enable_graph and query_results and query_results[0]:
+            relation_results: list[SearchResult] = []
+            for top_result in query_results[0][:5]:
                 try:
-                    related = self._graph.get_related_memories(
-                        top_result.memory_id, max_depth=2, limit=8
-                    )
+                    related = self.get_related_memories(top_result.memory_id, limit=8)
                     for rel in related:
-                        mem = self.get(rel["id"])
-                        if mem:
-                            metadata = self._metadata.get_metadata(rel["id"])
-                            # Use actual edge similarity instead of fixed 0.5
-                            base_score = rel.get("similarity", 0.5)
-                            # Apply distance penalty
-                            distance = rel.get("distance", 1)
-                            base_score *= 1.0 / distance
-                            graph_results.append(
+                        metadata = self.get_metadata(rel["id"])
+                        if metadata:
+                            base_score = rel.get("relation_similarity", 0.5) or 0.5
+                            relation_results.append(
                                 SearchResult(
                                     memory_id=rel["id"],
-                                    content=mem.get("memory", ""),
+                                    content=rel.get("content", ""),
                                     score=base_score,
-                                    scope=MemoryScope(metadata.scope) if metadata else MemoryScope.PERSONAL,
+                                    scope=metadata.scope,
                                     metadata=metadata,
                                 )
                             )
                 except Exception as e:
-                    log.debug(f"[RETRIEVAL] Graph traversal error: {e}")
-            
-            if graph_results:
-                query_results.append(graph_results)
-                log.info(f"[RETRIEVAL] Graph traversal: {len(graph_results)} results")
+                    log.debug(f"[RETRIEVAL] Relation traversal error: {e}")
 
-        # Stage 5: RRF Fusion (combine all query results)
+            if relation_results:
+                query_results.append(relation_results)
+
+        # Stage 5: RRF Fusion
         if len(query_results) > 1:
             candidates = reciprocal_rank_fusion(query_results)
             log.info(f"[RETRIEVAL] RRF fusion: {sum(len(r) for r in query_results)} -> {len(candidates)} results")
@@ -949,19 +1261,21 @@ JSON:"""
         # Deduplicate
         candidates = deduplicate_results(candidates)
 
-        # Stage 6: LLM Re-ranking (if enabled and in hybrid mode)
+        # Stage 6: LLM Re-ranking
         if enable_rerank and selected_mode == "hybrid" and client and len(candidates) > 3:
             try:
-                candidates = rerank_with_llm(query, candidates, client, top_k=self.config.rerank_output_limit, config=self.config)
+                candidates = rerank_with_llm(
+                    query, candidates, client,
+                    top_k=self.config.rerank_output_limit,
+                    config=self.config
+                )
                 log.info(f"[RETRIEVAL] LLM reranking complete: {len(candidates)} results")
             except Exception as e:
                 log.warning(f"[RETRIEVAL] LLM reranking failed: {e}")
 
         # Stage 7: Relevance filtering
         threshold = self.config.relevance_threshold
-        before_filter = len(candidates)
         candidates = [c for c in candidates if c.score >= threshold]
-        log.debug(f"[RETRIEVAL] Relevance filter (threshold={threshold}): {before_filter} -> {len(candidates)}")
 
         # Stage 8: Apply unified scoring adjustments
         for candidate in candidates:
@@ -970,13 +1284,6 @@ JSON:"""
                 inferred_category=inferred_category,
                 project=project,
             )
-            # Apply category boost from summary matching
-            if category_boost_map and candidate.metadata:
-                cat = candidate.metadata.category
-                if cat and cat.lower() in category_boost_map:
-                    boost = 1.0 + (category_boost_map[cat.lower()] * 0.3)  # Up to 30% boost
-                    candidate.score *= boost
-                    log.debug(f"[RETRIEVAL] Category boost for '{cat}': {boost:.2f}")
 
         # Re-sort by adjusted score
         candidates.sort(key=lambda x: x.score, reverse=True)
@@ -1029,53 +1336,285 @@ JSON:"""
         Returns:
             List of SearchResult with base vector scores
         """
+        self._ensure_initialized()
+        assert self._vectorstore is not None
+        assert self._embedder is not None
+
+        # Generate query embedding
+        query_embedding = self._embedder.embed(query)
+
+        user_id = self.config.user_id
+        team_id = self.config.team_id if scope in ("shared", "both") else None
+
+        # Use vector search only (raw scores)
+        raw_results = _run_async(
+            self._vectorstore.search(
+                query_embedding=query_embedding,
+                user_id=user_id,
+                team_id=team_id,
+                scope=scope,
+                category=category,
+                limit=limit,
+            )
+        )
+
+        # Convert to SearchResult objects
         results: list[SearchResult] = []
+        for mem in raw_results:
+            memory_scope = MemoryScope(mem.get("scope", "personal"))
 
-        # Determine which scopes to search
-        scopes_to_search = []
-        if scope in ("personal", "both"):
-            scopes_to_search.append(MemoryScope.PERSONAL)
-        if scope in ("shared", "both") and self.config.team_id:
-            scopes_to_search.append(MemoryScope.SHARED)
-
-        # Collect raw results
-        raw_results: list[tuple[dict, MemoryScope]] = []
-
-        for memory_scope in scopes_to_search:
-            user_id = self._get_mem0_user_id(memory_scope)
-            mem0_results = self._memory.search(query, user_id=user_id, limit=limit)
-            for mem in mem0_results.get("results", []):
-                raw_results.append((mem, memory_scope))
-
-        # Batch fetch metadata
-        memory_ids = [mem.get("id") for mem, _ in raw_results if mem.get("id")]
-        metadata_map: dict[str, MemoryMetadata] = {}
-        if memory_ids:
-            metadata_map = self._metadata.get_metadata_batch(memory_ids)
-
-        # Build results with RAW scores (no adjustments here!)
-        for mem, memory_scope in raw_results:
-            memory_id = mem.get("id")
-            metadata = metadata_map.get(memory_id) if memory_id else None
-
-            # Skip expired memories (not in metadata_map due to TTL filtering)
-            if memory_id and memory_id not in metadata_map:
-                continue
-
-            # Apply category filter if provided
-            if category and metadata and metadata.category != category:
-                continue
+            metadata = MemoryMetadata(
+                memory_id=mem["id"],
+                user_id=mem.get("user_id", user_id),
+                scope=memory_scope,
+                category=mem.get("category", "general"),
+                source=mem.get("source"),
+                source_ref=mem.get("source_ref"),
+                tags=mem.get("tags", []),
+                priority=mem.get("priority", 1.0),
+                pinned=mem.get("pinned", False),
+                pin_reason=mem.get("pin_reason"),
+                archived=mem.get("archived", False),
+                access_count=mem.get("access_count", 0),
+                created_at=mem.get("created_at", datetime.now(UTC)),
+                updated_at=mem.get("updated_at", datetime.now(UTC)),
+                last_accessed=mem.get("last_accessed", datetime.now(UTC)),
+                expires_at=mem.get("expires_at"),
+            )
 
             results.append(
                 SearchResult(
-                    memory_id=memory_id or "",
-                    content=mem.get("memory", ""),
-                    score=mem.get("score", 0.0),  # Raw vector score!
+                    memory_id=mem["id"],
+                    content=mem.get("content", ""),
+                    score=mem.get("score", 0.0),
                     scope=memory_scope,
                     metadata=metadata,
                 )
             )
 
-        # Sort by raw score
         results.sort(key=lambda x: x.score, reverse=True)
         return results[:limit]
+
+    async def _search_raw_async(
+        self,
+        query: str,
+        scope: Literal["personal", "shared", "both"] = "both",
+        category: str | None = None,
+        limit: int = 5,
+    ) -> list[SearchResult]:
+        """Async version of _search_raw()."""
+        await self._ensure_initialized_async()
+        assert self._vectorstore is not None
+        assert self._embedder is not None
+
+        query_embedding = self._embedder.embed(query)
+        user_id = self.config.user_id
+        team_id = self.config.team_id if scope in ("shared", "both") else None
+
+        raw_results = await self._vectorstore.search(
+            query_embedding=query_embedding,
+            user_id=user_id,
+            team_id=team_id,
+            scope=scope,
+            category=category,
+            limit=limit,
+        )
+
+        results: list[SearchResult] = []
+        for mem in raw_results:
+            memory_scope = MemoryScope(mem.get("scope", "personal"))
+            metadata = MemoryMetadata(
+                memory_id=mem["id"],
+                user_id=mem.get("user_id", user_id),
+                scope=memory_scope,
+                category=mem.get("category", "general"),
+                source=mem.get("source"),
+                source_ref=mem.get("source_ref"),
+                tags=mem.get("tags", []),
+                priority=mem.get("priority", 1.0),
+                pinned=mem.get("pinned", False),
+                pin_reason=mem.get("pin_reason"),
+                archived=mem.get("archived", False),
+                access_count=mem.get("access_count", 0),
+                created_at=mem.get("created_at", datetime.now(UTC)),
+                updated_at=mem.get("updated_at", datetime.now(UTC)),
+                last_accessed=mem.get("last_accessed", datetime.now(UTC)),
+                expires_at=mem.get("expires_at"),
+            )
+            results.append(
+                SearchResult(
+                    memory_id=mem["id"],
+                    content=mem.get("content", ""),
+                    score=mem.get("score", 0.0),
+                    scope=memory_scope,
+                    metadata=metadata,
+                )
+            )
+
+        results.sort(key=lambda x: x.score, reverse=True)
+        return results[:limit]
+
+    async def get_related_memories_async(
+        self,
+        memory_id: str,
+        limit: int = 10,
+    ) -> list[dict[str, Any]]:
+        """Async version of get_related_memories()."""
+        await self._ensure_initialized_async()
+        assert self._vectorstore is not None
+
+        return await self._vectorstore.get_related_memories(memory_id, limit=limit)
+
+    async def retrieve_for_inference_async(
+        self,
+        query: str,
+        scope: Literal["personal", "shared", "both"] = "both",
+        max_tokens: int = 2000,
+        enable_query_synthesis: bool = True,
+        enable_graph: bool = True,
+        project: str | None = None,
+        mode: Literal["auto", "vector", "hybrid"] = "auto",
+        enable_hyde: bool = True,
+        enable_rerank: bool = True,
+    ) -> dict[str, Any]:
+        """Async version of retrieve_for_inference(). Use from HTTP server."""
+        from cems.retrieval import (
+            apply_score_adjustments,
+            assemble_context,
+            deduplicate_results,
+            extract_query_intent,
+            format_memory_context,
+            generate_hypothetical_memory,
+            reciprocal_rank_fusion,
+            rerank_with_llm,
+            route_to_strategy,
+            synthesize_query,
+        )
+
+        log = logger
+        log.info(f"[RETRIEVAL] Starting async retrieve_for_inference: query='{query[:50]}...'")
+
+        client = None
+        try:
+            from cems.llm import get_client
+            client = get_client()
+        except Exception as e:
+            log.warning(f"[RETRIEVAL] Could not get LLM client: {e}")
+
+        intent = None
+        selected_mode = mode
+        if mode == "auto" and client:
+            try:
+                intent = extract_query_intent(query, client)
+                selected_mode = route_to_strategy(intent)
+                log.info(f"[RETRIEVAL] Auto mode selected: {selected_mode}")
+            except Exception as e:
+                log.warning(f"[RETRIEVAL] Query understanding failed: {e}")
+                selected_mode = "hybrid"
+
+        inferred_category = self._infer_category_from_query(query)
+
+        queries_to_search = [query]
+        if enable_query_synthesis and self.config.enable_query_synthesis and client:
+            try:
+                expanded = synthesize_query(query, client)
+                queries_to_search = [query] + expanded[:3]
+                log.info(f"[RETRIEVAL] Query synthesis: {len(queries_to_search)} queries")
+            except Exception as e:
+                log.warning(f"[RETRIEVAL] Query synthesis failed: {e}")
+
+        if enable_hyde and selected_mode == "hybrid" and client:
+            try:
+                hypothetical = generate_hypothetical_memory(query, client)
+                if hypothetical:
+                    queries_to_search.append(hypothetical)
+                    log.info(f"[RETRIEVAL] HyDE generated")
+            except Exception as e:
+                log.warning(f"[RETRIEVAL] HyDE generation failed: {e}")
+
+        query_results: list[list[SearchResult]] = []
+        for search_query in queries_to_search:
+            vector_results = await self._search_raw_async(
+                search_query, scope, limit=self.config.max_candidates_per_query
+            )
+            query_results.append(vector_results)
+
+        if enable_graph and query_results and query_results[0]:
+            relation_results: list[SearchResult] = []
+            for top_result in query_results[0][:5]:
+                try:
+                    related = await self.get_related_memories_async(top_result.memory_id, limit=8)
+                    for rel in related:
+                        metadata = self.get_metadata(rel["id"])
+                        if metadata:
+                            base_score = rel.get("relation_similarity", 0.5) or 0.5
+                            relation_results.append(
+                                SearchResult(
+                                    memory_id=rel["id"],
+                                    content=rel.get("content", ""),
+                                    score=base_score,
+                                    scope=metadata.scope,
+                                    metadata=metadata,
+                                )
+                            )
+                except Exception as e:
+                    log.debug(f"[RETRIEVAL] Relation traversal error: {e}")
+
+            if relation_results:
+                query_results.append(relation_results)
+
+        if len(query_results) > 1:
+            candidates = reciprocal_rank_fusion(query_results)
+            log.info(f"[RETRIEVAL] RRF fusion: {sum(len(r) for r in query_results)} -> {len(candidates)} results")
+        else:
+            candidates = query_results[0] if query_results else []
+
+        candidates = deduplicate_results(candidates)
+
+        if enable_rerank and selected_mode == "hybrid" and client and len(candidates) > 3:
+            try:
+                candidates = rerank_with_llm(
+                    query, candidates, client,
+                    top_k=self.config.rerank_output_limit,
+                    config=self.config
+                )
+                log.info(f"[RETRIEVAL] LLM reranking complete: {len(candidates)} results")
+            except Exception as e:
+                log.warning(f"[RETRIEVAL] LLM reranking failed: {e}")
+
+        threshold = self.config.relevance_threshold
+        candidates = [c for c in candidates if c.score >= threshold]
+
+        for candidate in candidates:
+            candidate.score = apply_score_adjustments(
+                candidate,
+                inferred_category=inferred_category,
+                project=project,
+            )
+
+        candidates.sort(key=lambda x: x.score, reverse=True)
+        total_candidates = sum(len(r) for r in query_results)
+        filtered_count = len(candidates)
+
+        selected, tokens_used = assemble_context(candidates, max_tokens)
+        log.info(f"[RETRIEVAL] Final: {filtered_count} candidates -> {len(selected)} selected, {tokens_used} tokens")
+
+        return {
+            "results": [
+                {
+                    "memory_id": r.memory_id,
+                    "content": r.content,
+                    "score": r.score,
+                    "scope": r.scope.value,
+                    "category": r.metadata.category if r.metadata else None,
+                }
+                for r in selected
+            ],
+            "tokens_used": tokens_used,
+            "formatted_context": format_memory_context(selected),
+            "queries_used": queries_to_search,
+            "total_candidates": total_candidates,
+            "filtered_count": filtered_count,
+            "mode": selected_mode,
+            "intent": intent,
+        }

@@ -45,7 +45,7 @@ class MemoryMetadata(BaseModel):
 
     model_config = ConfigDict(use_enum_values=True)
 
-    memory_id: str = Field(description="Unique memory ID from Mem0")
+    memory_id: str = Field(description="Unique memory ID (UUID)")
     user_id: str = Field(description="User who owns this memory")
     scope: MemoryScope = Field(description="Personal or shared")
     category: str = Field(default="general", description="Memory category")

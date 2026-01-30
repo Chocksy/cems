@@ -19,7 +19,6 @@ class TestCEMSConfig:
         assert config.user_id == "default"
         assert config.team_id is None
         assert config.memory_backend == "mem0"
-        assert config.vector_store == "qdrant"
         assert config.enable_scheduler is True
         assert config.stale_days == 90
         assert config.archive_days == 180
@@ -47,16 +46,7 @@ class TestCEMSConfig:
         with tempfile.TemporaryDirectory() as tmpdir:
             config = CEMSConfig(storage_dir=Path(tmpdir))
 
-            assert config.qdrant_storage_path == Path(tmpdir) / "qdrant"
-            assert config.metadata_db_path == Path(tmpdir) / "metadata.db"
-
-    def test_custom_qdrant_path(self):
-        """Test custom Qdrant path."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            custom_path = Path(tmpdir) / "custom_qdrant"
-            config = CEMSConfig(qdrant_path=custom_path)
-
-            assert config.qdrant_storage_path == custom_path
+            assert config.storage_dir == Path(tmpdir)
 
     def test_ensure_dirs(self):
         """Test directory creation."""
@@ -67,7 +57,6 @@ class TestCEMSConfig:
             config.ensure_dirs()
 
             assert storage_dir.exists()
-            assert config.qdrant_storage_path.exists()
 
     def test_scheduler_config(self):
         """Test scheduler configuration."""
@@ -113,9 +102,9 @@ class TestCEMSConfig:
 
     def test_relevance_threshold(self):
         """Test relevance threshold default and custom values."""
-        # Test default value (lowered from 0.5 to 0.4 for better recall)
+        # Test default value (lowered for RRF scoring)
         config = CEMSConfig()
-        assert config.relevance_threshold == 0.4
+        assert config.relevance_threshold == 0.01
 
         # Test custom value
         config = CEMSConfig(relevance_threshold=0.7)
