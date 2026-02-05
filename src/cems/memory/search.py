@@ -275,11 +275,10 @@ class SearchMixin:
 
         Used by retrieve_for_inference pipeline. Uses hybrid search to combine
         vector similarity with BM25 lexical matching for better entity recall.
+        Falls back to legacy memories table if document/chunk tables don't exist.
         """
         await self._ensure_initialized_async()
         assert self._async_embedder is not None
-
-        doc_store = await self._ensure_document_store_search()
 
         if query_embedding is None:
             query_embedding = await self._async_embedder.embed(query)
@@ -287,23 +286,44 @@ class SearchMixin:
         user_id = self.config.user_id
         team_id = self.config.team_id if scope in ("shared", "both") else None
 
-        # Hybrid search (vector + BM25) on chunks - better for entity matching
-        raw_results = await doc_store.hybrid_search_chunks(
-            query=query,
-            query_embedding=query_embedding,
-            user_id=user_id,
-            team_id=team_id,
-            scope=scope,
-            category=category,
-            limit=limit * 2,  # Fetch extra for deduplication
-            vector_weight=getattr(self.config, "hybrid_vector_weight", 0.4),
-        )
+        # Try document+chunk model first, fall back to memories table
+        try:
+            doc_store = await self._ensure_document_store_search()
+            # Hybrid search (vector + BM25) on chunks - better for entity matching
+            raw_results = await doc_store.hybrid_search_chunks(
+                query=query,
+                query_embedding=query_embedding,
+                user_id=user_id,
+                team_id=team_id,
+                scope=scope,
+                category=category,
+                limit=limit * 2,  # Fetch extra for deduplication
+                vector_weight=getattr(self.config, "hybrid_vector_weight", 0.4),
+            )
 
-        # Convert to SearchResult objects
-        results = [_make_search_result_from_chunk(chunk, user_id) for chunk in raw_results]
+            # Convert to SearchResult objects
+            results = [_make_search_result_from_chunk(chunk, user_id) for chunk in raw_results]
 
-        # Dedupe by document
-        results = _dedupe_by_document(results)
+            # Dedupe by document
+            results = _dedupe_by_document(results)
+
+        except Exception as e:
+            # Fallback to legacy memories table if document/chunks tables don't exist
+            if "memory_chunks" in str(e) or "memory_documents" in str(e) or "UndefinedTable" in str(e):
+                logger.info("Document store not available, falling back to memories table for _search_raw")
+                raw_results = await self.vectorstore.hybrid_search(
+                    query=query,
+                    query_embedding=query_embedding,
+                    user_id=user_id,
+                    team_id=team_id,
+                    scope=scope,
+                    category=category,
+                    limit=limit,
+                    vector_weight=getattr(self.config, "hybrid_vector_weight", 0.4),
+                )
+                results = [_make_search_result_from_memory(mem, user_id) for mem in raw_results]
+            else:
+                raise
 
         results.sort(key=lambda x: x.score, reverse=True)
         return results[:limit]
@@ -319,27 +339,50 @@ class SearchMixin:
         Used for:
         1. Strong-signal detection before query expansion
         2. Lexical stream in hybrid retrieval
+
+        Falls back to hybrid search with low vector weight if document tables don't exist.
         """
         await self._ensure_initialized_async()
 
-        doc_store = await self._ensure_document_store_search()
         user_id = self.config.user_id
         team_id = self.config.team_id if scope in ("shared", "both") else None
 
-        # Full-text search on chunks
-        raw_results = await doc_store.full_text_search_chunks(
-            query=query,
-            user_id=user_id,
-            team_id=team_id,
-            scope=scope,
-            limit=limit * 2,  # Fetch extra for deduplication
-        )
+        # Try document+chunk model first, fall back to hybrid search
+        try:
+            doc_store = await self._ensure_document_store_search()
+            # Full-text search on chunks
+            raw_results = await doc_store.full_text_search_chunks(
+                query=query,
+                user_id=user_id,
+                team_id=team_id,
+                scope=scope,
+                limit=limit * 2,  # Fetch extra for deduplication
+            )
 
-        # Convert to SearchResult objects
-        results = [_make_search_result_from_chunk(chunk, user_id) for chunk in raw_results]
+            # Convert to SearchResult objects
+            results = [_make_search_result_from_chunk(chunk, user_id) for chunk in raw_results]
 
-        # Dedupe by document
-        results = _dedupe_by_document(results)
+            # Dedupe by document
+            results = _dedupe_by_document(results)
+
+        except Exception as e:
+            # Fallback: use hybrid search with low vector weight to approximate lexical
+            if "memory_chunks" in str(e) or "memory_documents" in str(e) or "UndefinedTable" in str(e):
+                logger.info("Document store not available, falling back to hybrid search for lexical")
+                assert self._async_embedder is not None
+                query_embedding = await self._async_embedder.embed(query)
+                raw_results = await self.vectorstore.hybrid_search(
+                    query=query,
+                    query_embedding=query_embedding,
+                    user_id=user_id,
+                    team_id=team_id,
+                    scope=scope,
+                    limit=limit,
+                    vector_weight=0.1,  # Low vector weight = more lexical
+                )
+                results = [_make_search_result_from_memory(mem, user_id) for mem in raw_results]
+            else:
+                raise
 
         results.sort(key=lambda x: x.score, reverse=True)
         return results[:limit]
