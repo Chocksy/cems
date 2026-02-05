@@ -671,6 +671,7 @@ async def database_stats(request: Request) -> JSONResponse:
     GET /admin/db/stats
 
     Returns counts and embedding dimensions for all tables.
+    Handles missing tables gracefully (returns null for those fields).
     """
     if err := require_admin_auth(request):
         return err
@@ -683,39 +684,53 @@ async def database_stats(request: Request) -> JSONResponse:
         stats = {}
 
         async with db.async_session() as session:
-            # Count memories
-            result = await session.execute(
-                text("SELECT COUNT(*) FROM memories WHERE archived = FALSE")
-            )
-            stats["memories_active"] = result.scalar()
+            # Count memories (legacy table - should always exist)
+            try:
+                result = await session.execute(
+                    text("SELECT COUNT(*) FROM memories WHERE archived = FALSE")
+                )
+                stats["memories_active"] = result.scalar()
 
-            result = await session.execute(text("SELECT COUNT(*) FROM memories"))
-            stats["memories_total"] = result.scalar()
+                result = await session.execute(text("SELECT COUNT(*) FROM memories"))
+                stats["memories_total"] = result.scalar()
 
-            # Check embedding dimension (sample first memory)
-            result = await session.execute(
-                text("SELECT array_length(embedding::real[], 1) FROM memories LIMIT 1")
-            )
-            dim = result.scalar()
-            stats["embedding_dimension"] = dim
+                # Check embedding dimension (sample first memory)
+                result = await session.execute(
+                    text("SELECT array_length(embedding::real[], 1) FROM memories LIMIT 1")
+                )
+                stats["embedding_dimension"] = result.scalar()
+            except Exception as e:
+                logger.warning(f"Could not query memories table: {e}")
+                stats["memories_active"] = None
+                stats["memories_total"] = None
+                stats["embedding_dimension"] = None
 
-            # Count documents and chunks (new model)
-            result = await session.execute(text("SELECT COUNT(*) FROM memory_documents"))
-            stats["documents_total"] = result.scalar()
+            # Count documents and chunks (new model - may not exist)
+            try:
+                result = await session.execute(text("SELECT COUNT(*) FROM memory_documents"))
+                stats["documents_total"] = result.scalar()
 
-            result = await session.execute(text("SELECT COUNT(*) FROM memory_chunks"))
-            stats["chunks_total"] = result.scalar()
+                result = await session.execute(text("SELECT COUNT(*) FROM memory_chunks"))
+                stats["chunks_total"] = result.scalar()
 
-            # Check chunk embedding dimension
-            result = await session.execute(
-                text("SELECT array_length(embedding::real[], 1) FROM memory_chunks LIMIT 1")
-            )
-            chunk_dim = result.scalar()
-            stats["chunk_embedding_dimension"] = chunk_dim
+                # Check chunk embedding dimension
+                result = await session.execute(
+                    text("SELECT array_length(embedding::real[], 1) FROM memory_chunks LIMIT 1")
+                )
+                stats["chunk_embedding_dimension"] = result.scalar()
+            except Exception:
+                # Tables don't exist yet - that's OK
+                stats["documents_total"] = None
+                stats["chunks_total"] = None
+                stats["chunk_embedding_dimension"] = None
+                stats["note"] = "Document/chunk tables not migrated yet"
 
             # Count users
-            result = await session.execute(text("SELECT COUNT(*) FROM users"))
-            stats["users_total"] = result.scalar()
+            try:
+                result = await session.execute(text("SELECT COUNT(*) FROM users"))
+                stats["users_total"] = result.scalar()
+            except Exception:
+                stats["users_total"] = None
 
         return JSONResponse({"stats": stats})
 

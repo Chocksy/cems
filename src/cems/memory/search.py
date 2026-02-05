@@ -186,32 +186,52 @@ class SearchMixin:
         category: str | None = None,
         limit: int = 5,
     ) -> list[SearchResult]:
-        """Async search using document+chunk model."""
+        """Async search using document+chunk model, with fallback to memories table."""
         await self._ensure_initialized_async()
         assert self._async_embedder is not None
 
-        doc_store = await self._ensure_document_store_search()
         query_embedding = await self._async_embedder.embed(query)
         user_id = self.config.user_id
         team_id = self.config.team_id if scope in ("shared", "both") else None
 
-        # Search chunks with hybrid (vector + full-text)
-        raw_results = await doc_store.hybrid_search_chunks(
-            query=query,
-            query_embedding=query_embedding,
-            user_id=user_id,
-            team_id=team_id,
-            scope=scope,
-            category=category,
-            limit=limit * 3,  # Fetch more for deduplication
-            vector_weight=getattr(self.config, "hybrid_vector_weight", 0.7),
-        )
+        # Try document+chunk model first, fall back to memories table if tables don't exist
+        try:
+            doc_store = await self._ensure_document_store_search()
+            # Search chunks with hybrid (vector + full-text)
+            raw_results = await doc_store.hybrid_search_chunks(
+                query=query,
+                query_embedding=query_embedding,
+                user_id=user_id,
+                team_id=team_id,
+                scope=scope,
+                category=category,
+                limit=limit * 3,  # Fetch more for deduplication
+                vector_weight=getattr(self.config, "hybrid_vector_weight", 0.7),
+            )
 
-        # Convert to SearchResult objects
-        results = [_make_search_result_from_chunk(chunk, user_id) for chunk in raw_results]
+            # Convert to SearchResult objects
+            results = [_make_search_result_from_chunk(chunk, user_id) for chunk in raw_results]
 
-        # Dedupe by document (keep best chunk per doc)
-        results = _dedupe_by_document(results)
+            # Dedupe by document (keep best chunk per doc)
+            results = _dedupe_by_document(results)
+
+        except Exception as e:
+            # Fallback to legacy memories table search if document/chunks tables don't exist
+            if "memory_chunks" in str(e) or "memory_documents" in str(e) or "UndefinedTable" in str(e):
+                logger.info("Document store not available, falling back to memories table search")
+                raw_results = await self.vectorstore.hybrid_search(
+                    query=query,
+                    query_embedding=query_embedding,
+                    user_id=user_id,
+                    team_id=team_id,
+                    scope=scope,
+                    category=category,
+                    limit=limit,
+                    vector_weight=getattr(self.config, "hybrid_vector_weight", 0.7),
+                )
+                results = [_make_search_result_from_memory(mem, user_id) for mem in raw_results]
+            else:
+                raise
 
         # Apply score adjustments
         inferred_category = self._infer_category_from_query(query)
