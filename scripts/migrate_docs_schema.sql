@@ -60,7 +60,7 @@ CREATE TABLE IF NOT EXISTS memory_chunks (
     seq INT NOT NULL,
     pos INT NOT NULL,
     content TEXT NOT NULL,
-    embedding vector(1536) NOT NULL,
+    embedding vector(768) NOT NULL,
     tokens INT,
     bytes INT,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),

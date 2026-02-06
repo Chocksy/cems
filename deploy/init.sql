@@ -54,7 +54,7 @@ CREATE TABLE IF NOT EXISTS team_members (
 CREATE TABLE IF NOT EXISTS memories (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     content TEXT NOT NULL,
-    embedding VECTOR(1536) NOT NULL,  -- OpenAI text-embedding-3-small dimensions
+    embedding VECTOR(768) NOT NULL,  -- embeddinggemma-300M via llama.cpp server
     user_id UUID REFERENCES users(id) ON DELETE SET NULL,
     team_id UUID REFERENCES teams(id) ON DELETE SET NULL,
     scope VARCHAR(50) NOT NULL DEFAULT 'personal',
