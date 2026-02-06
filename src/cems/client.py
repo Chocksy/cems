@@ -309,6 +309,76 @@ class CEMSClient:
         """
         return self._request("GET", "/health")
 
+    # =========================================================================
+    # Index Operations
+    # =========================================================================
+
+    def index_repo(
+        self,
+        repo_url: str,
+        branch: str = "main",
+        scope: Literal["personal", "shared"] = "shared",
+        patterns: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """Index a git repository.
+
+        Clones the repo, extracts knowledge using pattern-based extractors,
+        and stores results as pinned memories.
+
+        Args:
+            repo_url: Git repository URL
+            branch: Branch to index (default "main")
+            scope: Memory scope for extracted knowledge
+            patterns: Specific pattern names to use (default: all)
+
+        Returns:
+            Indexing results with files_scanned, memories_created, etc.
+        """
+        payload: dict[str, Any] = {
+            "repo_url": repo_url,
+            "branch": branch,
+            "scope": scope,
+        }
+        if patterns:
+            payload["patterns"] = patterns
+
+        return self._request("POST", "/api/index/repo", json=payload)
+
+    def index_path(
+        self,
+        path: str,
+        scope: Literal["personal", "shared"] = "shared",
+        patterns: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """Index a local directory path (server-side).
+
+        The path must be accessible from the CEMS server.
+
+        Args:
+            path: Local directory path on the server
+            scope: Memory scope for extracted knowledge
+            patterns: Specific pattern names to use (default: all)
+
+        Returns:
+            Indexing results with files_scanned, memories_created, etc.
+        """
+        payload: dict[str, Any] = {
+            "path": path,
+            "scope": scope,
+        }
+        if patterns:
+            payload["patterns"] = patterns
+
+        return self._request("POST", "/api/index/path", json=payload)
+
+    def list_index_patterns(self) -> dict[str, Any]:
+        """List available index patterns.
+
+        Returns:
+            Dict with patterns list containing name, description, file_patterns, etc.
+        """
+        return self._request("GET", "/api/index/patterns")
+
 
 class CEMSAdminClient:
     """HTTP client for CEMS admin operations.

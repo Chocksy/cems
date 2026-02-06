@@ -102,12 +102,6 @@ class Team(Base):
     api_keys: Mapped[list["ApiKey"]] = relationship(
         back_populates="team", cascade="all, delete-orphan"
     )
-    index_jobs: Mapped[list["IndexJob"]] = relationship(
-        back_populates="team", cascade="all, delete-orphan"
-    )
-    index_patterns: Mapped[list["IndexPattern"]] = relationship(
-        back_populates="team", cascade="all, delete-orphan"
-    )
 
     def __repr__(self) -> str:
         return f"<Team {self.name}>"
@@ -250,75 +244,6 @@ class MaintenanceLog(Base):
 
     def __repr__(self) -> str:
         return f"<MaintenanceLog {self.job_type} {self.status}>"
-
-
-class IndexJob(Base):
-    """Repository indexing job queue."""
-
-    __tablename__ = "index_jobs"
-
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
-    team_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("teams.id", ondelete="CASCADE"), nullable=False
-    )
-    repository_url: Mapped[str] = mapped_column(String(500), nullable=False)
-    repository_ref: Mapped[str] = mapped_column(String(255), default="main")
-    status: Mapped[str] = mapped_column(
-        String(50), default="pending"
-    )  # 'pending', 'running', 'completed', 'failed'
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=utc_now
-    )
-    started_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
-    completed_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
-    created_by: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("users.id"), nullable=True
-    )
-    config: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
-    result: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
-    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
-
-    # Relationships
-    team: Mapped["Team"] = relationship(back_populates="index_jobs")
-
-    def __repr__(self) -> str:
-        return f"<IndexJob {self.repository_url} {self.status}>"
-
-
-class IndexPattern(Base):
-    """Index patterns for repository scanning."""
-
-    __tablename__ = "index_patterns"
-
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
-    team_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("teams.id", ondelete="CASCADE"), nullable=True
-    )
-    name: Mapped[str] = mapped_column(String(255), nullable=False)
-    description: Mapped[str | None] = mapped_column(Text, nullable=True)
-    file_patterns: Mapped[list[str]] = mapped_column(ARRAY(Text), nullable=False)
-    extract_type: Mapped[str] = mapped_column(String(100), nullable=False)
-    pin_category: Mapped[str | None] = mapped_column(String(100), nullable=True)
-    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=utc_now
-    )
-
-    __table_args__ = (UniqueConstraint("team_id", "name"),)
-
-    # Relationships
-    team: Mapped["Team | None"] = relationship(back_populates="index_patterns")
-
-    def __repr__(self) -> str:
-        return f"<IndexPattern {self.name}>"
 
 
 class ApiKey(Base):

@@ -9,6 +9,7 @@ import click
 from cems.cli_utils import setup_logging
 from cems.commands.status import health, status
 from cems.commands.memory import add, delete, list_memories, search, update
+from cems.commands.index import index
 from cems.commands.maintenance import maintenance
 from cems.commands.admin import admin
 
@@ -42,6 +43,7 @@ main.add_command(search)
 main.add_command(list_memories, name="list")
 main.add_command(delete)
 main.add_command(update)
+main.add_command(index)
 main.add_command(maintenance)
 main.add_command(admin)
 

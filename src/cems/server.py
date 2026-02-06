@@ -12,6 +12,9 @@ REST API endpoints:
 - GET /api/memory/status - System status
 - GET /api/memory/summary/personal - Personal summary
 - GET /api/memory/summary/shared - Shared summary
+- POST /api/index/repo - Index a git repository
+- POST /api/index/path - Index a local directory
+- GET /api/index/patterns - List available index patterns
 - POST /api/session/analyze - Analyze session transcripts
 """
 
@@ -28,6 +31,9 @@ from cems.api.deps import (
 
 # Import all handlers from api/handlers package
 from cems.api.handlers import (
+    api_index_patterns,
+    api_index_path,
+    api_index_repo,
     api_memory_add,
     api_memory_add_batch,
     api_memory_forget,
@@ -163,12 +169,16 @@ def create_http_app():
         Route("/api/memory/profile", api_memory_profile, methods=["GET"]),
         Route("/api/memory/summary/personal", api_memory_summary_personal, methods=["GET"]),
         Route("/api/memory/summary/shared", api_memory_summary_shared, methods=["GET"]),
+        # REST API routes - Index
+        Route("/api/index/repo", api_index_repo, methods=["POST"]),
+        Route("/api/index/path", api_index_path, methods=["POST"]),
+        Route("/api/index/patterns", api_index_patterns, methods=["GET"]),
         # REST API routes - Session
         Route("/api/session/analyze", api_session_analyze, methods=["POST"]),
         # REST API routes - Tool
         Route("/api/tool/learning", api_tool_learning, methods=["POST"]),
     ]
-    logger.info("REST API routes enabled (/api/memory/*, /api/session/*, /api/tool/*)")
+    logger.info("REST API routes enabled (/api/memory/*, /api/index/*, /api/session/*, /api/tool/*)")
 
     # Add admin routes (always available in HTTP mode with database)
     from cems.admin.routes import admin_routes

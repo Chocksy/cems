@@ -10,11 +10,10 @@ Document-first ingest: Every add() goes through document + chunk storage.
 from __future__ import annotations
 
 import logging
-from datetime import UTC, datetime, timedelta
+from datetime import datetime
 from typing import TYPE_CHECKING, Any, Literal
 
 from cems.chunking import Chunk, chunk_document, content_hash
-from cems.models import MemoryScope
 
 if TYPE_CHECKING:
     from cems.db.document_store import DocumentStore
@@ -228,109 +227,3 @@ class WriteMixin:
             logger.error(f"[WRITE] Failed to add document: {e}")
             return {"results": [{"event": "ERROR", "error": str(e)}]}
 
-    async def add_legacy_async(
-        self: "CEMSMemory",
-        content: str,
-        scope: Literal["personal", "shared"] = "personal",
-        category: str = "general",
-        source: str | None = None,
-        tags: list[str] | None = None,
-        infer: bool = True,
-        source_ref: str | None = None,
-        ttl_hours: int | None = None,
-        pinned: bool = False,
-        pin_reason: str | None = None,
-        timestamp: datetime | None = None,
-    ) -> dict[str, Any]:
-        """Legacy add using old memories table (for backwards compatibility).
-
-        Use add_async() for new code - this is only for migration purposes.
-        """
-        await self._ensure_initialized_async()
-        assert self._vectorstore is not None
-        assert self._async_embedder is not None
-
-        memory_scope = MemoryScope(scope)
-
-        # Extract facts if infer is enabled
-        contents_to_store = [content]
-        if infer and self._fact_extractor:
-            try:
-                facts = self._fact_extractor.extract(content)
-                if facts:
-                    contents_to_store = facts
-            except Exception as e:
-                logger.warning(f"Fact extraction failed, storing raw content: {e}")
-
-        # Calculate expires_at if TTL is set
-        expires_at = None
-        if ttl_hours:
-            expires_at = datetime.now(UTC) + timedelta(hours=ttl_hours)
-
-        # Get user/team IDs
-        user_id = self.config.user_id
-        team_id = self.config.team_id if scope == "shared" else None
-
-        results = []
-        for fact_content in contents_to_store:
-            try:
-                # Generate embedding using async embedder
-                embedding = await self._async_embedder.embed(fact_content)
-
-                # Store in pgvector (old memories table)
-                memory_id = await self._vectorstore.add(
-                    content=fact_content,
-                    embedding=embedding,
-                    user_id=user_id,
-                    team_id=team_id,
-                    scope=scope,
-                    category=category,
-                    tags=tags,
-                    source=source,
-                    source_ref=source_ref,
-                    priority=1.0,
-                    pinned=pinned,
-                    pin_reason=pin_reason,
-                    expires_at=expires_at,
-                    created_at=timestamp,  # For historical imports
-                )
-
-                results.append(
-                    {
-                        "id": memory_id,
-                        "event": "ADD",
-                        "memory": fact_content,
-                    }
-                )
-
-                # Add relations to similar memories
-                if self._use_pg_relations:
-                    try:
-                        similar = await self._vectorstore.search(
-                            query_embedding=embedding,
-                            user_id=user_id,
-                            team_id=team_id,
-                            scope=scope,
-                            limit=5,
-                        )
-                        for sim_mem in similar:
-                            if sim_mem["id"] != memory_id and sim_mem.get("score", 0) > 0.7:
-                                await self._vectorstore.add_relation(
-                                    source_id=memory_id,
-                                    target_id=sim_mem["id"],
-                                    relation_type="similar",
-                                    similarity=sim_mem.get("score"),
-                                )
-                    except Exception as e:
-                        logger.debug(f"Failed to add relations: {e}")
-
-            except Exception as e:
-                logger.error(f"Failed to add memory: {e}")
-                results.append(
-                    {
-                        "event": "ERROR",
-                        "error": str(e),
-                    }
-                )
-
-        return {"results": results}

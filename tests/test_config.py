@@ -27,19 +27,11 @@ class TestCEMSConfig:
         """Test setting custom user ID."""
         config = CEMSConfig(user_id="test-user")
         assert config.user_id == "test-user"
-        assert config.personal_collection == "personal_test-user"
 
     def test_team_id(self):
         """Test team ID configuration."""
         config = CEMSConfig(user_id="user", team_id="my-team")
-
         assert config.team_id == "my-team"
-        assert config.shared_collection == "shared_my-team"
-
-    def test_no_team_id(self):
-        """Test shared_collection is None without team ID."""
-        config = CEMSConfig(user_id="user")
-        assert config.shared_collection is None
 
     def test_storage_paths(self):
         """Test storage path generation."""
@@ -47,16 +39,6 @@ class TestCEMSConfig:
             config = CEMSConfig(storage_dir=Path(tmpdir))
 
             assert config.storage_dir == Path(tmpdir)
-
-    def test_ensure_dirs(self):
-        """Test directory creation."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            storage_dir = Path(tmpdir) / "cems_test"
-            config = CEMSConfig(storage_dir=storage_dir)
-
-            config.ensure_dirs()
-
-            assert storage_dir.exists()
 
     def test_scheduler_config(self):
         """Test scheduler configuration."""

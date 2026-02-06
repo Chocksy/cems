@@ -316,22 +316,3 @@ class CEMSConfig(BaseSettings):
         description="Admin API key for user management. Required for /admin/* endpoints.",
     )
 
-    @property
-    def personal_collection(self) -> str:
-        """Collection name for personal memories (legacy compatibility)."""
-        return f"personal_{self.user_id}"
-
-    @property
-    def shared_collection(self) -> str | None:
-        """Collection name for shared memories (legacy compatibility)."""
-        if self.team_id:
-            return f"shared_{self.team_id}"
-        return None
-
-    def ensure_dirs(self) -> None:
-        """Ensure all required directories exist."""
-        self.storage_dir.mkdir(parents=True, exist_ok=True)
-
-    def get_mem0_model(self) -> str:
-        """Get the LLM model for fact extraction (legacy compatibility)."""
-        return self.mem0_model

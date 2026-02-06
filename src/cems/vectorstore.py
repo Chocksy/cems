@@ -16,7 +16,7 @@ from __future__ import annotations
 import logging
 import os
 from typing import TYPE_CHECKING, Any, Literal
-from uuid import UUID, uuid4
+from uuid import UUID
 
 import asyncpg
 from pgvector.asyncpg import register_vector
@@ -99,83 +99,6 @@ class PgVectorStore:
     # =========================================================================
     # CRUD Operations
     # =========================================================================
-
-    async def add(
-        self,
-        content: str,
-        embedding: list[float],
-        user_id: str | UUID | None = None,
-        team_id: str | UUID | None = None,
-        scope: str = "personal",
-        category: str = "general",
-        tags: list[str] | None = None,
-        source: str | None = None,
-        source_ref: str | None = None,
-        priority: float = 1.0,
-        pinned: bool = False,
-        pin_reason: str | None = None,
-        pin_category: str | None = None,
-        expires_at=None,
-        created_at=None,
-    ) -> str:
-        """Add a memory to the store.
-
-        Args:
-            content: Memory content
-            embedding: Embedding vector (dimension must match configured embedding_dim)
-            user_id: User ID
-            team_id: Team ID (for shared memories)
-            scope: "personal" or "shared"
-            category: Memory category
-            tags: Optional tags
-            source: Source identifier
-            source_ref: Source reference (e.g., project:org/repo)
-            priority: Priority score
-            pinned: Whether memory is pinned
-            pin_reason: Reason for pinning
-            pin_category: Category for pinned memory
-            expires_at: Optional expiration datetime
-            created_at: Optional creation datetime (for imports)
-
-        Returns:
-            Memory ID as string
-        """
-        pool = await self._get_pool()
-
-        user_uuid = UUID(user_id) if isinstance(user_id, str) and user_id else None
-        team_uuid = UUID(team_id) if isinstance(team_id, str) and team_id else None
-        memory_id = uuid4()
-
-        async with pool.acquire() as conn:
-            if created_at:
-                await conn.execute(
-                    """
-                    INSERT INTO memories (
-                        id, content, embedding, user_id, team_id, scope, category,
-                        tags, source, source_ref, priority, pinned, pin_reason,
-                        pin_category, expires_at, created_at, updated_at
-                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $16)
-                    """,
-                    memory_id, content, embedding, user_uuid, team_uuid, scope, category,
-                    tags or [], source, source_ref, priority, pinned, pin_reason,
-                    pin_category, expires_at, created_at,
-                )
-            else:
-                await conn.execute(
-                    """
-                    INSERT INTO memories (
-                        id, content, embedding, user_id, team_id, scope, category,
-                        tags, source, source_ref, priority, pinned, pin_reason,
-                        pin_category, expires_at
-                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
-                    """,
-                    memory_id, content, embedding, user_uuid, team_uuid, scope, category,
-                    tags or [], source, source_ref, priority, pinned, pin_reason,
-                    pin_category, expires_at,
-                )
-
-        logger.debug(f"Added memory {memory_id}")
-        return str(memory_id)
 
     async def get(self, memory_id: str) -> dict[str, Any] | None:
         """Get a memory by ID."""
@@ -266,24 +189,6 @@ class PgVectorStore:
                 UUID(memory_id),
             )
 
-    async def record_access_batch(self, memory_ids: list[str]) -> None:
-        """Record access to multiple memories in a single query."""
-        if not memory_ids:
-            return
-
-        pool = await self._get_pool()
-        uuids = [UUID(mid) for mid in memory_ids]
-
-        async with pool.acquire() as conn:
-            await conn.execute(
-                """
-                UPDATE memories
-                SET last_accessed = NOW(), access_count = access_count + 1
-                WHERE id = ANY($1)
-                """,
-                uuids,
-            )
-
     # =========================================================================
     # Search Operations
     # =========================================================================
@@ -356,142 +261,9 @@ class PgVectorStore:
 
         return [row_to_dict(row, include_score=True) for row in rows]
 
-    async def hybrid_search(
-        self,
-        query: str,
-        query_embedding: list[float],
-        user_id: str | None = None,
-        team_id: str | None = None,
-        scope: str | Literal["both"] = "both",
-        category: str | None = None,
-        limit: int = 10,
-        vector_weight: float = 0.7,
-        include_archived: bool = False,
-    ) -> list[dict[str, Any]]:
-        """Hybrid search combining vector similarity and full-text search using RRF."""
-        pool = await self._get_pool()
-
-        fb = FilterBuilder(start_idx=4)
-        if not include_archived:
-            fb.add_not_archived()
-        fb.add_scope_filter(scope, user_id, team_id)
-        fb.add_if(category, "category = ${}", category)
-
-        where_clause = fb.build()
-        # Add embedding null check for vector search CTE
-        vector_where = f"{where_clause} AND embedding IS NOT NULL"
-        text_weight = 1 - vector_weight
-
-        query_sql = f"""
-            WITH vector_search AS (
-                SELECT id, 1 - (embedding <=> $1) AS vector_score,
-                       ROW_NUMBER() OVER (ORDER BY embedding <=> $1) AS vector_rank
-                FROM memories
-                WHERE {vector_where}
-                ORDER BY embedding <=> $1
-                LIMIT $3
-            ),
-            text_search AS (
-                SELECT id, ts_rank(content_tsv, plainto_tsquery('english', $2)) AS text_score,
-                       ROW_NUMBER() OVER (ORDER BY ts_rank(content_tsv, plainto_tsquery('english', $2)) DESC) AS text_rank
-                FROM memories
-                WHERE {where_clause}
-                  AND content_tsv @@ plainto_tsquery('english', $2)
-                ORDER BY text_score DESC
-                LIMIT $3
-            )
-            SELECT {MEMORY_COLUMNS_PREFIXED},
-                   COALESCE(1.0 / (60 + v.vector_rank), 0) * {vector_weight} +
-                   COALESCE(1.0 / (60 + t.text_rank), 0) * {text_weight} AS score
-            FROM memories m
-            LEFT JOIN vector_search v ON m.id = v.id
-            LEFT JOIN text_search t ON m.id = t.id
-            WHERE v.id IS NOT NULL OR t.id IS NOT NULL
-            ORDER BY score DESC
-            LIMIT {limit}
-        """
-
-        async with pool.acquire() as conn:
-            rows = await conn.fetch(query_sql, query_embedding, query, limit * 2, *fb.values)
-
-        return [row_to_dict(row, include_score=True) for row in rows]
-
-    # =========================================================================
-    # Batch Operations
-    # =========================================================================
-
-    async def add_batch(self, memories: list[dict[str, Any]]) -> list[str]:
-        """Add multiple memories in a single transaction."""
-        pool = await self._get_pool()
-        memory_ids = []
-
-        async with pool.acquire() as conn:
-            async with conn.transaction():
-                for mem in memories:
-                    memory_id = uuid4()
-                    memory_ids.append(str(memory_id))
-
-                    user_uuid = UUID(mem.get("user_id")) if mem.get("user_id") else None
-                    team_uuid = UUID(mem.get("team_id")) if mem.get("team_id") else None
-
-                    await conn.execute(
-                        """
-                        INSERT INTO memories (
-                            id, content, embedding, user_id, team_id, scope, category,
-                            tags, source, source_ref, priority, pinned, pin_reason,
-                            pin_category, expires_at
-                        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
-                        """,
-                        memory_id, mem["content"], mem["embedding"], user_uuid, team_uuid,
-                        mem.get("scope", "personal"), mem.get("category", "general"),
-                        mem.get("tags", []), mem.get("source"), mem.get("source_ref"),
-                        mem.get("priority", 1.0), mem.get("pinned", False),
-                        mem.get("pin_reason"), mem.get("pin_category"), mem.get("expires_at"),
-                    )
-
-        logger.info(f"Added {len(memory_ids)} memories in batch")
-        return memory_ids
-
-    async def get_batch(self, memory_ids: list[str]) -> dict[str, dict[str, Any]]:
-        """Get multiple memories by ID."""
-        if not memory_ids:
-            return {}
-
-        pool = await self._get_pool()
-        uuids = [UUID(mid) for mid in memory_ids]
-
-        async with pool.acquire() as conn:
-            rows = await conn.fetch(
-                f"SELECT {MEMORY_COLUMNS} FROM memories WHERE id = ANY($1)",
-                uuids,
-            )
-
-        return {str(row["id"]): row_to_dict(row) for row in rows}
-
     # =========================================================================
     # Memory Relations
     # =========================================================================
-
-    async def add_relation(
-        self,
-        source_id: str,
-        target_id: str,
-        relation_type: str = "similar",
-        similarity: float | None = None,
-    ) -> None:
-        """Add a relation between two memories."""
-        pool = await self._get_pool()
-
-        async with pool.acquire() as conn:
-            await conn.execute(
-                """
-                INSERT INTO memory_relations (source_id, target_id, relation_type, similarity)
-                VALUES ($1, $2, $3, $4)
-                ON CONFLICT (source_id, target_id, relation_type) DO UPDATE
-                SET similarity = EXCLUDED.similarity
-                """,
-                UUID(source_id), UUID(target_id), relation_type, similarity,
-            )
 
     async def get_related_memories(
         self,
@@ -556,30 +328,6 @@ class PgVectorStore:
             )
 
         return [str(row["id"]) for row in rows]
-
-    async def get_expired_memories(self) -> list[str]:
-        """Get memory IDs that have expired."""
-        pool = await self._get_pool()
-
-        async with pool.acquire() as conn:
-            rows = await conn.fetch(
-                "SELECT id FROM memories WHERE expires_at IS NOT NULL AND expires_at < NOW()"
-            )
-
-        return [str(row["id"]) for row in rows]
-
-    async def delete_expired(self) -> int:
-        """Delete all expired memories."""
-        pool = await self._get_pool()
-
-        async with pool.acquire() as conn:
-            result = await conn.execute(
-                "DELETE FROM memories WHERE expires_at IS NOT NULL AND expires_at < NOW()"
-            )
-
-        count = int(result.split()[1]) if result else 0
-        logger.info(f"Deleted {count} expired memories")
-        return count
 
     async def get_category_counts(
         self,
@@ -669,26 +417,3 @@ class PgVectorStore:
 
         return [row_to_dict(row) for row in rows]
 
-    # =========================================================================
-    # Legacy compatibility
-    # =========================================================================
-
-    def _row_to_dict(
-        self,
-        row: asyncpg.Record,
-        include_score: bool = False,
-    ) -> dict[str, Any]:
-        """Convert a database row to a dictionary (legacy method)."""
-        return row_to_dict(row, include_score)
-
-
-# Module-level instance (lazy initialization)
-_store: PgVectorStore | None = None
-
-
-def get_vectorstore() -> PgVectorStore:
-    """Get the shared PgVectorStore instance."""
-    global _store
-    if _store is None:
-        _store = PgVectorStore()
-    return _store

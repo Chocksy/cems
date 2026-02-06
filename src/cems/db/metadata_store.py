@@ -71,28 +71,6 @@ class PostgresMetadataStore:
             )
             session.execute(stmt)
 
-    def get_metadata(self, memory_id: str) -> MemoryMetadata | None:
-        """Get metadata for a memory."""
-        with self._db.session() as session:
-            row = session.execute(
-                select(PgMemoryMetadata).where(PgMemoryMetadata.memory_id == memory_id)
-            ).scalar_one_or_none()
-            if row:
-                return self._pg_to_metadata(row)
-            return None
-
-    def record_access(self, memory_id: str) -> None:
-        """Record that a memory was accessed."""
-        with self._db.session() as session:
-            session.execute(
-                update(PgMemoryMetadata)
-                .where(PgMemoryMetadata.memory_id == memory_id)
-                .values(
-                    last_accessed=datetime.now(UTC),
-                    access_count=PgMemoryMetadata.access_count + 1,
-                )
-            )
-
     def get_stale_memories(self, user_id: str, days: int) -> list[str]:
         """Get memory IDs not accessed in N days (excludes pinned memories)."""
         from datetime import timedelta
@@ -118,44 +96,6 @@ class PostgresMetadataStore:
                 )
             ).scalars().all()
             return list(rows)
-
-    def archive_memory(self, memory_id: str) -> None:
-        """Mark a memory as archived."""
-        with self._db.session() as session:
-            session.execute(
-                update(PgMemoryMetadata)
-                .where(PgMemoryMetadata.memory_id == memory_id)
-                .values(archived=True)
-            )
-
-    def increase_priority(self, memory_id: str, boost: float = 0.1) -> None:
-        """Increase memory priority."""
-        with self._db.session() as session:
-            # Get current priority
-            row = session.execute(
-                select(PgMemoryMetadata.priority).where(
-                    PgMemoryMetadata.memory_id == memory_id
-                )
-            ).scalar_one_or_none()
-            if row is not None:
-                new_priority = min(row + boost, 2.0)
-                session.execute(
-                    update(PgMemoryMetadata)
-                    .where(PgMemoryMetadata.memory_id == memory_id)
-                    .values(priority=new_priority)
-                )
-
-    def delete_metadata(self, memory_id: str) -> None:
-        """Delete metadata for a memory."""
-        with self._db.session() as session:
-            session.execute(
-                select(PgMemoryMetadata).where(PgMemoryMetadata.memory_id == memory_id)
-            )
-            row = session.execute(
-                select(PgMemoryMetadata).where(PgMemoryMetadata.memory_id == memory_id)
-            ).scalar_one_or_none()
-            if row:
-                session.delete(row)
 
     def log_maintenance(
         self, job_type: str, user_id: str, status: str, details: str | None = None
@@ -200,39 +140,6 @@ class PostgresMetadataStore:
             pin_category=row.pin_category,
             expires_at=row.expires_at,
         )
-
-    def pin_memory(
-        self, memory_id: str, reason: str, pin_category: str = "guideline"
-    ) -> None:
-        """Pin a memory to prevent it from being auto-pruned."""
-        with self._db.session() as session:
-            session.execute(
-                update(PgMemoryMetadata)
-                .where(PgMemoryMetadata.memory_id == memory_id)
-                .values(pinned=True, pin_reason=reason, pin_category=pin_category)
-            )
-
-    def unpin_memory(self, memory_id: str) -> None:
-        """Unpin a memory."""
-        with self._db.session() as session:
-            session.execute(
-                update(PgMemoryMetadata)
-                .where(PgMemoryMetadata.memory_id == memory_id)
-                .values(pinned=False, pin_reason=None, pin_category=None)
-            )
-
-    def get_pinned_memories(
-        self, user_id: str, pin_category: str | None = None
-    ) -> list[str]:
-        """Get all pinned memory IDs for a user."""
-        with self._db.session() as session:
-            query = select(PgMemoryMetadata.memory_id).where(
-                PgMemoryMetadata.pinned == True  # noqa: E712
-            )
-            if pin_category:
-                query = query.where(PgMemoryMetadata.pin_category == pin_category)
-            rows = session.execute(query).scalars().all()
-            return list(rows)
 
     def get_memories_by_category(
         self, user_id: str, category: str, scope: MemoryScope | None = None
@@ -298,26 +205,6 @@ class PostgresMetadataStore:
             rows = session.execute(query).scalars().all()
             return list(rows)
 
-    def get_category_counts(
-        self, user_id: str, scope: MemoryScope | None = None
-    ) -> dict[str, int]:
-        """Get category counts with a single GROUP BY query.
-        
-        Much faster than iterating over memories and calling get_metadata() for each.
-        """
-        from sqlalchemy import func
-        
-        with self._db.session() as session:
-            query = (
-                select(PgMemoryMetadata.category, func.count(PgMemoryMetadata.memory_id))
-                .where(PgMemoryMetadata.archived == False)  # noqa: E712
-                .group_by(PgMemoryMetadata.category)
-            )
-            if scope:
-                query = query.where(PgMemoryMetadata.scope == scope.value)
-            rows = session.execute(query).all()
-            return {cat: count for cat, count in rows if cat}
-
     def get_recently_accessed(
         self, user_id: str, limit: int = 10, scope: MemoryScope | None = None
     ) -> list[MemoryMetadata]:
@@ -333,19 +220,6 @@ class PostgresMetadataStore:
                 query = query.where(PgMemoryMetadata.scope == scope.value)
             rows = session.execute(query).scalars().all()
             return [self._pg_to_metadata(row) for row in rows]
-
-    def get_archived_memory_ids(self) -> set[str]:
-        """Get all archived memory IDs in a single query.
-        
-        Much faster than checking each memory individually.
-        """
-        with self._db.session() as session:
-            rows = session.execute(
-                select(PgMemoryMetadata.memory_id).where(
-                    PgMemoryMetadata.archived == True  # noqa: E712
-                )
-            ).scalars().all()
-            return set(rows)
 
     def get_metadata_batch(
         self, memory_ids: list[str], exclude_expired: bool = True
@@ -374,67 +248,6 @@ class PostgresMetadataStore:
                 )
             rows = session.execute(query).scalars().all()
             return {row.memory_id: self._pg_to_metadata(row) for row in rows}
-
-    def get_expired_memories(self) -> list[str]:
-        """Get all expired memory IDs (past their expires_at time).
-        
-        Returns:
-            List of expired memory IDs
-        """
-        with self._db.session() as session:
-            rows = session.execute(
-                select(PgMemoryMetadata.memory_id).where(
-                    PgMemoryMetadata.expires_at != None,  # noqa: E711
-                    PgMemoryMetadata.expires_at <= datetime.now(UTC),
-                    PgMemoryMetadata.archived == False,  # noqa: E712
-                )
-            ).scalars().all()
-            return list(rows)
-
-    def set_memory_ttl(self, memory_id: str, hours: int) -> None:
-        """Set TTL (time-to-live) for a memory.
-        
-        Args:
-            memory_id: Memory to set TTL for
-            hours: Number of hours until expiration
-        """
-        from datetime import timedelta
-        
-        expires_at = datetime.now(UTC) + timedelta(hours=hours)
-        with self._db.session() as session:
-            session.execute(
-                update(PgMemoryMetadata)
-                .where(PgMemoryMetadata.memory_id == memory_id)
-                .values(expires_at=expires_at)
-            )
-
-    def clear_memory_ttl(self, memory_id: str) -> None:
-        """Remove TTL from a memory (make it permanent).
-        
-        Args:
-            memory_id: Memory to clear TTL for
-        """
-        with self._db.session() as session:
-            session.execute(
-                update(PgMemoryMetadata)
-                .where(PgMemoryMetadata.memory_id == memory_id)
-                .values(expires_at=None)
-            )
-
-    def record_access_batch(self, memory_ids: list[str]) -> None:
-        """Record access for multiple memories in a single query."""
-        if not memory_ids:
-            return
-        
-        with self._db.session() as session:
-            session.execute(
-                update(PgMemoryMetadata)
-                .where(PgMemoryMetadata.memory_id.in_(memory_ids))
-                .values(
-                    last_accessed=datetime.now(UTC),
-                    access_count=PgMemoryMetadata.access_count + 1,
-                )
-            )
 
     def get_category_summary(
         self, user_id: str, category: str, scope: MemoryScope

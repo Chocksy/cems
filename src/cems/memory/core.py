@@ -38,7 +38,6 @@ from cems.models import (
 if TYPE_CHECKING:
     from cems.db.metadata_store import PostgresMetadataStore
     from cems.embedding import AsyncEmbeddingClient, EmbeddingClient
-    from cems.fact_extraction import FactExtractor
     from cems.llamacpp_server import AsyncLlamaCppEmbeddingClient
     from cems.vectorstore import PgVectorStore
 
@@ -97,7 +96,6 @@ class CEMSMemory(WriteMixin, SearchMixin, CRUDMixin, AnalyticsMixin, MetadataMix
         self._vectorstore: PgVectorStore | None = None
         self._embedder: EmbeddingClient | None = None
         self._async_embedder: AsyncEmbeddingClient | AsyncLlamaCppEmbeddingClient | None = None
-        self._fact_extractor: FactExtractor | None = None
         self._metadata: PostgresMetadataStore | None = None
         self._initialized = False
         self._async_initialized = False  # Track async initialization separately
@@ -123,7 +121,6 @@ class CEMSMemory(WriteMixin, SearchMixin, CRUDMixin, AnalyticsMixin, MetadataMix
             return
 
         from cems.embedding import EmbeddingClient
-        from cems.fact_extraction import FactExtractor
         from cems.vectorstore import PgVectorStore
 
         # Initialize vectorstore with configured dimension
@@ -149,10 +146,6 @@ class CEMSMemory(WriteMixin, SearchMixin, CRUDMixin, AnalyticsMixin, MetadataMix
                 self._embedder = EmbeddingClient(model=self.config.embedding_model)
                 logger.info(f"[MEMORY] Using OpenRouter embeddings ({self.config.embedding_dimension}-dim)")
 
-        # Initialize fact extractor
-        if self._fact_extractor is None:
-            self._fact_extractor = FactExtractor()
-
         self._initialized = True
 
     async def _ensure_initialized_async(self) -> None:
@@ -161,7 +154,6 @@ class CEMSMemory(WriteMixin, SearchMixin, CRUDMixin, AnalyticsMixin, MetadataMix
             return
 
         from cems.embedding import AsyncEmbeddingClient, EmbeddingClient
-        from cems.fact_extraction import FactExtractor
         from cems.llamacpp_server import AsyncLlamaCppEmbeddingClient
         from cems.vectorstore import PgVectorStore
 
@@ -196,10 +188,6 @@ class CEMSMemory(WriteMixin, SearchMixin, CRUDMixin, AnalyticsMixin, MetadataMix
                 self._async_embedder = AsyncEmbeddingClient(model=self.config.embedding_model)
 
             logger.info(f"[MEMORY] Using OpenRouter embeddings ({self.config.embedding_dimension}-dim)")
-
-        # Initialize fact extractor
-        if self._fact_extractor is None:
-            self._fact_extractor = FactExtractor()
 
         self._initialized = True
         self._async_initialized = True
