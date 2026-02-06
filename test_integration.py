@@ -12,8 +12,10 @@ from typing import Any
 
 # Configuration - Direct REST API via docker exec
 API_URL = "http://localhost:8765"
-API_KEY = "cems_ak_a5aa436d41fa1eec3ae063e9c1451aabbe9359953679cdd3"
 CONTAINER_NAME = "cems-server"
+
+# API key resolution: env var > auto-provisioned via admin API
+API_KEY = ""  # Set dynamically in setup_api_key()
 
 
 def call_api(method: str, endpoint: str, data: dict | None = None) -> dict:
@@ -55,6 +57,60 @@ def check_docker():
         return True
     except Exception as e:
         print(f"❌ Error checking Docker: {e}")
+        return False
+
+
+def setup_api_key():
+    """Resolve API key: CEMS_TEST_API_KEY env var > auto-provision via admin API."""
+    global API_KEY
+    import os
+
+    # 1. Check env var
+    env_key = os.environ.get("CEMS_TEST_API_KEY")
+    if env_key:
+        API_KEY = env_key
+        print(f"Using API key from CEMS_TEST_API_KEY env var (prefix: {API_KEY[:16]}...)")
+        return True
+
+    # 2. Auto-provision: get admin key from Docker, create a test user
+    print("No CEMS_TEST_API_KEY set, auto-provisioning test user...")
+    try:
+        # Get admin key from container
+        result = subprocess.run(
+            ["docker", "exec", CONTAINER_NAME, "printenv", "CEMS_ADMIN_KEY"],
+            capture_output=True, text=True,
+        )
+        admin_key = result.stdout.strip()
+        if not admin_key:
+            print("❌ Could not get CEMS_ADMIN_KEY from container")
+            print("   Set CEMS_TEST_API_KEY env var or ensure CEMS_ADMIN_KEY is configured")
+            return False
+
+        # Create test user via admin API
+        import time
+        username = f"integration_test_{int(time.time())}"
+        create_cmd = [
+            "docker", "exec", CONTAINER_NAME,
+            "curl", "-s", "-X", "POST",
+            f"{API_URL}/admin/users",
+            "-H", "Content-Type: application/json",
+            "-H", f"Authorization: Bearer {admin_key}",
+            "-d", json.dumps({"username": username, "email": f"{username}@test.local"}),
+        ]
+        result = subprocess.run(create_cmd, capture_output=True, text=True)
+        response = json.loads(result.stdout)
+
+        if "api_key" in response:
+            API_KEY = response["api_key"]
+            print(f"Auto-provisioned test user '{username}' (key prefix: {API_KEY[:16]}...)")
+            return True
+        else:
+            print(f"❌ Failed to create test user: {response.get('error', 'unknown')}")
+            return False
+
+    except Exception as e:
+        print(f"❌ Error auto-provisioning API key: {e}")
+        print("   Set CEMS_TEST_API_KEY env var manually")
         return False
 
 
@@ -714,6 +770,10 @@ def run_all_tests():
     
     # Check Docker first
     if not check_docker():
+        sys.exit(1)
+
+    # Resolve API key
+    if not setup_api_key():
         sys.exit(1)
     
     tests = [
