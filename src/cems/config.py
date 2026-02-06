@@ -102,12 +102,12 @@ class CEMSConfig(BaseSettings):
     # Choose between llama.cpp server (768-dim) or OpenRouter API (1536-dim)
     # Strategy A: Single embedding column at configured dimension
     embedding_backend: Literal["openrouter", "llamacpp_server"] = Field(
-        default="llamacpp_server",
-        description="Embedding backend: llamacpp_server (768-dim) or openrouter (1536-dim API)",
+        default="openrouter",
+        description="Embedding backend: openrouter (1536-dim API) or llamacpp_server (768-dim)",
     )
     embedding_dimension: int = Field(
-        default=768,
-        description="Embedding dimension (768 for llama.cpp server, 1536 for OpenRouter)",
+        default=1536,
+        description="Embedding dimension (1536 for OpenRouter, 768 for llama.cpp server)",
     )
 
     # =========================================================================

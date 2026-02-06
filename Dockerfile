@@ -35,10 +35,13 @@ ENV CEMS_MODE=http
 ENV CEMS_SERVER_HOST=0.0.0.0
 ENV CEMS_SERVER_PORT=8765
 
-# Embedding defaults (768-dim via llama.cpp server)
-# Override with CEMS_EMBEDDING_BACKEND=openrouter for 1536-dim API embeddings
-ENV CEMS_EMBEDDING_BACKEND=llamacpp_server
-ENV CEMS_EMBEDDING_DIMENSION=768
+# Default to OpenRouter embeddings (1536-dim)
+# For llama.cpp server embeddings (768-dim), set:
+#   CEMS_EMBEDDING_BACKEND=llamacpp_server
+#   CEMS_EMBEDDING_DIMENSION=768
+#   CEMS_LLAMACPP_BASE_URL=http://llama-embed:8081
+ENV CEMS_EMBEDDING_BACKEND=openrouter
+ENV CEMS_EMBEDDING_DIMENSION=1536
 
 # Health check endpoint
 HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
