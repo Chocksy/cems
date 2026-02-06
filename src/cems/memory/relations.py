@@ -1,4 +1,4 @@
-"""Relations operations for CEMSMemory (graph-like queries via PostgreSQL relations)."""
+"""Relations operations for CEMSMemory (graph-like queries via DocumentStore)."""
 
 from __future__ import annotations
 
@@ -56,23 +56,30 @@ class RelationsMixin:
         Returns:
             List of related memories
         """
-        self._ensure_initialized()
-        assert self._vectorstore is not None
-
-        return _run_async(
-            self._vectorstore.get_related_memories(memory_id, limit=limit)
-        )
+        return _run_async(self.get_related_memories_async(memory_id, limit=limit))
 
     async def get_related_memories_async(
         self: "CEMSMemory",
         memory_id: str,
         limit: int = 10,
     ) -> list[dict[str, Any]]:
-        """Async version of get_related_memories()."""
-        await self._ensure_initialized_async()
-        assert self._vectorstore is not None
+        """Async version of get_related_memories().
 
-        return await self._vectorstore.get_related_memories(memory_id, limit=limit)
+        Queries memory_relations joined with memory_documents.
+        """
+        doc_store = await self._ensure_document_store()
+        results = await doc_store.get_related_documents(memory_id, limit=limit)
+
+        # Convert to legacy format expected by retrieval pipeline
+        return [
+            {
+                "id": doc["id"],
+                "content": doc.get("content", ""),
+                "relation_type": doc.get("relation_type"),
+                "relation_similarity": doc.get("relation_similarity"),
+            }
+            for doc in results
+        ]
 
     def get_memories_by_entity(
         self: "CEMSMemory",
@@ -80,28 +87,42 @@ class RelationsMixin:
         entity_type: str = "tool",
         limit: int = 20,
     ) -> list[dict]:
-        """Find memories that mention a specific entity.
-
-        Note: This uses full-text search instead of graph traversal.
+        """Find memories that mention a specific entity via full-text search.
 
         Args:
             entity_name: Entity name (e.g., "Python", "Docker")
-            entity_type: Entity type (ignored in pgvector implementation)
+            entity_type: Entity type (ignored)
             limit: Maximum results
 
         Returns:
             List of memories mentioning the entity
         """
-        self._ensure_initialized()
-        assert self._vectorstore is not None
-
         return _run_async(
-            self._vectorstore.full_text_search(
-                query=entity_name,
-                user_id=self.config.user_id,
-                limit=limit,
-            )
+            self._get_memories_by_entity_async(entity_name, limit=limit)
         )
+
+    async def _get_memories_by_entity_async(
+        self: "CEMSMemory",
+        entity_name: str,
+        limit: int = 20,
+    ) -> list[dict]:
+        """Async implementation of get_memories_by_entity using DocumentStore."""
+        doc_store = await self._ensure_document_store()
+        results = await doc_store.full_text_search_chunks(
+            query=entity_name,
+            user_id=self.config.user_id,
+            limit=limit,
+        )
+
+        # Convert chunk results to memory-style dicts
+        return [
+            {
+                "id": r["document_id"],
+                "content": r.get("content", ""),
+                "score": r.get("score", 0.0),
+            }
+            for r in results
+        ]
 
     def get_graph_stats(self: "CEMSMemory") -> dict[str, int]:
         """Get statistics about the memory relations.

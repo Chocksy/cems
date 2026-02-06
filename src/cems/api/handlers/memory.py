@@ -28,16 +28,16 @@ async def api_memory_add(request: Request):
         "content": "...",
         "category": "...",
         "scope": "personal|shared",
-        "infer": true/false  (optional, default true),
         "source_ref": "project:org/repo"  (optional, for project-scoped recall),
+        "tags": ["tag1", "tag2"]  (optional),
         "ttl_hours": 24  (optional, memory expires after this many hours),
         "pinned": true/false  (optional, default false - pinned memories never auto-prune),
         "pin_reason": "..."  (optional, reason for pinning),
         "timestamp": "2023-04-10T17:50:00Z"  (optional, ISO format for historical imports)
     }
 
-    Note: Set infer=false for bulk imports (100-200ms vs 1-10s per memory).
-    With infer=false, content is stored raw without LLM fact extraction.
+    Content is stored as-is using the document+chunk model (no LLM fact extraction).
+    The "infer" parameter is accepted but ignored (kept for API backwards compatibility).
 
     Use ttl_hours for short-term session memories that should auto-expire.
     Use pinned=true for important memories like gate rules or guidelines.
@@ -370,8 +370,8 @@ async def api_memory_gate_rules(request: Request):
 
     GET /api/memory/gate-rules?project=org/repo
 
-    Returns all memories with category='gate-rules', optionally filtered by project.
-    This bypasses semantic search and queries the metadata store directly.
+    Returns all documents with category='gate-rules', optionally filtered by project.
+    Queries the document store directly (no semantic search).
 
     Response: {
         "success": true,
@@ -381,7 +381,6 @@ async def api_memory_gate_rules(request: Request):
                 "content": "Bash: coolify deploy — reason",
                 "category": "gate-rules",
                 "source_ref": "project:org/repo",
-                "pinned": true,
                 "tags": ["block", "coolify"]
             }
         ],
@@ -392,52 +391,44 @@ async def api_memory_gate_rules(request: Request):
         project = request.query_params.get("project")  # e.g., "org/repo"
 
         memory = get_memory()
+        await memory._ensure_initialized_async()
+        doc_store = await memory._ensure_document_store()
 
-        # Get gate-rules memory IDs from metadata store
-        memory_ids = memory._metadata.get_memories_by_category(
-            memory.config.user_id, "gate-rules"
+        user_id = memory.config.user_id
+
+        # Query document store for gate-rules category
+        source_ref_prefix = f"project:{project}" if project else None
+        docs = await doc_store.get_documents_by_category(
+            user_id=user_id,
+            category="gate-rules",
+            limit=100,
+            source_ref_prefix=source_ref_prefix,
         )
 
-        if not memory_ids:
-            return JSONResponse({
-                "success": True,
-                "rules": [],
-                "count": 0,
-            })
-
-        # Get metadata for all gate rules
-        metadata_map = memory._metadata.get_metadata_batch(memory_ids)
+        # If project filter was used, also include global rules (no source_ref)
+        if project:
+            all_docs = await doc_store.get_documents_by_category(
+                user_id=user_id,
+                category="gate-rules",
+                limit=100,
+            )
+            # Add global rules (those without project-specific source_ref)
+            seen_ids = {d["id"] for d in docs}
+            for doc in all_docs:
+                if doc["id"] not in seen_ids:
+                    source_ref = doc.get("source_ref") or ""
+                    # Include if global (no source_ref or not project-scoped)
+                    if not source_ref or not source_ref.startswith("project:"):
+                        docs.append(doc)
 
         gate_rules = []
-        for memory_id in memory_ids:
-            meta = metadata_map.get(memory_id)
-            if not meta:
-                continue
-
-            # Filter by project if specified
-            if project:
-                source_ref = meta.source_ref or ""
-                # Skip if source_ref is for a different project
-                if source_ref and source_ref.startswith("project:"):
-                    if source_ref != f"project:{project}":
-                        continue
-                # Global rules (no source_ref) are included for all projects
-
-            # Get the memory content from Mem0
-            try:
-                mem_data = memory._memory.get(memory_id)
-                content = mem_data.get("memory", "") if mem_data else ""
-            except Exception:
-                content = ""
-
+        for doc in docs:
             gate_rules.append({
-                "memory_id": memory_id,
-                "content": content,
-                "category": meta.category,
-                "source_ref": meta.source_ref,
-                "pinned": meta.pinned,
-                "pin_reason": meta.pin_reason,
-                "tags": meta.tags or [],
+                "memory_id": doc["id"],
+                "content": doc["content"],
+                "category": doc["category"],
+                "source_ref": doc.get("source_ref"),
+                "tags": doc.get("tags", []),
             })
 
         logger.info(f"[API] Gate rules: found {len(gate_rules)} rules for project={project}")
@@ -481,6 +472,7 @@ async def api_memory_profile(request: Request):
 
         memory = get_memory()
         await memory._ensure_initialized_async()
+        doc_store = await memory._ensure_document_store()
 
         user_id = memory.config.user_id
         components = {
@@ -492,7 +484,7 @@ async def api_memory_profile(request: Request):
         }
 
         # 1. Fetch preferences (category: preferences)
-        prefs = await memory._vectorstore.search_by_category(
+        prefs = await doc_store.get_documents_by_category(
             user_id=user_id,
             category="preferences",
             limit=10,
@@ -500,28 +492,24 @@ async def api_memory_profile(request: Request):
         components["preferences"] = prefs
 
         # 2. Fetch guidelines (category: guidelines)
-        guidelines = await memory._vectorstore.search_by_category(
+        guidelines = await doc_store.get_documents_by_category(
             user_id=user_id,
             category="guidelines",
             limit=10,
         )
         components["guidelines"] = guidelines
 
-        # 3. Fetch recent memories (last 24h, any category)
-        recent = await memory._vectorstore.get_recent(
+        # 3. Fetch recent memories (last 24h, excluding certain categories)
+        recent = await doc_store.get_recent_documents(
             user_id=user_id,
             hours=24,
             limit=15,
+            exclude_categories=["preferences", "guidelines", "gate-rules"],
         )
-        # Filter out preferences/guidelines already included
-        recent = [
-            m for m in recent
-            if m.get("category") not in ("preferences", "guidelines", "gate-rules")
-        ]
         components["recent_memories"] = recent
 
         # 4. Gate rules count (for awareness, not full rules)
-        gate_rules = await memory._vectorstore.search_by_category(
+        gate_rules = await doc_store.get_documents_by_category(
             user_id=user_id,
             category="gate-rules",
             limit=50,
@@ -530,17 +518,12 @@ async def api_memory_profile(request: Request):
 
         # 5. Project-specific memories if applicable
         if project:
-            # Search for memories with matching source_ref
-            project_memories = await memory._vectorstore.search_by_category(
+            project_memories = await doc_store.get_documents_by_category(
                 user_id=user_id,
-                category="project",  # Project-specific category
+                category="project",
                 limit=10,
+                source_ref_prefix=f"project:{project}",
             )
-            # Filter by source_ref prefix (handle None values)
-            project_memories = [
-                m for m in project_memories
-                if (m.get("source_ref") or "").startswith(f"project:{project}")
-            ]
             components["project_context"] = project_memories
 
         # Build formatted context string

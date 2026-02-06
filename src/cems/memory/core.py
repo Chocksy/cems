@@ -39,7 +39,6 @@ if TYPE_CHECKING:
     from cems.db.metadata_store import PostgresMetadataStore
     from cems.embedding import AsyncEmbeddingClient, EmbeddingClient
     from cems.llamacpp_server import AsyncLlamaCppEmbeddingClient
-    from cems.vectorstore import PgVectorStore
 
 logger = logging.getLogger(__name__)
 
@@ -93,15 +92,13 @@ class CEMSMemory(WriteMixin, SearchMixin, CRUDMixin, AnalyticsMixin, MetadataMix
             )
 
         # Initialize components lazily
-        self._vectorstore: PgVectorStore | None = None
         self._embedder: EmbeddingClient | None = None
         self._async_embedder: AsyncEmbeddingClient | AsyncLlamaCppEmbeddingClient | None = None
         self._metadata: PostgresMetadataStore | None = None
         self._initialized = False
         self._async_initialized = False  # Track async initialization separately
 
-        # Initialize legacy metadata store for backwards compatibility
-        # This will be deprecated once migration is complete
+        # Initialize metadata store
         from cems.db.database import init_database, is_database_initialized
         from cems.db.metadata_store import PostgresMetadataStore
 
@@ -109,8 +106,6 @@ class CEMSMemory(WriteMixin, SearchMixin, CRUDMixin, AnalyticsMixin, MetadataMix
             init_database(self.config.database_url)
         self._metadata = PostgresMetadataStore()
 
-        # Graph store (using PostgreSQL relations table instead of Kuzu)
-        self._use_pg_relations = True
 
     def _ensure_initialized(self) -> None:
         """Ensure all components are initialized (sync version for CLI/MCP).
@@ -121,16 +116,6 @@ class CEMSMemory(WriteMixin, SearchMixin, CRUDMixin, AnalyticsMixin, MetadataMix
             return
 
         from cems.embedding import EmbeddingClient
-        from cems.vectorstore import PgVectorStore
-
-        # Initialize vectorstore with configured dimension
-        if self._vectorstore is None:
-            self._vectorstore = PgVectorStore(
-                database_url=self.config.database_url,
-                embedding_dim=self.config.embedding_dimension,
-            )
-            # Connect synchronously - only works in sync contexts
-            _run_async(self._vectorstore.connect())
 
         # Initialize embedder based on config
         if self._embedder is None:
@@ -155,15 +140,6 @@ class CEMSMemory(WriteMixin, SearchMixin, CRUDMixin, AnalyticsMixin, MetadataMix
 
         from cems.embedding import AsyncEmbeddingClient, EmbeddingClient
         from cems.llamacpp_server import AsyncLlamaCppEmbeddingClient
-        from cems.vectorstore import PgVectorStore
-
-        # Initialize vectorstore with configured dimension
-        if self._vectorstore is None:
-            self._vectorstore = PgVectorStore(
-                database_url=self.config.database_url,
-                embedding_dim=self.config.embedding_dimension,
-            )
-            await self._vectorstore.connect()
 
         # Initialize embedders based on config
         if self.config.embedding_backend == "llamacpp_server":
@@ -231,6 +207,6 @@ class CEMSMemory(WriteMixin, SearchMixin, CRUDMixin, AnalyticsMixin, MetadataMix
     # promote_memory(), archive_memory() are provided by AnalyticsMixin
     # get_metadata(), get_category_counts(), get_category_counts_async(), get_all_categories() are provided by MetadataMixin
     # get_recently_accessed(), get_category_summary(), get_all_category_summaries() are provided by MetadataMixin
-    # metadata_store and vectorstore properties are provided by MetadataMixin
+    # metadata_store property is provided by MetadataMixin
     # graph_store, get_related_memories(), get_related_memories_async(), get_memories_by_entity(), get_graph_stats() are provided by RelationsMixin
     # retrieve_for_inference(), retrieve_for_inference_async() are provided by RetrievalMixin

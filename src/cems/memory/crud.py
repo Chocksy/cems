@@ -1,4 +1,7 @@
-"""CRUD operations for CEMSMemory (get, get_all, update, delete, forget, history)."""
+"""CRUD operations for CEMSMemory (get, get_all, update, delete, forget, history).
+
+Uses DocumentStore (memory_documents/memory_chunks) exclusively.
+"""
 
 from __future__ import annotations
 
@@ -28,8 +31,26 @@ def _run_async(coro):
         return asyncio.run(coro)
 
 
+def _doc_to_mem0_format(doc: dict[str, Any]) -> dict[str, Any]:
+    """Convert a DocumentStore document dict to Mem0-compatible format."""
+    return {
+        "id": doc["id"],
+        "memory": doc["content"],
+        "scope": doc.get("scope", "personal"),
+        "metadata": {
+            "category": doc.get("category"),
+            "source": doc.get("source"),
+            "source_ref": doc.get("source_ref"),
+            "tags": doc.get("tags", []),
+        },
+    }
+
+
 class CRUDMixin:
-    """Mixin class providing CRUD operations for CEMSMemory."""
+    """Mixin class providing CRUD operations for CEMSMemory.
+
+    All operations use DocumentStore (memory_documents/memory_chunks tables).
+    """
 
     def get(self: "CEMSMemory", memory_id: str) -> dict[str, Any] | None:
         """Get a specific memory by ID.
@@ -40,22 +61,14 @@ class CRUDMixin:
         Returns:
             Memory dict or None if not found
         """
-        self._ensure_initialized()
-        assert self._vectorstore is not None
+        return _run_async(self._get_async(memory_id))
 
-        result = _run_async(self._vectorstore.get(memory_id))
+    async def _get_async(self: "CEMSMemory", memory_id: str) -> dict[str, Any] | None:
+        """Async get from DocumentStore."""
+        doc_store = await self._ensure_document_store()
+        result = await doc_store.get_document(memory_id)
         if result:
-            _run_async(self._vectorstore.record_access(memory_id))
-            # Return in Mem0-compatible format
-            return {
-                "id": result["id"],
-                "memory": result["content"],
-                "metadata": {
-                    "category": result.get("category"),
-                    "source": result.get("source"),
-                    "tags": result.get("tags", []),
-                },
-            }
+            return _doc_to_mem0_format(result)
         return None
 
     def get_all(
@@ -67,48 +80,30 @@ class CRUDMixin:
 
         Args:
             scope: Which namespace to get
-            include_archived: Whether to include archived memories
+            include_archived: Ignored (document model has no archive concept)
 
         Returns:
             List of memory dicts
         """
-        self._ensure_initialized()
-        assert self._vectorstore is not None
-        assert self._embedder is not None
+        return _run_async(self._get_all_async(scope))
 
+    async def _get_all_async(
+        self: "CEMSMemory",
+        scope: Literal["personal", "shared", "both"] = "both",
+    ) -> list[dict[str, Any]]:
+        """Async get_all from DocumentStore."""
+        doc_store = await self._ensure_document_store()
         user_id = self.config.user_id
-        team_id = self.config.team_id if scope in ("shared", "both") else None
 
-        # Use a dummy embedding to get all (or use a dedicated method)
-        # For now, we'll do a broad search with high limit
-        dummy_embedding = self._embedder.embed("memory")
+        scope_filter = scope if scope != "both" else None
 
-        results = _run_async(
-            self._vectorstore.search(
-                query_embedding=dummy_embedding,
-                user_id=user_id,
-                team_id=team_id,
-                scope=scope,
-                limit=1000,
-                include_archived=include_archived,
-            )
+        docs = await doc_store.get_all_documents(
+            user_id=user_id,
+            scope=scope_filter,
+            limit=1000,
         )
 
-        # Convert to Mem0-compatible format
-        memories = []
-        for mem in results:
-            memories.append({
-                "id": mem["id"],
-                "memory": mem["content"],
-                "scope": mem.get("scope", "personal"),
-                "metadata": {
-                    "category": mem.get("category"),
-                    "source": mem.get("source"),
-                    "tags": mem.get("tags", []),
-                },
-            })
-
-        return memories
+        return [_doc_to_mem0_format(doc) for doc in docs]
 
     def update(self: "CEMSMemory", memory_id: str, content: str) -> dict[str, Any]:
         """Update a memory's content.
@@ -120,80 +115,74 @@ class CRUDMixin:
         Returns:
             Update result dict
         """
-        self._ensure_initialized()
-        assert self._vectorstore is not None
-        assert self._embedder is not None
-
-        # Generate new embedding
-        embedding = self._embedder.embed(content)
-
-        success = _run_async(
-            self._vectorstore.update(
-                memory_id=memory_id,
-                content=content,
-                embedding=embedding,
-            )
-        )
-
-        if success:
-            return {"status": "updated", "id": memory_id}
-        return {"status": "not_found", "id": memory_id}
+        return _run_async(self.update_async(memory_id, content))
 
     async def update_async(
         self: "CEMSMemory", memory_id: str, content: str
     ) -> dict[str, Any]:
-        """Async version of update(). Use this from async contexts (HTTP server)."""
+        """Async update via DocumentStore.
+
+        Re-chunks content, re-embeds, replaces document+chunks in a transaction.
+        """
         await self._ensure_initialized_async()
-        assert self._vectorstore is not None
         assert self._async_embedder is not None
 
-        # Generate new embedding using async embedder
-        embedding = await self._async_embedder.embed(content)
+        doc_store = await self._ensure_document_store()
 
-        await self._vectorstore.update(
-            memory_id=memory_id,
+        from cems.chunking import chunk_document
+
+        chunks = chunk_document(content)
+        if not chunks:
+            return {"success": False, "memory_id": memory_id, "error": "Chunking produced no output"}
+
+        chunk_texts = [c.content for c in chunks]
+        embeddings = await self._async_embedder.embed_batch(chunk_texts)
+
+        success = await doc_store.update_document(
+            document_id=memory_id,
             content=content,
-            embedding=embedding,
+            chunks=chunks,
+            embeddings=embeddings,
         )
 
-        return {"success": True, "memory_id": memory_id}
+        if success:
+            return {"success": True, "memory_id": memory_id}
+        return {"success": False, "memory_id": memory_id, "error": "Document not found"}
 
     def delete(
         self: "CEMSMemory", memory_id: str, hard: bool = False
     ) -> dict[str, Any]:
-        """Delete or archive a memory.
+        """Delete a memory.
 
         Args:
             memory_id: The memory ID to delete
-            hard: If True, permanently delete. If False, archive.
+            hard: Ignored (document model always hard-deletes)
 
         Returns:
             Delete result dict
         """
-        self._ensure_initialized()
-        assert self._vectorstore is not None
+        return _run_async(self._delete_async_internal(memory_id))
 
-        success = _run_async(self._vectorstore.delete(memory_id, hard=hard))
+    async def _delete_async_internal(
+        self: "CEMSMemory", memory_id: str
+    ) -> dict[str, Any]:
+        """Internal async delete with result dict."""
+        doc_store = await self._ensure_document_store()
+        success = await doc_store.delete_document(memory_id)
 
         if success:
-            status = "deleted" if hard else "archived"
-            return {"status": status, "memory_id": memory_id}
+            return {"status": "deleted", "memory_id": memory_id}
         return {"status": "not_found", "memory_id": memory_id}
 
     async def delete_async(
         self: "CEMSMemory", memory_id: str, hard: bool = False
     ) -> None:
-        """Async version of delete(). Use this from async contexts (HTTP server)."""
-        await self._ensure_initialized_async()
-        assert self._vectorstore is not None
-
-        if hard:
-            await self._vectorstore.delete(memory_id)
-        else:
-            await self._vectorstore.update(memory_id, archived=True)
+        """Async delete via DocumentStore."""
+        doc_store = await self._ensure_document_store()
+        await doc_store.delete_document(memory_id)
 
     def forget(self: "CEMSMemory", memory_id: str) -> dict[str, Any]:
-        """Forget (soft delete) a memory.
+        """Forget (delete) a memory.
 
         Args:
             memory_id: The memory ID to forget
@@ -201,20 +190,18 @@ class CRUDMixin:
         Returns:
             Result dict
         """
-        return self.delete(memory_id, hard=False)
+        return self.delete(memory_id, hard=True)
 
     def history(self: "CEMSMemory", memory_id: str) -> list[dict[str, Any]]:
         """Get the history of a memory.
 
-        Note: pgvector doesn't track history by default.
-        This returns an empty list for compatibility.
+        Note: History tracking not implemented.
+        Returns an empty list for compatibility.
 
         Args:
             memory_id: The memory ID
 
         Returns:
-            List of history entries (empty for pgvector)
+            List of history entries (always empty)
         """
-        # History tracking not implemented in pgvector
-        # Would need a separate audit table
         return []

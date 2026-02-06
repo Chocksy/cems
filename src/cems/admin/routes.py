@@ -683,23 +683,7 @@ async def database_stats(request: Request) -> JSONResponse:
         stats = {}
 
         async with db.async_session() as session:
-            # Count memories
-            result = await session.execute(
-                text("SELECT COUNT(*) FROM memories WHERE archived = FALSE")
-            )
-            stats["memories_active"] = result.scalar()
-
-            result = await session.execute(text("SELECT COUNT(*) FROM memories"))
-            stats["memories_total"] = result.scalar()
-
-            # Check embedding dimension (sample first memory)
-            result = await session.execute(
-                text("SELECT array_length(embedding::real[], 1) FROM memories LIMIT 1")
-            )
-            dim = result.scalar()
-            stats["embedding_dimension"] = dim
-
-            # Count documents and chunks (new model)
+            # Count documents and chunks
             result = await session.execute(text("SELECT COUNT(*) FROM memory_documents"))
             stats["documents_total"] = result.scalar()
 
@@ -711,7 +695,7 @@ async def database_stats(request: Request) -> JSONResponse:
                 text("SELECT array_length(embedding::real[], 1) FROM memory_chunks LIMIT 1")
             )
             chunk_dim = result.scalar()
-            stats["chunk_embedding_dimension"] = chunk_dim
+            stats["embedding_dimension"] = chunk_dim
 
             # Count users
             result = await session.execute(text("SELECT COUNT(*) FROM users"))

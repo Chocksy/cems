@@ -377,24 +377,22 @@ class TestProfileEndpoint:
     @patch.object(memory_handlers, "get_memory")
     def test_profile_returns_context(self, mock_get_memory, mock_db, mock_is_db, mock_memory, mock_user):
         """Test GET /api/memory/profile returns formatted context."""
-        # Setup mock vectorstore
-        mock_vectorstore = MagicMock()
-        mock_vectorstore.search_by_category = AsyncMock(side_effect=[
+        # Setup mock document store
+        mock_doc_store = MagicMock()
+        mock_doc_store.get_documents_by_category = AsyncMock(side_effect=[
             # preferences
             [{"id": "pref-1", "content": "Use Python for backend", "category": "preferences"}],
             # guidelines
             [{"id": "guide-1", "content": "Always write tests", "category": "guidelines"}],
             # gate-rules
             [{"id": "gate-1", "content": "Block after 10pm", "category": "gate-rules"}],
-            # project context (empty for no project)
-            [],
         ])
-        mock_vectorstore.get_recent = AsyncMock(return_value=[
+        mock_doc_store.get_recent_documents = AsyncMock(return_value=[
             {"id": "recent-1", "content": "Discussed API design", "category": "decisions"},
         ])
 
-        mock_memory._vectorstore = mock_vectorstore
         mock_memory._ensure_initialized_async = AsyncMock()
+        mock_memory._ensure_document_store = AsyncMock(return_value=mock_doc_store)
         mock_get_memory.return_value = mock_memory
 
         mock_session = MagicMock()
@@ -428,12 +426,12 @@ class TestProfileEndpoint:
     @patch.object(memory_handlers, "get_memory")
     def test_profile_with_token_budget(self, mock_get_memory, mock_db, mock_is_db, mock_memory, mock_user):
         """Test GET /api/memory/profile respects token_budget parameter."""
-        mock_vectorstore = MagicMock()
-        mock_vectorstore.search_by_category = AsyncMock(return_value=[])
-        mock_vectorstore.get_recent = AsyncMock(return_value=[])
+        mock_doc_store = MagicMock()
+        mock_doc_store.get_documents_by_category = AsyncMock(return_value=[])
+        mock_doc_store.get_recent_documents = AsyncMock(return_value=[])
 
-        mock_memory._vectorstore = mock_vectorstore
         mock_memory._ensure_initialized_async = AsyncMock()
+        mock_memory._ensure_document_store = AsyncMock(return_value=mock_doc_store)
         mock_get_memory.return_value = mock_memory
 
         mock_session = MagicMock()
@@ -461,8 +459,8 @@ class TestProfileEndpoint:
     @patch.object(memory_handlers, "get_memory")
     def test_profile_with_project_filter(self, mock_get_memory, mock_db, mock_is_db, mock_memory, mock_user):
         """Test GET /api/memory/profile filters by project."""
-        mock_vectorstore = MagicMock()
-        mock_vectorstore.search_by_category = AsyncMock(side_effect=[
+        mock_doc_store = MagicMock()
+        mock_doc_store.get_documents_by_category = AsyncMock(side_effect=[
             [],  # preferences
             [],  # guidelines
             [],  # gate-rules
@@ -470,10 +468,10 @@ class TestProfileEndpoint:
                 {"id": "proj-1", "content": "CEMS uses pgvector", "source_ref": "project:org/cems"},
             ],
         ])
-        mock_vectorstore.get_recent = AsyncMock(return_value=[])
+        mock_doc_store.get_recent_documents = AsyncMock(return_value=[])
 
-        mock_memory._vectorstore = mock_vectorstore
         mock_memory._ensure_initialized_async = AsyncMock()
+        mock_memory._ensure_document_store = AsyncMock(return_value=mock_doc_store)
         mock_get_memory.return_value = mock_memory
 
         mock_session = MagicMock()
@@ -495,20 +493,20 @@ class TestProfileEndpoint:
             assert response.status_code == 200
             data = response.json()
             assert data["success"] is True
-            # search_by_category should be called 4 times (preferences, guidelines, gate-rules, project)
-            assert mock_vectorstore.search_by_category.call_count == 4
+            # get_documents_by_category called 4 times (preferences, guidelines, gate-rules, project)
+            assert mock_doc_store.get_documents_by_category.call_count == 4
 
     @patch("cems.db.database.is_database_initialized", return_value=True)
     @patch("cems.db.database.get_database")
     @patch.object(memory_handlers, "get_memory")
     def test_profile_empty_context(self, mock_get_memory, mock_db, mock_is_db, mock_memory, mock_user):
         """Test GET /api/memory/profile with no memories returns empty context."""
-        mock_vectorstore = MagicMock()
-        mock_vectorstore.search_by_category = AsyncMock(return_value=[])
-        mock_vectorstore.get_recent = AsyncMock(return_value=[])
+        mock_doc_store = MagicMock()
+        mock_doc_store.get_documents_by_category = AsyncMock(return_value=[])
+        mock_doc_store.get_recent_documents = AsyncMock(return_value=[])
 
-        mock_memory._vectorstore = mock_vectorstore
         mock_memory._ensure_initialized_async = AsyncMock()
+        mock_memory._ensure_document_store = AsyncMock(return_value=mock_doc_store)
         mock_get_memory.return_value = mock_memory
 
         mock_session = MagicMock()
@@ -551,22 +549,20 @@ class TestProfileEndpoint:
     @patch("cems.db.database.get_database")
     @patch.object(memory_handlers, "get_memory")
     def test_profile_filters_recent_duplicates(self, mock_get_memory, mock_db, mock_is_db, mock_memory, mock_user):
-        """Test GET /api/memory/profile filters preferences/guidelines from recent."""
-        mock_vectorstore = MagicMock()
-        mock_vectorstore.search_by_category = AsyncMock(side_effect=[
+        """Test GET /api/memory/profile excludes preferences/guidelines from recent."""
+        mock_doc_store = MagicMock()
+        mock_doc_store.get_documents_by_category = AsyncMock(side_effect=[
             [{"id": "pref-1", "content": "Prefer Python", "category": "preferences"}],
             [{"id": "guide-1", "content": "Write tests", "category": "guidelines"}],
             [],  # gate-rules
         ])
-        # Recent includes preferences/guidelines that should be filtered out
-        mock_vectorstore.get_recent = AsyncMock(return_value=[
-            {"id": "pref-1", "content": "Prefer Python", "category": "preferences"},  # Should be filtered
-            {"id": "guide-1", "content": "Write tests", "category": "guidelines"},  # Should be filtered
-            {"id": "decision-1", "content": "Use REST API", "category": "decisions"},  # Should remain
+        # get_recent_documents already excludes categories, so only decisions returned
+        mock_doc_store.get_recent_documents = AsyncMock(return_value=[
+            {"id": "decision-1", "content": "Use REST API", "category": "decisions"},
         ])
 
-        mock_memory._vectorstore = mock_vectorstore
         mock_memory._ensure_initialized_async = AsyncMock()
+        mock_memory._ensure_document_store = AsyncMock(return_value=mock_doc_store)
         mock_get_memory.return_value = mock_memory
 
         mock_session = MagicMock()

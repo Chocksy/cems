@@ -266,6 +266,25 @@ class DocumentStore:
         logger.debug(f"Added document {doc_id} with {len(chunks)} chunks")
         return str(doc_id), True
 
+    def _doc_row_to_dict(self, row: asyncpg.Record) -> dict[str, Any]:
+        """Convert a document row to a dictionary."""
+        return {
+            "id": str(row["id"]),
+            "user_id": str(row["user_id"]) if row["user_id"] else None,
+            "team_id": str(row["team_id"]) if row["team_id"] else None,
+            "scope": row["scope"],
+            "category": row["category"],
+            "title": row["title"],
+            "source": row["source"],
+            "source_ref": row["source_ref"],
+            "tags": row["tags"] or [],
+            "content": row["content"],
+            "content_hash": row["content_hash"],
+            "content_bytes": row["content_bytes"],
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+        }
+
     async def get_document(self, document_id: str) -> dict[str, Any] | None:
         """Get a document by ID."""
         pool = await self._get_pool()
@@ -279,22 +298,7 @@ class DocumentStore:
         if not row:
             return None
 
-        return {
-            "id": str(row["id"]),
-            "user_id": str(row["user_id"]) if row["user_id"] else None,
-            "team_id": str(row["team_id"]) if row["team_id"] else None,
-            "scope": row["scope"],
-            "category": row["category"],
-            "title": row["title"],
-            "source": row["source"],
-            "source_ref": row["source_ref"],
-            "tags": row["tags"],
-            "content": row["content"],
-            "content_hash": row["content_hash"],
-            "content_bytes": row["content_bytes"],
-            "created_at": row["created_at"],
-            "updated_at": row["updated_at"],
-        }
+        return self._doc_row_to_dict(row)
 
     async def delete_document(self, document_id: str) -> bool:
         """Delete a document and its chunks."""
@@ -343,6 +347,243 @@ class DocumentStore:
         count = int(result.split()[1]) if result else 0
         logger.debug(f"Deleted {count} documents with tag={tag}")
         return count
+
+    async def update_document(
+        self,
+        document_id: str,
+        content: str,
+        chunks: list[Chunk],
+        embeddings: list[list[float]],
+    ) -> bool:
+        """Update a document's content and replace its chunks.
+
+        Replaces content, hash, bytes, and all chunks in a single transaction.
+
+        Args:
+            document_id: The document ID to update
+            content: New full content
+            chunks: New pre-chunked content
+            embeddings: New embeddings (must match chunks length)
+
+        Returns:
+            True if document was found and updated, False if not found
+        """
+        if len(chunks) != len(embeddings):
+            raise ValueError(
+                f"Chunks and embeddings must have same length: {len(chunks)} vs {len(embeddings)}"
+            )
+
+        pool = await self._get_pool()
+        doc_uuid = UUID(document_id)
+        doc_hash = content_hash(content)
+        doc_bytes = len(content.encode("utf-8"))
+
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                # Update document row
+                result = await conn.execute(
+                    """
+                    UPDATE memory_documents
+                    SET content = $1, content_hash = $2, content_bytes = $3,
+                        updated_at = NOW()
+                    WHERE id = $4
+                    """,
+                    content, doc_hash, doc_bytes, doc_uuid,
+                )
+                if result != "UPDATE 1":
+                    return False
+
+                # Delete old chunks
+                await conn.execute(
+                    "DELETE FROM memory_chunks WHERE document_id = $1",
+                    doc_uuid,
+                )
+
+                # Insert new chunks
+                for chunk, embedding in zip(chunks, embeddings):
+                    await conn.execute(
+                        """
+                        INSERT INTO memory_chunks (
+                            id, document_id, seq, pos, content, embedding, tokens, bytes
+                        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                        """,
+                        uuid4(),
+                        doc_uuid,
+                        chunk.seq,
+                        chunk.pos,
+                        chunk.content,
+                        embedding,
+                        chunk.tokens,
+                        chunk.bytes,
+                    )
+
+        logger.debug(f"Updated document {document_id} with {len(chunks)} chunks")
+        return True
+
+    async def get_documents_by_category(
+        self,
+        user_id: str,
+        category: str,
+        limit: int = 50,
+        source_ref_prefix: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Get documents by category for a user.
+
+        Args:
+            user_id: User ID
+            category: Category to filter by
+            limit: Maximum results
+            source_ref_prefix: Optional prefix filter on source_ref (e.g. "project:org/repo")
+
+        Returns:
+            List of document dicts
+        """
+        pool = await self._get_pool()
+        user_uuid = UUID(user_id)
+
+        if source_ref_prefix:
+            query = f"""
+                SELECT {DOCUMENT_COLUMNS} FROM memory_documents
+                WHERE user_id = $1 AND category = $2 AND source_ref LIKE $3
+                ORDER BY created_at DESC
+                LIMIT $4
+            """
+            async with pool.acquire() as conn:
+                rows = await conn.fetch(query, user_uuid, category, f"{source_ref_prefix}%", limit)
+        else:
+            query = f"""
+                SELECT {DOCUMENT_COLUMNS} FROM memory_documents
+                WHERE user_id = $1 AND category = $2
+                ORDER BY created_at DESC
+                LIMIT $3
+            """
+            async with pool.acquire() as conn:
+                rows = await conn.fetch(query, user_uuid, category, limit)
+
+        return [self._doc_row_to_dict(row) for row in rows]
+
+    async def get_recent_documents(
+        self,
+        user_id: str,
+        hours: int = 24,
+        limit: int = 15,
+        exclude_categories: list[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        """Get recently created documents.
+
+        Args:
+            user_id: User ID
+            hours: Look back window in hours
+            limit: Maximum results
+            exclude_categories: Categories to exclude from results
+
+        Returns:
+            List of document dicts ordered by created_at DESC
+        """
+        pool = await self._get_pool()
+        user_uuid = UUID(user_id)
+
+        if exclude_categories:
+            query = f"""
+                SELECT {DOCUMENT_COLUMNS} FROM memory_documents
+                WHERE user_id = $1
+                  AND created_at > NOW() - INTERVAL '1 hour' * $2
+                  AND NOT (category = ANY($3))
+                ORDER BY created_at DESC
+                LIMIT $4
+            """
+            async with pool.acquire() as conn:
+                rows = await conn.fetch(query, user_uuid, hours, exclude_categories, limit)
+        else:
+            query = f"""
+                SELECT {DOCUMENT_COLUMNS} FROM memory_documents
+                WHERE user_id = $1
+                  AND created_at > NOW() - INTERVAL '1 hour' * $2
+                ORDER BY created_at DESC
+                LIMIT $3
+            """
+            async with pool.acquire() as conn:
+                rows = await conn.fetch(query, user_uuid, hours, limit)
+
+        return [self._doc_row_to_dict(row) for row in rows]
+
+    async def get_all_documents(
+        self,
+        user_id: str,
+        scope: str | None = None,
+        limit: int = 1000,
+    ) -> list[dict[str, Any]]:
+        """Get all documents for a user.
+
+        Args:
+            user_id: User ID
+            scope: Optional scope filter ("personal" or "shared")
+            limit: Maximum results
+
+        Returns:
+            List of document dicts
+        """
+        pool = await self._get_pool()
+        user_uuid = UUID(user_id)
+
+        if scope:
+            query = f"""
+                SELECT {DOCUMENT_COLUMNS} FROM memory_documents
+                WHERE user_id = $1 AND scope = $2
+                ORDER BY created_at DESC
+                LIMIT $3
+            """
+            async with pool.acquire() as conn:
+                rows = await conn.fetch(query, user_uuid, scope, limit)
+        else:
+            query = f"""
+                SELECT {DOCUMENT_COLUMNS} FROM memory_documents
+                WHERE user_id = $1
+                ORDER BY created_at DESC
+                LIMIT $2
+            """
+            async with pool.acquire() as conn:
+                rows = await conn.fetch(query, user_uuid, limit)
+
+        return [self._doc_row_to_dict(row) for row in rows]
+
+    async def get_document_category_counts(
+        self,
+        user_id: str,
+        scope: str | None = None,
+    ) -> dict[str, int]:
+        """Get document counts grouped by category.
+
+        Args:
+            user_id: User ID
+            scope: Optional scope filter
+
+        Returns:
+            Dict mapping category name to document count
+        """
+        pool = await self._get_pool()
+        user_uuid = UUID(user_id)
+
+        if scope:
+            query = """
+                SELECT category, COUNT(*) as count
+                FROM memory_documents
+                WHERE user_id = $1 AND scope = $2
+                GROUP BY category
+            """
+            async with pool.acquire() as conn:
+                rows = await conn.fetch(query, user_uuid, scope)
+        else:
+            query = """
+                SELECT category, COUNT(*) as count
+                FROM memory_documents
+                WHERE user_id = $1
+                GROUP BY category
+            """
+            async with pool.acquire() as conn:
+                rows = await conn.fetch(query, user_uuid)
+
+        return {row["category"]: row["count"] for row in rows}
 
     # =========================================================================
     # Chunk Search Operations
@@ -533,6 +774,70 @@ class DocumentStore:
             rows = await conn.fetch(query_sql, query, limit, *fb.values)
 
         return [chunk_row_to_result(row, include_score=True) for row in rows]
+
+    # =========================================================================
+    # Relations Operations
+    # =========================================================================
+
+    async def get_related_documents(
+        self,
+        document_id: str,
+        relation_type: str | None = None,
+        limit: int = 10,
+    ) -> list[dict[str, Any]]:
+        """Get documents related to a given document via memory_relations.
+
+        Joins memory_relations with memory_documents (target_id = document ID).
+        Returns empty list if no relations exist for this document.
+
+        Args:
+            document_id: Starting document ID
+            relation_type: Optional relation type filter
+            limit: Maximum results
+
+        Returns:
+            List of related document dicts with relation_type and relation_similarity
+        """
+        pool = await self._get_pool()
+        doc_uuid = UUID(document_id)
+
+        # Prefix document columns with table alias 'd.'
+        doc_cols = ", ".join(
+            f"d.{col.strip()}" for col in DOCUMENT_COLUMNS.split(",")
+        )
+
+        if relation_type:
+            query = f"""
+                SELECT {doc_cols}, r.relation_type, r.similarity AS relation_similarity
+                FROM memory_relations r
+                JOIN memory_documents d ON r.target_id = d.id
+                WHERE r.source_id = $1 AND r.relation_type = $2
+                ORDER BY r.similarity DESC NULLS LAST
+                LIMIT $3
+            """
+            values: list = [doc_uuid, relation_type, limit]
+        else:
+            query = f"""
+                SELECT {doc_cols}, r.relation_type, r.similarity AS relation_similarity
+                FROM memory_relations r
+                JOIN memory_documents d ON r.target_id = d.id
+                WHERE r.source_id = $1
+                ORDER BY r.similarity DESC NULLS LAST
+                LIMIT $2
+            """
+            values = [doc_uuid, limit]
+
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(query, *values)
+
+        results = []
+        for row in rows:
+            doc = self._doc_row_to_dict(row)
+            doc["relation_type"] = row["relation_type"]
+            doc["relation_similarity"] = row["relation_similarity"]
+            results.append(doc)
+
+        return results
 
     # =========================================================================
     # Utility Operations

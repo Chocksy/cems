@@ -40,13 +40,10 @@ class AnalyticsMixin:
         Returns:
             List of stale memory IDs
         """
-        self._ensure_initialized()
-        assert self._vectorstore is not None
-
         days = days or self.config.stale_days
-        return _run_async(
-            self._vectorstore.get_stale_memories(self.config.user_id, days)
-        )
+        if self._metadata:
+            return self._metadata.get_stale_memories(self.config.user_id, days)
+        return []
 
     def get_hot_memories(self: "CEMSMemory", threshold: int | None = None) -> list[str]:
         """Get frequently accessed memories.
@@ -57,8 +54,6 @@ class AnalyticsMixin:
         Returns:
             List of hot memory IDs
         """
-        # This requires a query on access_count
-        # For now, delegate to metadata store if available
         if self._metadata:
             threshold = threshold or self.config.hot_access_threshold
             return self._metadata.get_hot_memories(self.config.user_id, threshold)
@@ -91,30 +86,29 @@ class AnalyticsMixin:
         return []
 
     def promote_memory(self: "CEMSMemory", memory_id: str, boost: float = 0.1) -> None:
-        """Increase a memory's priority.
+        """Increase a memory's priority via metadata store.
 
         Args:
             memory_id: The memory ID
             boost: Priority boost amount
         """
-        self._ensure_initialized()
-        assert self._vectorstore is not None
+        if not self._metadata:
+            return
 
-        # Get current priority
-        mem = _run_async(self._vectorstore.get(memory_id))
-        if mem:
-            new_priority = min(mem.get("priority", 1.0) + boost, 2.0)
-            _run_async(
-                self._vectorstore.update(memory_id, priority=new_priority)
-            )
+        # Get current metadata and boost priority
+        batch = self._metadata.get_metadata_batch([memory_id])
+        meta = batch.get(memory_id)
+        if meta:
+            meta.priority = min(meta.priority + boost, 2.0)
+            self._metadata.save_metadata(meta)
 
     def archive_memory(self: "CEMSMemory", memory_id: str) -> None:
-        """Archive a memory (soft delete).
+        """Archive a memory by deleting its document.
+
+        In the document model, archiving is equivalent to deletion since
+        memory_documents has no archived column.
 
         Args:
             memory_id: The memory ID
         """
-        self._ensure_initialized()
-        assert self._vectorstore is not None
-
-        _run_async(self._vectorstore.update(memory_id, archived=True))
+        self.delete(memory_id, hard=True)

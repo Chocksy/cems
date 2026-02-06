@@ -12,7 +12,6 @@ from cems.models import MemoryMetadata, MemoryScope
 if TYPE_CHECKING:
     from cems.db.metadata_store import PostgresMetadataStore
     from cems.memory.core import CEMSMemory
-    from cems.vectorstore import PgVectorStore
 
 logger = logging.getLogger(__name__)
 
@@ -40,19 +39,19 @@ class MetadataMixin:
         self: "CEMSMemory",
         scope: Literal["personal", "shared", "both"] = "both",
     ) -> dict[str, int]:
-        """Async version of get_category_counts()."""
+        """Async version of get_category_counts(). Reads from DocumentStore."""
         await self._ensure_initialized_async()
-        assert self._vectorstore is not None
 
         user_id = self.config.user_id
+        doc_store = await self._ensure_document_store()
 
-        return await self._vectorstore.get_category_counts(
+        return await doc_store.get_document_category_counts(
             user_id=user_id,
             scope=scope if scope != "both" else None,
         )
 
     def get_metadata(self: "CEMSMemory", memory_id: str) -> MemoryMetadata | None:
-        """Get extended metadata for a memory.
+        """Get extended metadata for a memory from DocumentStore.
 
         Args:
             memory_id: The memory ID
@@ -60,64 +59,38 @@ class MetadataMixin:
         Returns:
             MemoryMetadata or None
         """
-        self._ensure_initialized()
-        assert self._vectorstore is not None
-
-        mem = _run_async(self._vectorstore.get(memory_id))
-        if not mem:
-            return None
-
-        return MemoryMetadata(
-            memory_id=mem["id"],
-            user_id=mem.get("user_id", self.config.user_id),
-            scope=MemoryScope(mem.get("scope", "personal")),
-            category=mem.get("category", "general"),
-            source=mem.get("source"),
-            source_ref=mem.get("source_ref"),
-            tags=mem.get("tags", []),
-            priority=mem.get("priority", 1.0),
-            pinned=mem.get("pinned", False),
-            pin_reason=mem.get("pin_reason"),
-            archived=mem.get("archived", False),
-            access_count=mem.get("access_count", 0),
-            created_at=mem.get("created_at", datetime.now(UTC)),
-            updated_at=mem.get("updated_at", datetime.now(UTC)),
-            last_accessed=mem.get("last_accessed", datetime.now(UTC)),
-            expires_at=mem.get("expires_at"),
-        )
+        return _run_async(self.get_metadata_async(memory_id))
 
     async def get_metadata_async(self: "CEMSMemory", memory_id: str) -> MemoryMetadata | None:
-        """Async version of get_metadata for use in async contexts."""
-        await self._ensure_initialized_async()
-        assert self._vectorstore is not None
-
-        mem = await self._vectorstore.get(memory_id)
-        if not mem:
+        """Async get_metadata from DocumentStore."""
+        doc_store = await self._ensure_document_store()
+        doc = await doc_store.get_document(memory_id)
+        if not doc:
             return None
 
         return MemoryMetadata(
-            memory_id=mem["id"],
-            user_id=mem.get("user_id", self.config.user_id),
-            scope=MemoryScope(mem.get("scope", "personal")),
-            category=mem.get("category", "general"),
-            source=mem.get("source"),
-            source_ref=mem.get("source_ref"),
-            tags=mem.get("tags", []),
-            priority=mem.get("priority", 1.0),
-            pinned=mem.get("pinned", False),
-            pin_reason=mem.get("pin_reason"),
-            archived=mem.get("archived", False),
-            access_count=mem.get("access_count", 0),
-            created_at=mem.get("created_at", datetime.now(UTC)),
-            updated_at=mem.get("updated_at", datetime.now(UTC)),
-            last_accessed=mem.get("last_accessed", datetime.now(UTC)),
-            expires_at=mem.get("expires_at"),
+            memory_id=doc["id"],
+            user_id=doc.get("user_id", self.config.user_id),
+            scope=MemoryScope(doc.get("scope", "personal")),
+            category=doc.get("category", "general"),
+            source=doc.get("source"),
+            source_ref=doc.get("source_ref"),
+            tags=doc.get("tags", []),
+            priority=1.0,
+            pinned=False,
+            pin_reason=None,
+            archived=False,
+            access_count=0,
+            created_at=doc.get("created_at", datetime.now(UTC)),
+            updated_at=doc.get("updated_at", datetime.now(UTC)),
+            last_accessed=doc.get("updated_at", datetime.now(UTC)),
+            expires_at=None,
         )
 
     def get_category_counts(
         self: "CEMSMemory", scope: Literal["personal", "shared"] | None = None
     ) -> dict[str, int]:
-        """Get memory counts grouped by category.
+        """Get document counts grouped by category.
 
         Args:
             scope: Optional filter by scope
@@ -125,23 +98,18 @@ class MetadataMixin:
         Returns:
             Dict mapping category name to count
         """
-        self._ensure_initialized()
-        assert self._vectorstore is not None
+        async def _get():
+            doc_store = await self._ensure_document_store()
+            return await doc_store.get_document_category_counts(
+                self.config.user_id, scope
+            )
 
-        return _run_async(
-            self._vectorstore.get_category_counts(self.config.user_id, scope)
-        )
+        return _run_async(_get())
 
     @property
     def metadata_store(self: "CEMSMemory") -> "PostgresMetadataStore":
         """Access the metadata store directly for maintenance operations."""
         return self._metadata
-
-    @property
-    def vectorstore(self: "CEMSMemory") -> "PgVectorStore":
-        """Access the underlying vectorstore instance."""
-        self._ensure_initialized()
-        return self._vectorstore
 
     def get_all_categories(
         self: "CEMSMemory",
