@@ -61,7 +61,7 @@ def get_project_id(cwd: str) -> str | None:
                 # HTTPS: https://github.com/org/repo.git -> org/repo
                 match = re.search(r"[:/]([^/]+/[^/]+?)(?:\.git)?$", url)
             if match:
-                return match.group(1).rstrip('.git')
+                return match.group(1).removesuffix('.git')
     except (subprocess.TimeoutExpired, FileNotFoundError):
         pass
     return None

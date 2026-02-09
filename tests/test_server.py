@@ -757,3 +757,149 @@ class TestToolLearningEndpoint:
         )
 
         assert response.status_code == 401
+
+
+class TestLogShownEndpoint:
+    """Tests for /api/memory/log-shown endpoint."""
+
+    @patch("cems.db.database.is_database_initialized", return_value=True)
+    @patch("cems.db.database.get_database")
+    @patch.object(memory_handlers, "get_memory")
+    def test_log_shown_increments_count(self, mock_get_memory, mock_db, mock_is_db, mock_memory, mock_user):
+        """Test POST /api/memory/log-shown increments shown_count."""
+        mock_doc_store = MagicMock()
+        mock_doc_store.increment_shown_count = AsyncMock(return_value=3)
+        mock_memory._ensure_document_store = AsyncMock(return_value=mock_doc_store)
+        mock_get_memory.return_value = mock_memory
+
+        mock_session = MagicMock()
+        mock_user_service = MagicMock()
+        mock_user_service.get_user_by_api_key.return_value = mock_user
+        mock_db.return_value.session.return_value.__enter__ = MagicMock(return_value=mock_session)
+        mock_db.return_value.session.return_value.__exit__ = MagicMock(return_value=False)
+
+        with patch("cems.admin.services.UserService", return_value=mock_user_service):
+            from cems.server import create_http_app
+            app = create_http_app()
+            client = TestClient(app)
+
+            response = client.post(
+                "/api/memory/log-shown",
+                json={"memory_ids": ["id-1", "id-2", "id-3"]},
+                headers={"Authorization": "Bearer test-api-key"}
+            )
+
+            assert response.status_code == 200
+            data = response.json()
+            assert data["success"] is True
+            assert data["updated"] == 3
+            mock_doc_store.increment_shown_count.assert_called_once_with(["id-1", "id-2", "id-3"])
+
+    @patch("cems.db.database.is_database_initialized", return_value=True)
+    @patch("cems.db.database.get_database")
+    @patch.object(memory_handlers, "get_memory")
+    def test_log_shown_empty_ids(self, mock_get_memory, mock_db, mock_is_db, mock_memory, mock_user):
+        """Test POST /api/memory/log-shown with empty array returns 0."""
+        mock_get_memory.return_value = mock_memory
+
+        mock_session = MagicMock()
+        mock_user_service = MagicMock()
+        mock_user_service.get_user_by_api_key.return_value = mock_user
+        mock_db.return_value.session.return_value.__enter__ = MagicMock(return_value=mock_session)
+        mock_db.return_value.session.return_value.__exit__ = MagicMock(return_value=False)
+
+        with patch("cems.admin.services.UserService", return_value=mock_user_service):
+            from cems.server import create_http_app
+            app = create_http_app()
+            client = TestClient(app)
+
+            response = client.post(
+                "/api/memory/log-shown",
+                json={"memory_ids": []},
+                headers={"Authorization": "Bearer test-api-key"}
+            )
+
+            assert response.status_code == 200
+            data = response.json()
+            assert data["success"] is True
+            assert data["updated"] == 0
+
+    @patch("cems.db.database.is_database_initialized", return_value=True)
+    def test_log_shown_requires_auth(self, mock_is_db):
+        """Test POST /api/memory/log-shown requires authentication."""
+        from cems.server import create_http_app
+        app = create_http_app()
+        client = TestClient(app)
+
+        response = client.post(
+            "/api/memory/log-shown",
+            json={"memory_ids": ["id-1"]}
+        )
+
+        assert response.status_code == 401
+
+
+class TestSoftDelete:
+    """Tests for soft-delete behavior."""
+
+    @patch("cems.db.database.is_database_initialized", return_value=True)
+    @patch("cems.db.database.get_database")
+    @patch.object(memory_handlers, "get_memory")
+    def test_forget_soft_delete_default(self, mock_get_memory, mock_db, mock_is_db, mock_memory, mock_user):
+        """Test POST /api/memory/forget defaults to soft-delete (archived)."""
+        mock_get_memory.return_value = mock_memory
+
+        mock_session = MagicMock()
+        mock_user_service = MagicMock()
+        mock_user_service.get_user_by_api_key.return_value = mock_user
+        mock_db.return_value.session.return_value.__enter__ = MagicMock(return_value=mock_session)
+        mock_db.return_value.session.return_value.__exit__ = MagicMock(return_value=False)
+
+        with patch("cems.admin.services.UserService", return_value=mock_user_service):
+            from cems.server import create_http_app
+            app = create_http_app()
+            client = TestClient(app)
+
+            response = client.post(
+                "/api/memory/forget",
+                json={"memory_id": "mem-123"},
+                headers={"Authorization": "Bearer test-api-key"}
+            )
+
+            assert response.status_code == 200
+            data = response.json()
+            assert data["success"] is True
+            assert "archived" in data["message"]
+            # Verify delete_async was called with hard=False
+            mock_memory.delete_async.assert_called_once_with("mem-123", hard=False)
+
+    @patch("cems.db.database.is_database_initialized", return_value=True)
+    @patch("cems.db.database.get_database")
+    @patch.object(memory_handlers, "get_memory")
+    def test_forget_hard_delete(self, mock_get_memory, mock_db, mock_is_db, mock_memory, mock_user):
+        """Test POST /api/memory/forget with hard_delete=true."""
+        mock_get_memory.return_value = mock_memory
+
+        mock_session = MagicMock()
+        mock_user_service = MagicMock()
+        mock_user_service.get_user_by_api_key.return_value = mock_user
+        mock_db.return_value.session.return_value.__enter__ = MagicMock(return_value=mock_session)
+        mock_db.return_value.session.return_value.__exit__ = MagicMock(return_value=False)
+
+        with patch("cems.admin.services.UserService", return_value=mock_user_service):
+            from cems.server import create_http_app
+            app = create_http_app()
+            client = TestClient(app)
+
+            response = client.post(
+                "/api/memory/forget",
+                json={"memory_id": "mem-123", "hard_delete": True},
+                headers={"Authorization": "Bearer test-api-key"}
+            )
+
+            assert response.status_code == 200
+            data = response.json()
+            assert data["success"] is True
+            assert "deleted" in data["message"]
+            # Verify delete_async was called with hard=True
+            mock_memory.delete_async.assert_called_once_with("mem-123", hard=True)

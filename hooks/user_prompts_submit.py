@@ -21,7 +21,6 @@ Configuration (environment variables):
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import re
@@ -40,7 +39,16 @@ def extract_intent(prompt: str) -> str:
     """
     Extract the INTENT from user prompt - what they're actually asking about.
     Removes meta-language to get core topic.
+
+    For long prompts (>200 chars after stripping), falls back to keyword
+    extraction to avoid sending noisy multi-sentence queries to the
+    embedding model.
     """
+    # Strip -u flag before processing
+    clean_prompt = prompt.rstrip()
+    if clean_prompt.endswith('-u'):
+        clean_prompt = clean_prompt[:-2].rstrip()
+
     # Meta-phrases to remove
     meta_patterns = [
         r'^(can you|could you|would you|please|help me|i want to|i need to|let\'s|lets)\s+',
@@ -50,7 +58,7 @@ def extract_intent(prompt: str) -> str:
         r'\?$',
     ]
 
-    intent = prompt.strip().lower()
+    intent = clean_prompt.strip().lower()
 
     for pattern in meta_patterns:
         intent = re.sub(pattern, '', intent, flags=re.IGNORECASE)
@@ -59,7 +67,12 @@ def extract_intent(prompt: str) -> str:
 
     # If too short, extract keywords
     if len(intent) < 5:
-        return extract_keywords(prompt)
+        return extract_keywords(clean_prompt)
+
+    # If still too long, extract keywords instead — long intents produce
+    # noisy embeddings that return irrelevant results
+    if len(intent) > 200:
+        return extract_keywords(clean_prompt)
 
     return intent
 
@@ -113,16 +126,16 @@ def get_project_id(cwd: str) -> str | None:
                 # HTTPS: https://github.com/org/repo.git → org/repo
                 match = re.search(r"[:/]([^/]+/[^/]+?)(?:\.git)?$", url)
             if match:
-                return match.group(1).rstrip('.git')
+                return match.group(1).removesuffix('.git')
     except (subprocess.TimeoutExpired, FileNotFoundError):
         pass
     return None
 
 
-def search_cems(query: str, project: str | None = None) -> str | None:
+def search_cems(query: str, project: str | None = None) -> tuple[str | None, list[str]]:
     """
     Search CEMS for relevant memories.
-    Returns formatted string or None if search fails.
+    Returns (formatted_string, memory_ids) tuple.
 
     Args:
         query: Search query string
@@ -131,15 +144,15 @@ def search_cems(query: str, project: str | None = None) -> str | None:
     Note: No limit imposed here - the API handles relevance filtering and limits.
     """
     if not CEMS_API_URL or not CEMS_API_KEY:
-        return None
+        return None, []
 
     if not query or len(query) < 3:
-        return None
+        return None, []
 
     try:
         payload = {"query": query, "scope": "both"}
         if project:
-            payload["project"] = project  # Will filter/boost by source_ref prefix
+            payload["project"] = project  # Boosts same-project memories via source_ref scoring
 
         response = httpx.post(
             f"{CEMS_API_URL}/api/memory/search",
@@ -149,28 +162,52 @@ def search_cems(query: str, project: str | None = None) -> str | None:
         )
 
         if response.status_code != 200:
-            return None
+            return None, []
 
         data = response.json()
         if not data.get("success") or not data.get("results"):
-            return None
+            return None, []
 
         results = data["results"]
         if not results:
-            return None
+            return None, []
 
-        # Format results for Claude - use whatever the API returns
+        # Format results for Claude and collect memory IDs
         formatted = []
+        memory_ids = []
         for i, r in enumerate(results, 1):
             content = r.get("content", r.get("memory", ""))
             category = r.get("category", "general")
-            mem_id = r.get("memory_id", r.get("id", ""))[:8] if r.get("memory_id") or r.get("id") else ""
-            formatted.append(f"{i}. [{category}] {content} (id: {mem_id})")
+            mem_id = r.get("memory_id", r.get("id", ""))
+            short_id = mem_id[:8] if mem_id else ""
+            formatted.append(f"{i}. [{category}] {content} (id: {short_id})")
+            if mem_id:
+                memory_ids.append(mem_id)
 
-        return "\n".join(formatted)
+        return "\n".join(formatted), memory_ids
 
     except (httpx.RequestError, httpx.TimeoutException, json.JSONDecodeError):
-        return None
+        return None, []
+
+
+def log_shown_memories(memory_ids: list[str]) -> None:
+    """Fire-and-forget: log that memories were shown to the user.
+
+    Calls /api/memory/log-shown to increment shown_count and update last_shown_at.
+    Failures are silently ignored (non-critical telemetry).
+    """
+    if not memory_ids or not CEMS_API_URL or not CEMS_API_KEY:
+        return
+
+    try:
+        httpx.post(
+            f"{CEMS_API_URL}/api/memory/log-shown",
+            json={"memory_ids": memory_ids},
+            headers={"Authorization": f"Bearer {CEMS_API_KEY}"},
+            timeout=2.0,
+        )
+    except (httpx.RequestError, httpx.TimeoutException):
+        pass
 
 
 # =============================================================================
@@ -352,6 +389,11 @@ def populate_gate_cache(project: str | None = None) -> int:
     # Fetch gate rules from CEMS
     rules = search_gate_rules(project)
 
+    # If server returned empty AND we have an existing cache, keep the old cache
+    # rather than overwriting with nothing (protects against temporary outages)
+    if not rules and cache_path.exists():
+        return 0
+
     # Extract patterns from rules
     # New endpoint format has content/tags/source_ref at top level
     patterns = []
@@ -379,8 +421,15 @@ def output_result(text: str, is_cursor: bool):
         # Cursor expects JSON output with systemPrompt field
         print(json.dumps({"systemPrompt": text}))
     else:
-        # Claude Code CLI accepts plain text
-        print(text)
+        # Claude Code CLI: use hookSpecificOutput JSON format for reliable context injection
+        # Plain text output has known issues where it may not reliably reach Claude's context.
+        # JSON additionalContext format matches what SessionStart uses and is consistently parsed.
+        print(json.dumps({
+            "hookSpecificOutput": {
+                "hookEventName": "UserPromptSubmit",
+                "additionalContext": text
+            }
+        }))
 
 
 def main():
@@ -420,7 +469,7 @@ def main():
         # 1. Memory awareness - search CEMS
         intent = extract_intent(prompt)
         if intent and len(intent) >= 3:
-            memories = search_cems(intent, project=project)
+            memories, memory_ids = search_cems(intent, project=project)
             if memories:
                 memory_context = f"""<memory-recall>
 RELEVANT MEMORIES found for "{intent}":
@@ -431,6 +480,9 @@ If these memories are helpful to the current task, you may reference them.
 Use /recall "{intent}" for more detailed results.
 </memory-recall>"""
                 output_parts.append(memory_context)
+
+                # Log that these memories were shown (fire-and-forget)
+                log_shown_memories(memory_ids)
 
         # 2. Ultrathink flag
         if prompt.rstrip().endswith('-u'):

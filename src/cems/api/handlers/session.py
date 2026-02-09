@@ -42,6 +42,7 @@ async def api_session_analyze(request: Request):
         session_id = body.get("session_id", "unknown")
         working_dir = body.get("working_dir")
         tool_summary = body.get("tool_summary")
+        source_ref = body.get("source_ref")  # e.g., "project:org/repo"
 
         # Debug logging to help diagnose transcript issues
         transcript_preview = transcript[:500] if isinstance(transcript, str) else str(transcript)[:500]
@@ -88,6 +89,7 @@ async def api_session_analyze(request: Request):
                     category=category,
                     tags=["session-learning", learning_type.lower()],
                     infer=False,
+                    source_ref=source_ref,
                 )
 
                 # Extract memory ID

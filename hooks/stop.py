@@ -18,6 +18,7 @@ This hook runs when Claude stops and:
 import argparse
 import json
 import os
+import re
 import sys
 import random
 import subprocess
@@ -36,6 +37,28 @@ from utils.constants import ensure_session_log_dir
 # CEMS configuration
 CEMS_API_URL = os.getenv("CEMS_API_URL", "https://cems.chocksy.com")
 CEMS_API_KEY = os.getenv("CEMS_API_KEY", "")
+
+
+def get_project_id(cwd: str) -> str | None:
+    """Extract project ID from git remote (e.g., 'org/repo')."""
+    if not cwd:
+        return None
+    try:
+        result = subprocess.run(
+            ["git", "-C", cwd, "remote", "get-url", "origin"],
+            capture_output=True, text=True, timeout=2
+        )
+        if result.returncode == 0:
+            url = result.stdout.strip()
+            if url.startswith("git@"):
+                match = re.search(r":(.+?)(?:\.git)?$", url)
+            else:
+                match = re.search(r"[:/]([^/]+/[^/]+?)(?:\.git)?$", url)
+            if match:
+                return match.group(1).removesuffix('.git')
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        pass
+    return None
 
 
 def get_completion_messages():
@@ -139,6 +162,7 @@ def analyze_session(
     transcript: list[dict],
     session_id: str,
     working_dir: str | None = None,
+    project: str | None = None,
 ) -> bool:
     """Send transcript to CEMS API for analysis.
 
@@ -151,11 +175,15 @@ def analyze_session(
         import urllib.request
         import urllib.error
 
-        data = json.dumps({
+        payload = {
             "transcript": transcript,
             "session_id": session_id,
             "working_dir": working_dir,
-        }).encode('utf-8')
+        }
+        if project:
+            payload["source_ref"] = f"project:{project}"
+
+        data = json.dumps(payload).encode('utf-8')
 
         req = urllib.request.Request(
             f"{CEMS_API_URL}/api/session/analyze",
@@ -248,10 +276,12 @@ def main():
         if transcript_path:
             transcript = read_transcript(transcript_path)
             if transcript and len(transcript) > 2:  # Skip very short sessions
+                project = get_project_id(cwd)
                 analyze_session(
                     transcript=transcript,
                     session_id=session_id,
                     working_dir=cwd,
+                    project=project,
                 )
 
         # Announce completion via TTS

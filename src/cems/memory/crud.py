@@ -156,30 +156,36 @@ class CRUDMixin:
 
         Args:
             memory_id: The memory ID to delete
-            hard: Ignored (document model always hard-deletes)
+            hard: If True, permanently removes. If False, soft-deletes (sets deleted_at).
 
         Returns:
             Delete result dict
         """
-        return _run_async(self._delete_async_internal(memory_id))
+        return _run_async(self._delete_async_internal(memory_id, hard=hard))
 
     async def _delete_async_internal(
-        self: "CEMSMemory", memory_id: str
+        self: "CEMSMemory", memory_id: str, hard: bool = False
     ) -> dict[str, Any]:
         """Internal async delete with result dict."""
         doc_store = await self._ensure_document_store()
-        success = await doc_store.delete_document(memory_id)
+        success = await doc_store.delete_document(memory_id, hard=hard)
 
+        action = "deleted" if hard else "archived"
         if success:
-            return {"status": "deleted", "memory_id": memory_id}
+            return {"status": action, "memory_id": memory_id}
         return {"status": "not_found", "memory_id": memory_id}
 
     async def delete_async(
         self: "CEMSMemory", memory_id: str, hard: bool = False
     ) -> None:
-        """Async delete via DocumentStore."""
+        """Async delete via DocumentStore.
+
+        Args:
+            memory_id: The memory ID to delete
+            hard: If True, permanently removes. If False, soft-deletes.
+        """
         doc_store = await self._ensure_document_store()
-        await doc_store.delete_document(memory_id)
+        await doc_store.delete_document(memory_id, hard=hard)
 
     def forget(self: "CEMSMemory", memory_id: str) -> dict[str, Any]:
         """Forget (delete) a memory.

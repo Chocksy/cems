@@ -33,7 +33,8 @@ logger = logging.getLogger(__name__)
 # Column definitions for documents
 DOCUMENT_COLUMNS = """
     id, user_id, team_id, scope, category, title, source, source_ref,
-    tags, content, content_hash, content_bytes, created_at, updated_at
+    tags, content, content_hash, content_bytes, created_at, updated_at,
+    deleted_at, shown_count, last_shown_at
 """
 
 # Column definitions for chunks (with document join)
@@ -207,11 +208,11 @@ class DocumentStore:
         doc_bytes = len(content.encode("utf-8"))
 
         async with pool.acquire() as conn:
-            # Check for existing document with same hash for this user
+            # Check for existing document with same hash for this user (non-deleted only)
             existing = await conn.fetchrow(
                 """
                 SELECT id FROM memory_documents
-                WHERE content_hash = $1 AND user_id = $2
+                WHERE content_hash = $1 AND user_id = $2 AND deleted_at IS NULL
                 """,
                 doc_hash,
                 user_uuid,
@@ -283,15 +284,18 @@ class DocumentStore:
             "content_bytes": row["content_bytes"],
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],
+            "deleted_at": row["deleted_at"],
+            "shown_count": row["shown_count"],
+            "last_shown_at": row["last_shown_at"],
         }
 
     async def get_document(self, document_id: str) -> dict[str, Any] | None:
-        """Get a document by ID."""
+        """Get a document by ID (excludes soft-deleted)."""
         pool = await self._get_pool()
 
         async with pool.acquire() as conn:
             row = await conn.fetchrow(
-                f"SELECT {DOCUMENT_COLUMNS} FROM memory_documents WHERE id = $1",
+                f"SELECT {DOCUMENT_COLUMNS} FROM memory_documents WHERE id = $1 AND deleted_at IS NULL",
                 UUID(document_id),
             )
 
@@ -300,17 +304,27 @@ class DocumentStore:
 
         return self._doc_row_to_dict(row)
 
-    async def delete_document(self, document_id: str) -> bool:
-        """Delete a document and its chunks."""
+    async def delete_document(self, document_id: str, hard: bool = False) -> bool:
+        """Delete a document (soft by default, hard if specified).
+
+        Soft delete sets deleted_at timestamp; hard delete removes permanently.
+        Chunks are cascade-deleted on hard delete, hidden by JOIN filter on soft.
+        """
         pool = await self._get_pool()
 
         async with pool.acquire() as conn:
-            result = await conn.execute(
-                "DELETE FROM memory_documents WHERE id = $1",
-                UUID(document_id),
-            )
-
-        return result == "DELETE 1"
+            if hard:
+                result = await conn.execute(
+                    "DELETE FROM memory_documents WHERE id = $1",
+                    UUID(document_id),
+                )
+                return result == "DELETE 1"
+            else:
+                result = await conn.execute(
+                    "UPDATE memory_documents SET deleted_at = NOW() WHERE id = $1 AND deleted_at IS NULL",
+                    UUID(document_id),
+                )
+                return result == "UPDATE 1"
 
     async def delete_by_source_ref(self, source_ref: str, user_id: str) -> int:
         """Delete all documents with a given source_ref for a user.
@@ -445,6 +459,7 @@ class DocumentStore:
             query = f"""
                 SELECT {DOCUMENT_COLUMNS} FROM memory_documents
                 WHERE user_id = $1 AND category = $2 AND source_ref LIKE $3
+                  AND deleted_at IS NULL
                 ORDER BY created_at DESC
                 LIMIT $4
             """
@@ -454,6 +469,7 @@ class DocumentStore:
             query = f"""
                 SELECT {DOCUMENT_COLUMNS} FROM memory_documents
                 WHERE user_id = $1 AND category = $2
+                  AND deleted_at IS NULL
                 ORDER BY created_at DESC
                 LIMIT $3
             """
@@ -489,6 +505,7 @@ class DocumentStore:
                 WHERE user_id = $1
                   AND created_at > NOW() - INTERVAL '1 hour' * $2
                   AND NOT (category = ANY($3))
+                  AND deleted_at IS NULL
                 ORDER BY created_at DESC
                 LIMIT $4
             """
@@ -499,6 +516,7 @@ class DocumentStore:
                 SELECT {DOCUMENT_COLUMNS} FROM memory_documents
                 WHERE user_id = $1
                   AND created_at > NOW() - INTERVAL '1 hour' * $2
+                  AND deleted_at IS NULL
                 ORDER BY created_at DESC
                 LIMIT $3
             """
@@ -530,6 +548,7 @@ class DocumentStore:
             query = f"""
                 SELECT {DOCUMENT_COLUMNS} FROM memory_documents
                 WHERE user_id = $1 AND scope = $2
+                  AND deleted_at IS NULL
                 ORDER BY created_at DESC
                 LIMIT $3
             """
@@ -539,6 +558,7 @@ class DocumentStore:
             query = f"""
                 SELECT {DOCUMENT_COLUMNS} FROM memory_documents
                 WHERE user_id = $1
+                  AND deleted_at IS NULL
                 ORDER BY created_at DESC
                 LIMIT $2
             """
@@ -568,7 +588,7 @@ class DocumentStore:
             query = """
                 SELECT category, COUNT(*) as count
                 FROM memory_documents
-                WHERE user_id = $1 AND scope = $2
+                WHERE user_id = $1 AND scope = $2 AND deleted_at IS NULL
                 GROUP BY category
             """
             async with pool.acquire() as conn:
@@ -577,7 +597,7 @@ class DocumentStore:
             query = """
                 SELECT category, COUNT(*) as count
                 FROM memory_documents
-                WHERE user_id = $1
+                WHERE user_id = $1 AND deleted_at IS NULL
                 GROUP BY category
             """
             async with pool.acquire() as conn:
@@ -607,6 +627,7 @@ class DocumentStore:
         pool = await self._get_pool()
 
         fb = FilterBuilder(start_idx=3)
+        fb.add("d.deleted_at IS NULL")
         if user_id:
             fb.add_param("d.user_id = ${}", UUID(user_id))
         if team_id and scope in ("shared", "both"):
@@ -653,6 +674,7 @@ class DocumentStore:
         pool = await self._get_pool()
 
         fb = FilterBuilder(start_idx=4)
+        fb.add("d.deleted_at IS NULL")
         if user_id:
             fb.add_param("d.user_id = ${}", UUID(user_id))
         if team_id and scope in ("shared", "both"):
@@ -737,7 +759,7 @@ class DocumentStore:
         pool = await self._get_pool()
 
         fb = FilterBuilder(start_idx=3)
-        # Filter will be built with OR-based tsquery from CTE
+        fb.add("d.deleted_at IS NULL")
         if user_id:
             fb.add_param("d.user_id = ${}", UUID(user_id))
         if team_id and scope in ("shared", "both"):
@@ -844,19 +866,19 @@ class DocumentStore:
     # =========================================================================
 
     async def get_document_count(self, user_id: str) -> int:
-        """Get total document count for a user."""
+        """Get total document count for a user (excludes soft-deleted)."""
         pool = await self._get_pool()
 
         async with pool.acquire() as conn:
             result = await conn.fetchval(
-                "SELECT COUNT(*) FROM memory_documents WHERE user_id = $1",
+                "SELECT COUNT(*) FROM memory_documents WHERE user_id = $1 AND deleted_at IS NULL",
                 UUID(user_id),
             )
 
         return result or 0
 
     async def get_chunk_count(self, user_id: str) -> int:
-        """Get total chunk count for a user."""
+        """Get total chunk count for a user (excludes soft-deleted documents)."""
         pool = await self._get_pool()
 
         async with pool.acquire() as conn:
@@ -864,12 +886,48 @@ class DocumentStore:
                 """
                 SELECT COUNT(*) FROM memory_chunks c
                 JOIN memory_documents d ON c.document_id = d.id
-                WHERE d.user_id = $1
+                WHERE d.user_id = $1 AND d.deleted_at IS NULL
                 """,
                 UUID(user_id),
             )
 
         return result or 0
+
+    # =========================================================================
+    # Feedback Operations
+    # =========================================================================
+
+    async def increment_shown_count(self, document_ids: list[str]) -> int:
+        """Increment shown_count and update last_shown_at for documents.
+
+        Called when memories are surfaced in search results to track usage.
+
+        Args:
+            document_ids: List of document IDs that were shown
+
+        Returns:
+            Number of documents updated
+        """
+        if not document_ids:
+            return 0
+
+        pool = await self._get_pool()
+        uuids = [UUID(did) for did in document_ids]
+
+        async with pool.acquire() as conn:
+            result = await conn.execute(
+                """
+                UPDATE memory_documents
+                SET shown_count = shown_count + 1,
+                    last_shown_at = NOW()
+                WHERE id = ANY($1) AND deleted_at IS NULL
+                """,
+                uuids,
+            )
+
+        count = int(result.split()[1]) if result else 0
+        logger.debug(f"Incremented shown_count for {count} documents")
+        return count
 
     # =========================================================================
     # Batch Operations
@@ -931,11 +989,11 @@ class DocumentStore:
                     doc_hash = content_hash(content)
                     doc_bytes = len(content.encode("utf-8"))
 
-                    # Check for existing document with same hash
+                    # Check for existing document with same hash (non-deleted only)
                     existing = await conn.fetchrow(
                         """
                         SELECT id FROM memory_documents
-                        WHERE content_hash = $1 AND user_id = $2
+                        WHERE content_hash = $1 AND user_id = $2 AND deleted_at IS NULL
                         """,
                         doc_hash,
                         user_uuid,

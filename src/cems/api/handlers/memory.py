@@ -752,6 +752,40 @@ async def api_memory_summary_personal(request: Request):
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
+async def api_memory_log_shown(request: Request):
+    """REST API endpoint to log that memories were shown to the user.
+
+    POST /api/memory/log-shown
+    Body: {"memory_ids": ["id1", "id2", ...]}
+
+    Increments shown_count and updates last_shown_at for each memory.
+    Called by the UserPromptSubmit hook after injecting search results.
+    """
+    try:
+        body = await request.json()
+        memory_ids = body.get("memory_ids", [])
+        if not memory_ids:
+            return JSONResponse({"success": True, "updated": 0})
+
+        if not isinstance(memory_ids, list):
+            return JSONResponse({"error": "memory_ids must be an array"}, status_code=400)
+
+        memory = get_memory()
+        doc_store = await memory._ensure_document_store()
+
+        updated = await doc_store.increment_shown_count(memory_ids)
+
+        logger.info(f"[API] Log shown: {updated}/{len(memory_ids)} memories updated")
+
+        return JSONResponse({
+            "success": True,
+            "updated": updated,
+        })
+    except Exception as e:
+        logger.error(f"API memory_log_shown error: {e}")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
 async def api_memory_summary_shared(request: Request):
     """REST API endpoint to get shared memory summary.
 
