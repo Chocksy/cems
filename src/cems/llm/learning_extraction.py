@@ -224,7 +224,7 @@ If truly nothing useful, return: []"""
             prompt=prompt,
             system=system_prompt,
             temperature=0.3,  # Slightly higher for more creative extraction
-            model=model or "openai/gpt-4o-mini",  # Fast, reliable, supports system prompts
+            model=model or "x-ai/grok-4.1-fast",
         )
 
         # Parse JSON response
@@ -487,7 +487,7 @@ Return ONLY valid JSON (object or null)."""
             prompt=prompt,
             system=system_prompt,
             temperature=0.2,  # Lower temperature for consistency
-            model=model or "openai/gpt-4o-mini",
+            model=model or "x-ai/grok-4.1-fast",
         )
 
         # Parse response
