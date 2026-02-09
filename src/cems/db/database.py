@@ -197,6 +197,61 @@ def run_migrations() -> None:
             END $$;
             """,
         ),
+        # Add soft-delete and feedback tracking to memory_documents
+        (
+            "soft_delete_feedback_v1",
+            """
+            DO $$
+            BEGIN
+                -- Add deleted_at for soft-delete
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name = 'memory_documents' AND column_name = 'deleted_at'
+                ) THEN
+                    ALTER TABLE memory_documents ADD COLUMN deleted_at TIMESTAMP WITH TIME ZONE;
+                    RAISE NOTICE 'Added memory_documents.deleted_at';
+                END IF;
+
+                -- Add shown_count for feedback tracking
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name = 'memory_documents' AND column_name = 'shown_count'
+                ) THEN
+                    ALTER TABLE memory_documents ADD COLUMN shown_count INT NOT NULL DEFAULT 0;
+                    RAISE NOTICE 'Added memory_documents.shown_count';
+                END IF;
+
+                -- Add last_shown_at for feedback tracking
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name = 'memory_documents' AND column_name = 'last_shown_at'
+                ) THEN
+                    ALTER TABLE memory_documents ADD COLUMN last_shown_at TIMESTAMP WITH TIME ZONE;
+                    RAISE NOTICE 'Added memory_documents.last_shown_at';
+                END IF;
+            END $$;
+            """,
+        ),
+        # Replace unique content_hash index with partial index (excludes soft-deleted)
+        (
+            "soft_delete_partial_index_v1",
+            """
+            DO $$
+            BEGIN
+                -- Only recreate if deleted_at column exists (migration above ran)
+                IF EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name = 'memory_documents' AND column_name = 'deleted_at'
+                ) THEN
+                    DROP INDEX IF EXISTS memory_documents_hash_user_idx;
+                    CREATE UNIQUE INDEX IF NOT EXISTS memory_documents_hash_user_idx
+                        ON memory_documents (content_hash, user_id)
+                        WHERE deleted_at IS NULL;
+                    RAISE NOTICE 'Recreated memory_documents_hash_user_idx as partial index';
+                END IF;
+            END $$;
+            """,
+        ),
     ]
 
     with db.session() as session:
