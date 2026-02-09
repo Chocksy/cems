@@ -74,14 +74,23 @@ async def api_tool_learning(request: Request):
         # Build tool context for learning extraction
         tool_context = f"Tool: {tool_name}\n"
         if tool_input:
-            if tool_name == "Edit" and "file_path" in tool_input:
+            if tool_name in ("Edit", "MultiEdit") and "file_path" in tool_input:
                 tool_context += f"File: {tool_input['file_path']}\n"
+                if "old_string" in tool_input:
+                    tool_context += f"Changed from: {str(tool_input['old_string'])[:300]}\n"
+                if "new_string" in tool_input:
+                    tool_context += f"Changed to: {str(tool_input['new_string'])[:300]}\n"
             elif tool_name == "Write" and "file_path" in tool_input:
                 tool_context += f"Created: {tool_input['file_path']}\n"
+                if "content" in tool_input:
+                    tool_context += f"Content preview: {str(tool_input['content'])[:300]}\n"
             elif tool_name == "Bash" and "command" in tool_input:
                 cmd = tool_input.get("command", "")[:200]
                 desc = tool_input.get("description", "")
                 tool_context += f"Command: {desc or cmd}\n"
+            elif tool_name == "Task":
+                if "prompt" in tool_input:
+                    tool_context += f"Task: {str(tool_input['prompt'])[:300]}\n"
         if tool_output:
             tool_context += f"Result: {tool_output[:500]}\n"
 

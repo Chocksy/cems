@@ -158,20 +158,14 @@ def extract_tool_output_summary(tool_response: dict) -> str:
         return ""
 
     if isinstance(tool_response, str):
-        return tool_response[:300]
+        return tool_response[:500]
 
-    # Handle dict responses
+    # Handle dict responses — always pass real output, not just "Success"
     if "output" in tool_response:
-        output = str(tool_response["output"]).strip()
-        # For successful operations, just note success
-        if "successfully" in output.lower():
-            return "Success"
-        return output[:300]
+        return str(tool_response["output"]).strip()[:500]
 
     if "content" in tool_response:
-        content = str(tool_response["content"]).strip()
-        lines = content.count("\n") + 1
-        return f"({lines} lines)"
+        return str(tool_response["content"]).strip()[:500]
 
     return ""
 
