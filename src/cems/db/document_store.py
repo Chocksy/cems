@@ -530,13 +530,17 @@ class DocumentStore:
         user_id: str,
         scope: str | None = None,
         limit: int = 1000,
+        offset: int = 0,
+        category: str | None = None,
     ) -> list[dict[str, Any]]:
-        """Get all documents for a user.
+        """Get all documents for a user with pagination and filtering.
 
         Args:
             user_id: User ID
             scope: Optional scope filter ("personal" or "shared")
             limit: Maximum results
+            offset: Number of rows to skip (for pagination)
+            category: Optional category filter
 
         Returns:
             List of document dicts
@@ -544,28 +548,72 @@ class DocumentStore:
         pool = await self._get_pool()
         user_uuid = UUID(user_id)
 
+        conditions = ["user_id = $1", "deleted_at IS NULL"]
+        params: list[Any] = [user_uuid]
+        idx = 2
+
         if scope:
-            query = f"""
-                SELECT {DOCUMENT_COLUMNS} FROM memory_documents
-                WHERE user_id = $1 AND scope = $2
-                  AND deleted_at IS NULL
-                ORDER BY created_at DESC
-                LIMIT $3
-            """
-            async with pool.acquire() as conn:
-                rows = await conn.fetch(query, user_uuid, scope, limit)
-        else:
-            query = f"""
-                SELECT {DOCUMENT_COLUMNS} FROM memory_documents
-                WHERE user_id = $1
-                  AND deleted_at IS NULL
-                ORDER BY created_at DESC
-                LIMIT $2
-            """
-            async with pool.acquire() as conn:
-                rows = await conn.fetch(query, user_uuid, limit)
+            conditions.append(f"scope = ${idx}")
+            params.append(scope)
+            idx += 1
+        if category:
+            conditions.append(f"category = ${idx}")
+            params.append(category)
+            idx += 1
+
+        where = " AND ".join(conditions)
+        query = f"""
+            SELECT {DOCUMENT_COLUMNS} FROM memory_documents
+            WHERE {where}
+            ORDER BY created_at DESC
+            LIMIT ${idx} OFFSET ${idx + 1}
+        """
+        params.extend([limit, offset])
+
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(query, *params)
 
         return [self._doc_row_to_dict(row) for row in rows]
+
+    async def count_documents(
+        self,
+        user_id: str,
+        scope: str | None = None,
+        category: str | None = None,
+    ) -> int:
+        """Count documents for a user with optional filters.
+
+        Args:
+            user_id: User ID
+            scope: Optional scope filter
+            category: Optional category filter
+
+        Returns:
+            Document count matching the filters
+        """
+        pool = await self._get_pool()
+        user_uuid = UUID(user_id)
+
+        conditions = ["user_id = $1", "deleted_at IS NULL"]
+        params: list[Any] = [user_uuid]
+        idx = 2
+
+        if scope:
+            conditions.append(f"scope = ${idx}")
+            params.append(scope)
+            idx += 1
+        if category:
+            conditions.append(f"category = ${idx}")
+            params.append(category)
+            idx += 1
+
+        where = " AND ".join(conditions)
+        query = f"SELECT COUNT(*) FROM memory_documents WHERE {where}"
+
+        async with pool.acquire() as conn:
+            result = await conn.fetchval(query, *params)
+
+        return result or 0
 
     async def get_document_category_counts(
         self,

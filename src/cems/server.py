@@ -38,6 +38,7 @@ from cems.api.handlers import (
     api_memory_add_batch,
     api_memory_forget,
     api_memory_gate_rules,
+    api_memory_list,
     api_memory_log_shown,
     api_memory_maintenance,
     api_memory_profile,
@@ -88,6 +89,10 @@ def create_http_app():
 
             # Skip middleware for admin routes (they handle their own auth)
             if request.url.path.startswith("/admin"):
+                return await call_next(request)
+
+            # Skip auth for dashboard static files (auth is handled client-side)
+            if request.url.path.startswith("/dashboard"):
                 return await call_next(request)
 
             # Get authorization header
@@ -166,6 +171,7 @@ def create_http_app():
         Route("/api/memory/log-shown", api_memory_log_shown, methods=["POST"]),
         Route("/api/memory/update", api_memory_update, methods=["POST"]),
         Route("/api/memory/maintenance", api_memory_maintenance, methods=["POST"]),
+        Route("/api/memory/list", api_memory_list, methods=["GET"]),
         Route("/api/memory/status", api_memory_status, methods=["GET"]),
         Route("/api/memory/gate-rules", api_memory_gate_rules, methods=["GET"]),
         Route("/api/memory/profile", api_memory_profile, methods=["GET"]),
@@ -181,6 +187,17 @@ def create_http_app():
         Route("/api/tool/learning", api_tool_learning, methods=["POST"]),
     ]
     logger.info("REST API routes enabled (/api/memory/*, /api/index/*, /api/session/*, /api/tool/*)")
+
+    # Mount dashboard static files
+    from pathlib import Path
+
+    from starlette.routing import Mount
+    from starlette.staticfiles import StaticFiles
+
+    dashboard_dir = Path(__file__).parent / "static" / "dashboard"
+    if dashboard_dir.exists():
+        routes.append(Mount("/dashboard", app=StaticFiles(directory=str(dashboard_dir), html=True)))
+        logger.info(f"Dashboard mounted at /dashboard (dir: {dashboard_dir})")
 
     # Add admin routes (always available in HTTP mode with database)
     from cems.admin.routes import admin_routes

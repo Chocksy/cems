@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CEMS Memory Dashboard</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="app">
+    <!-- Login -->
+    <div id="login-view" class="view">
+      <div class="login-card">
+        <h1>CEMS Dashboard</h1>
+        <p>Enter your API key to browse memories.</p>
+        <form id="login-form">
+          <input type="password" id="api-key-input" placeholder="Bearer API key" autocomplete="off" required>
+          <button type="submit">Connect</button>
+        </form>
+        <p id="login-error" class="error" hidden></p>
+      </div>
+    </div>
+
+    <!-- Dashboard -->
+    <div id="dashboard-view" class="view" hidden>
+      <header>
+        <div class="header-left">
+          <h1>CEMS Memories</h1>
+          <span id="total-badge" class="badge">0</span>
+        </div>
+        <div class="header-right">
+          <input type="search" id="search-input" placeholder="Search memories...">
+          <button id="logout-btn" title="Logout">Logout</button>
+        </div>
+      </header>
+
+      <!-- Filters -->
+      <div id="filters">
+        <button class="filter-pill active" data-category="">All</button>
+      </div>
+
+      <!-- Memory List -->
+      <div id="memory-list"></div>
+
+      <!-- Pagination -->
+      <div id="pagination" hidden>
+        <button id="prev-btn" disabled>Previous</button>
+        <span id="page-info"></span>
+        <button id="next-btn" disabled>Next</button>
+      </div>
+
+      <!-- Edit Modal -->
+      <div id="edit-modal" class="modal" hidden>
+        <div class="modal-content">
+          <div class="modal-header">
+            <h2>Edit Memory</h2>
+            <button class="modal-close">&times;</button>
+          </div>
+          <textarea id="edit-textarea"></textarea>
+          <div class="modal-actions">
+            <button id="edit-cancel" class="btn-secondary">Cancel</button>
+            <button id="edit-save" class="btn-primary">Save</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <script src="app.js"></script>
+</body>
+</html>

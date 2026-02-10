@@ -786,6 +786,93 @@ async def api_memory_log_shown(request: Request):
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
+async def api_memory_list(request: Request):
+    """REST API endpoint to list memories with pagination and filtering.
+
+    GET /api/memory/list?limit=50&offset=0&category=testing&scope=personal&q=search
+
+    Returns paginated results for browsing. If `q` is provided, uses semantic search
+    instead of listing.
+    """
+    try:
+        limit = min(int(request.query_params.get("limit", "50")), 200)
+        offset = int(request.query_params.get("offset", "0"))
+        category = request.query_params.get("category")
+        scope = request.query_params.get("scope")
+        q = request.query_params.get("q", "").strip()
+
+        memory = get_memory()
+        await memory._ensure_initialized_async()
+        doc_store = await memory._ensure_document_store()
+        user_id = memory.config.user_id
+
+        if q:
+            # Semantic search mode
+            results = await memory.search_async(q, scope=scope or "both", limit=limit)
+            serialized = []
+            for r in results:
+                d = r.model_dump(mode="json")
+                serialized.append({
+                    "id": d.get("document_id") or d.get("id", ""),
+                    "content": d.get("content", ""),
+                    "category": d.get("category", ""),
+                    "tags": d.get("tags", []),
+                    "scope": d.get("scope", ""),
+                    "source_ref": d.get("source_ref"),
+                    "created_at": d.get("created_at"),
+                    "shown_count": d.get("shown_count", 0),
+                    "score": d.get("score"),
+                })
+
+            return JSONResponse({
+                "success": True,
+                "results": serialized,
+                "total": len(serialized),
+                "offset": 0,
+                "limit": limit,
+                "mode": "search",
+            })
+
+        # Browse mode — paginated list
+        docs = await doc_store.get_all_documents(
+            user_id=user_id,
+            scope=scope,
+            limit=limit,
+            offset=offset,
+            category=category,
+        )
+        total = await doc_store.count_documents(
+            user_id=user_id,
+            scope=scope,
+            category=category,
+        )
+
+        results = []
+        for doc in docs:
+            results.append({
+                "id": doc["id"],
+                "content": doc["content"],
+                "category": doc["category"],
+                "tags": doc["tags"],
+                "scope": doc["scope"],
+                "source_ref": doc.get("source_ref"),
+                "created_at": str(doc["created_at"]) if doc.get("created_at") else None,
+                "shown_count": doc.get("shown_count", 0),
+            })
+
+        return JSONResponse({
+            "success": True,
+            "results": results,
+            "total": total,
+            "offset": offset,
+            "limit": limit,
+            "mode": "browse",
+        })
+    except Exception as e:
+        logger.error(f"API memory_list error: {e}", exc_info=True)
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
 async def api_memory_summary_shared(request: Request):
     """REST API endpoint to get shared memory summary.
 
