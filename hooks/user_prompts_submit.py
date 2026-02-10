@@ -30,9 +30,31 @@ from pathlib import Path
 
 import httpx
 
+sys.path.insert(0, str(Path(__file__).parent))
+from utils.hook_logger import log_hook_event
+from utils.transcript import read_last_assistant_message
+
 # CEMS configuration from environment (no defaults - set CEMS_API_URL and CEMS_API_KEY)
 CEMS_API_URL = os.getenv("CEMS_API_URL", "")
 CEMS_API_KEY = os.getenv("CEMS_API_KEY", "")
+
+CONFIRMATORY = re.compile(
+    r'^(yes|yeah|yep|yup|ok|okay|sure|go|do it|proceed|'
+    r'go ahead|go for it|sounds good|lgtm|ship it|'
+    r'yes please|confirmed|let\'s do it|approve)[\s!.]*$',
+    re.IGNORECASE,
+)
+
+
+def is_confirmatory(prompt: str) -> bool:
+    """Check if prompt is a short confirmatory response like 'yes' or 'go ahead'."""
+    clean = prompt.strip().rstrip('-u').strip()
+    if CONFIRMATORY.match(clean):
+        return True
+    # Very short non-question, non-slash prompts are also confirmatory
+    if len(clean) < 8 and '?' not in clean and not clean.startswith('/'):
+        return True
+    return False
 
 
 def extract_intent(prompt: str) -> str:
@@ -437,7 +459,12 @@ def main():
         # Read input from stdin
         input_data = json.load(sys.stdin)
         prompt = input_data.get('prompt', '')
+        session_id = input_data.get('session_id', '')
         cwd = input_data.get('cwd', '')
+
+        log_hook_event("UserPromptSubmit", session_id, {
+            "prompt_len": len(prompt),
+        }, input_data=input_data)
 
         # Detect if running in Cursor (vs Claude Code CLI)
         is_cursor = 'cursor_version' in input_data
@@ -446,11 +473,41 @@ def main():
         if os.environ.get('CLAUDE_AGENT_ID'):
             return
 
-        # Skip very short prompts
-        if len(prompt) < 15:
-            # Still check for -u flag
+        # Handle confirmatory prompts ("yes", "go ahead", etc.)
+        # Instead of skipping, derive search intent from what Claude proposed
+        if is_confirmatory(prompt):
+            output_parts = []
             if prompt.rstrip().endswith('-u'):
-                output_result("Use the maximum amount of ultrathink. Take all the time you need.", is_cursor)
+                output_parts.append("Use the maximum amount of ultrathink. Take all the time you need.")
+
+            # Derive search intent from what Claude just proposed
+            transcript_path = input_data.get('transcript_path', '')
+            if transcript_path:
+                assistant_text = read_last_assistant_message(transcript_path, max_chars=500)
+                if assistant_text:
+                    # Extract keywords from last 1-2 sentences (the proposal)
+                    sentences = re.split(r'[.!?]\s+', assistant_text.strip())
+                    proposal = ' '.join(sentences[-2:])
+                    intent = extract_keywords(proposal)
+                    if intent and len(intent) >= 3:
+                        project = get_project_id(cwd) if cwd else None
+                        memories, memory_ids = search_cems(intent, project=project)
+                        if memories:
+                            output_parts.append(f"""<memory-recall>
+CONTEXT for confirmed action "{intent}":
+
+{memories}
+
+Review these memories before proceeding.
+</memory-recall>""")
+                            log_shown_memories(memory_ids)
+
+            if output_parts:
+                output_result('\n\n'.join(output_parts), is_cursor)
+            return
+
+        # Skip remaining short prompts (greetings, gibberish) — not worth searching
+        if len(prompt) < 15:
             return
 
         # Skip slash commands

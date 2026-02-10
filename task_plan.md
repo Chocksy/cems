@@ -1,169 +1,134 @@
-# Task Plan: Retrieval Improvements Round 2
+# Task Plan: PreCompact Handover Hook for CEMS
 
 ## Goal
+When Claude Code auto-compacts (context window fills up), capture the full session transcript and re-inject CEMS memories after compaction. This prevents amnesia during long sessions.
 
-Improve LongMemEval scores by trying multiple approaches:
-1. **llamacpp_server reranker** - Use local llama.cpp server for reranking (not Docker)
-2. **Multi-session recall** - Fix the 10.7% "all" recall problem
-3. **Relaxed deduplication** - Allow near-duplicates for multi-session queries
+## Current Problem
+- Auto-compaction happens silently mid-session
+- Full transcript is lost (replaced with a summary)
+- Post-compaction Claude has no CEMS context (no profile, no relevant memories)
+- Our `Stop` hook only captures transcript at session END, not at compaction time
+- **FOUND BUG:** `cems_session_start.py:112` explicitly skips `compact` events: `if source in ("resume", "compact"): sys.exit(0)` — this means even if SessionStart fires after compaction, we ignore it
 
-## Current Baseline (2026-02-05)
+## Approach
+Three changes:
 
-| Category | Recall@5 (any) | Recall@5 (all) |
-|----------|----------------|----------------|
-| knowledge-update | 97.2% | 80.6% |
-| single-session-assistant | 94.4% | 94.4% |
-| temporal-reasoning | 90.7% | 61.1% |
-| multi-session | 82.1% | **10.7%** |
-| single-session-preference | 43.3% | 43.3% |
-| **Overall** | **85.6%** | **54.8%** |
-
-## Problem Analysis
-
-### Multi-Session "All" Recall is Very Low (10.7%)
-Multi-session questions require retrieving MULTIPLE relevant memories from different sessions.
-- "Any" recall (82.1%) is decent - we find at least ONE relevant memory
-- "All" recall (10.7%) is terrible - we almost never find ALL relevant memories
-
-**Root causes:**
-1. **Deduplication too aggressive** - Similar memories from different sessions get merged
-2. **Candidate pool too small** - Need more candidates to find all relevant memories
-3. **No special handling** for multi-session query type
-
-### Local Reranker Configuration
-The `llamacpp_server` reranker is implemented but:
-- Docker version is slow (no GPU)
-- Need to point at local llama.cpp server for speed
-- Need to benchmark impact on eval scores
-
-## Implementation Phases
-
-| Phase | Task | Status |
-|-------|------|--------|
-| 0 | Consult codex-investigator for approach review | `complete` |
-| 1 | Add `_is_aggregation_query()` detection | `complete` |
-| 2 | Force synthesis + larger candidate pool for aggregation | `complete` |
-| 3 | Run eval (v2 with proper code) | `complete` |
-| 3b | Session ordering fix + token budget increase | `complete` |
-| 4 | Implement diversity-aware selection (MMR) | `pending` |
-| 5 | Test llamacpp_server reranker with local server | `complete` (**FAILED** - 86%→28%) |
-| 6 | Document findings and commit | `in_progress` |
-
-## Latest Results (v3 - Session Ordering + 4000 Token Budget)
-
-| Category | Recall@5 (any) | Recall@5 (all) |
-|----------|----------------|----------------|
-| knowledge-update | 98.6% | 80.6% |
-| single-session-assistant | 97.4% | 97.4% |
-| temporal-reasoning | 88.9% | **59.3%** |
-| multi-session | **89.3%** | **12.5%** |
-| single-session-preference | 33.3% | 33.3% |
-| **Overall** | **86.4%** | **57.6%** |
-
-**Changes from v2:**
-- multi-session (any): 87.5% → 89.3% (+1.8%)
-- multi-session (all): 10.7% → 12.5% (+1.8%)
-- temporal-reasoning (all): 50.0% → 59.3% (+9.3%)
-
-**Observation:** Session ordering and larger token budget helped temporal-reasoning significantly but multi-session "all" is still stuck at ~12%. The issue is upstream retrieval quality, not selection strategy.
+1. **Add central hook event logging** — all hooks append to one JSONL file so we can observe exactly which hooks fire and when
+2. **Create PreCompact[auto] hook** → send full transcript to CEMS before it's lost
+3. **Fix SessionStart to handle `compact`** → remove `compact` from the skip list so profile gets re-injected after compaction
 
 ---
 
-## Phase 0: Codex-Investigator Review ✓ COMPLETE
+## Phase 0: Add central hook event logger `[pending]`
 
-### Key Findings:
+**File:** `hooks/utils/hook_logger.py` (shared utility)
 
-1. **Deduplication is NOT the problem** - memory_id dedup doesn't merge different sessions
-2. **API defaults disable query synthesis** - multi-session queries need expansion
-3. **RRF reinforces "best" result** - similar sessions compete, one wins, others lost
-4. **Token budget exhausts before 5 results** - large documents fill budget
-5. **No aggregation query detection exists** - unlike temporal/preference
-6. **LLM reranker alone won't help** - optimizes for relevance, not diversity
-
-### Recommended Actions (Priority Order):
-
-1. Add `_is_aggregation_query()` detection (how many, total, all the times)
-2. Force query synthesis for aggregation queries
-3. Implement MMR (Maximal Marginal Relevance) for diversity
-4. Guarantee minimum 5 results by truncating content
-5. Increase candidate pool for aggregation queries
-
----
-
-## Phase 1: llamacpp_server Reranker
-
-### Current Config Options
+A simple function all hooks can call:
 ```python
-reranker_backend: Literal["llamacpp_server", "llm", "disabled"] = "disabled"
+def log_hook_event(event_name, session_id, extra=None):
+    """Append one line to ~/.claude/hooks/logs/hook_events.jsonl"""
 ```
 
-### Local Server Setup
-User has local llama.cpp server running for embeddings.
-Need to configure reranker to use same server.
+Each line: `{"ts": "...", "event": "SessionStart", "session_id": "...", "source": "compact", ...}`
 
-### Files to Check/Modify
-- `src/cems/config.py` - Reranker config settings
-- `src/cems/llamacpp_server.py` - Client implementation
-- `src/cems/memory/retrieval.py` - Reranker integration
+Then add `log_hook_event()` calls to:
+- `cems_session_start.py` (log event + source/matcher)
+- `stop.py` (log event)
+- `pre_tool_use.py` (log event + tool name)
+- `user_prompts_submit.py` (log event)
+- NEW `pre_compact.py` (log event + trigger)
 
----
+**Central log file:** `~/.claude/hooks/logs/hook_events.jsonl`
 
-## Phase 2: Relaxed Deduplication
+This lets us:
+- Open a separate Claude Code instance, do work, run `/compact`
+- Then `tail -f ~/.claude/hooks/logs/hook_events.jsonl` to see exactly what fired
+- Answer the matcher question empirically
 
-### Current Deduplication Logic
+## Phase 1: Create PreCompact hook script `[pending]`
+
+**File:** `hooks/pre_compact.py` (canonical source in CEMS repo)
+
+What it does:
+- Reads stdin JSON (gets `transcript_path`, `session_id`, `trigger`)
+- Logs the event via `log_hook_event()`
+- Reads the full JSONL transcript
+- Sends to CEMS `/api/session/analyze` (same as `stop.py:analyze_session()`)
+- Fire-and-forget (non-blocking, informational only)
+
+**Only fires on `auto` matcher** — manual `/compact` is user-controlled.
+
+## Phase 2: Fix SessionStart to handle compact events `[pending]`
+
+**File:** `hooks/cems_session_start.py`
+
+Change line 112 from:
 ```python
-def deduplicate_results(results: list[SearchResult]) -> list[SearchResult]:
-    seen: dict[str, SearchResult] = {}
-    for result in results:
-        if result.memory_id not in seen:
-            seen[result.memory_id] = result
-        elif result.score > seen[result.memory_id].score:
-            seen[result.memory_id] = result
-    return list(seen.values())
+if is_background_agent or source in ("resume", "compact"):
+    sys.exit(0)
+```
+To:
+```python
+if is_background_agent or source == "resume":
+    sys.exit(0)
 ```
 
-This dedupes by memory_id only - not by content similarity.
+This way, after compaction, the profile (prefs, guidelines, gate rules, recent memories) gets re-injected into the fresh context window. Same behavior as a new session — exactly what we want.
 
-### Proposed Enhancement
-For multi-session queries, use content-based deduplication with HIGH threshold (0.95+):
-- Keep memories that are only slightly different
-- Different sessions about same topic should NOT be merged
+We keep skipping `resume` because that's a session restore where context is already intact.
 
-### Implementation Ideas
-1. Add `deduplicate_relaxed()` function with similarity threshold
-2. Detect multi-session queries (count/aggregation patterns)
-3. Use relaxed dedup only for multi-session
+## Phase 3: Wire hooks in settings.json `[pending]`
+
+**File:** `~/.claude/settings.json`
+
+Add PreCompact entry:
+```json
+"PreCompact": [
+  {
+    "matcher": "auto",
+    "hooks": [
+      { "type": "command", "command": "uv run ~/.claude/hooks/pre_compact.py" }
+    ]
+  }
+]
+```
+
+No need to add a separate `SessionStart[compact]` entry — the existing empty matcher `""` already matches all events including `compact`. We just need to remove the skip in the Python code (Phase 2).
+
+## Phase 4: Install + update install.sh `[pending]`
+
+1. Copy `pre_compact.py` to `~/.claude/hooks/`
+2. Copy updated `hook_logger.py` to `~/.claude/hooks/utils/`
+3. Update `hooks/install.sh` in CEMS repo
+
+## Phase 5: Test with logging `[pending]`
+
+1. Deploy all hooks
+2. Open a separate Claude Code instance
+3. Have a conversation, then run `/compact`
+4. Check `~/.claude/hooks/logs/hook_events.jsonl` to verify:
+   - PreCompact hook fired (with trigger=manual or auto)
+   - SessionStart hook fired after compaction (with source=compact)
+   - CEMS profile was re-injected
+5. Check CEMS API logs to verify transcript was analyzed
 
 ---
 
-## Phase 3: Multi-Session Query Detection
+## Files to Create/Modify
 
-### Patterns That Indicate Multi-Session
-- "How many..." (counting across sessions)
-- "total", "altogether", "in total"
-- "all the times", "every time"
-- "across all", "throughout"
+| File | Action | Purpose |
+|------|--------|---------|
+| `hooks/utils/hook_logger.py` | CREATE | Central event logger utility |
+| `hooks/pre_compact.py` | CREATE | PreCompact hook script |
+| `hooks/cems_session_start.py` | MODIFY | Remove `compact` from skip list |
+| `hooks/stop.py` | MODIFY | Add log_hook_event() call |
+| `hooks/pre_tool_use.py` | MODIFY | Add log_hook_event() call |
+| `hooks/user_prompts_submit.py` | MODIFY | Add log_hook_event() call |
+| `hooks/install.sh` | MODIFY | Add new files to install list |
+| `~/.claude/settings.json` | MODIFY | Add PreCompact entry |
 
-### Special Handling
-- Larger candidate pool (limit=50 instead of 20)
-- Relaxed deduplication
-- Skip aggressive score filtering
-
----
-
-## Success Criteria
-
-- [ ] llamacpp_server reranker working with local server
-- [ ] Multi-session "all" recall improves from 10.7% to 20%+
-- [ ] No regression on other categories
-- [ ] Document what works and what doesn't
-
----
-
-## Decision Log
-
-| Decision | Rationale | Date |
-|----------|-----------|------|
-| Try local reranker first | User wants to avoid slow Docker, already has local server | 2026-02-05 |
-| Focus on multi-session | 10.7% "all" recall is biggest gap | 2026-02-05 |
-| Use planning-with-files | Complex multi-step task needs tracking | 2026-02-05 |
+## Key Decisions
+- Central JSONL log file (not per-session) for easy `tail -f` observability
+- Reuse `stop.py`'s `analyze_session()` pattern in pre_compact.py (duplicate ~30 lines rather than refactoring shared module)
+- Only fire PreCompact on `auto` (not `manual`)
+- Keep skipping `resume` in SessionStart (context intact), stop skipping `compact` (context lost)

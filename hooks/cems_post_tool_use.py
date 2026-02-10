@@ -35,6 +35,9 @@ from pathlib import Path
 
 import httpx
 
+sys.path.insert(0, str(Path(__file__).parent))
+from utils.hook_logger import log_hook_event
+
 CEMS_API_URL = os.getenv("CEMS_API_URL", "")
 CEMS_API_KEY = os.getenv("CEMS_API_KEY", "")
 
@@ -259,6 +262,8 @@ def main():
         transcript_path = input_data.get("transcript_path", "")
         cwd = input_data.get("cwd", os.getcwd())
         is_background_agent = input_data.get("is_background_agent", False)
+
+        log_hook_event("PostToolUse", session_id, {"tool": tool_name}, input_data=input_data)
 
         # Skip background agents (parent handles)
         if is_background_agent:

@@ -25,6 +25,9 @@ import subprocess
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).parent))
+from utils.hook_logger import log_hook_event
+
 
 # =============================================================================
 # Gate Rule Functions
@@ -186,6 +189,8 @@ def main():
         tool_name = input_data.get('tool_name', '')
         tool_input = input_data.get('tool_input', {})
         cwd = input_data.get('cwd', '')
+
+        log_hook_event("PreToolUse", session_id, {"tool": tool_name}, input_data=input_data)
 
         # Get project ID from git remote
         project = get_project_id(cwd) if cwd else None

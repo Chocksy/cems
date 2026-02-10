@@ -11,7 +11,7 @@ from collections import deque
 from pathlib import Path
 from typing import List
 
-__all__ = ["read_last_messages"]
+__all__ = ["read_last_messages", "read_last_assistant_message"]
 
 
 def _extract_text(entry: dict) -> str | None:
@@ -49,6 +49,48 @@ def _extract_text(entry: dict) -> str | None:
         return entry["content"].strip()
 
     return None
+
+
+def read_last_assistant_message(transcript_path: str | Path, max_chars: int = 500) -> str:
+    """Return the text of the last assistant message in the transcript.
+
+    Iterates all entries, keeps the last one where entry["type"] == "assistant",
+    and extracts text content from it.
+
+    Args:
+        transcript_path: Path to the JSONL transcript file.
+        max_chars: Truncate output to this many characters (keeps tail).
+
+    Returns:
+        Assistant message text or empty string if not found.
+    """
+    p = Path(transcript_path).expanduser()
+    if not p.exists() or not p.is_file():
+        return ""
+
+    last_assistant: dict | None = None
+    try:
+        with p.open("r", encoding="utf-8", errors="ignore") as f:
+            for line in f:
+                line = line.rstrip()
+                if not line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                except Exception:
+                    continue
+                if isinstance(entry, dict) and entry.get("type") == "assistant":
+                    last_assistant = entry
+    except Exception:
+        return ""
+
+    if last_assistant is None:
+        return ""
+
+    text = _extract_text(last_assistant) or ""
+    if len(text) > max_chars:
+        text = text[-max_chars:]
+    return text
 
 
 def read_last_messages(transcript_path: str | Path, max_lines: int = 40, max_chars: int = 1000) -> str:

@@ -33,6 +33,7 @@ except ImportError:
 # Import utilities
 sys.path.insert(0, str(Path(__file__).parent))
 from utils.constants import ensure_session_log_dir
+from utils.hook_logger import log_hook_event
 
 # CEMS configuration
 CEMS_API_URL = os.getenv("CEMS_API_URL", "https://cems.chocksy.com")
@@ -247,6 +248,8 @@ def main():
         session_id = input_data.get("session_id", "")
         transcript_path = input_data.get("transcript_path", "")
         cwd = input_data.get("cwd", os.getcwd())
+
+        log_hook_event("Stop", session_id, {"cwd": cwd}, input_data=input_data)
 
         # Ensure session log directory exists
         log_dir = ensure_session_log_dir(session_id)

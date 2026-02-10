@@ -25,8 +25,12 @@ import os
 import re
 import subprocess
 import sys
+from pathlib import Path
 
 import httpx
+
+sys.path.insert(0, str(Path(__file__).parent))
+from utils.hook_logger import log_hook_event
 
 CEMS_API_URL = os.getenv("CEMS_API_URL", "")
 CEMS_API_KEY = os.getenv("CEMS_API_KEY", "")
@@ -108,8 +112,13 @@ def main():
         is_background_agent = input_data.get("is_background_agent", False)
         cwd = input_data.get("cwd", "")
 
-        # Skip for background agents and resume/compact (avoid redundant injection)
-        if is_background_agent or source in ("resume", "compact"):
+        log_hook_event("SessionStart", session_id, {
+            "source": source,
+            "is_background_agent": is_background_agent,
+        }, input_data=input_data)
+
+        # Skip for background agents and resume (avoid redundant injection)
+        if is_background_agent or source == "resume":
             sys.exit(0)
 
         # Skip if CEMS is not configured
