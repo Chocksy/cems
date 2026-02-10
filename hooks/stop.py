@@ -72,29 +72,30 @@ def get_completion_messages():
     ]
 
 
-def get_tts_script_path():
+def get_tts_scripts():
     """
-    Determine which TTS script to use based on available API keys.
+    Return ordered list of TTS scripts to try based on available API keys.
     Priority order: ElevenLabs > OpenAI > pyttsx3
     """
     script_dir = Path(__file__).parent
     tts_dir = script_dir / "utils" / "tts"
+    scripts = []
 
     if os.getenv("ELEVENLABS_API_KEY"):
         elevenlabs_script = tts_dir / "elevenlabs_tts.py"
         if elevenlabs_script.exists():
-            return str(elevenlabs_script)
+            scripts.append(str(elevenlabs_script))
 
     if os.getenv("OPENAI_API_KEY"):
         openai_script = tts_dir / "openai_tts.py"
         if openai_script.exists():
-            return str(openai_script)
+            scripts.append(str(openai_script))
 
     pyttsx3_script = tts_dir / "pyttsx3_tts.py"
     if pyttsx3_script.exists():
-        return str(pyttsx3_script)
+        scripts.append(str(pyttsx3_script))
 
-    return None
+    return scripts
 
 
 def get_llm_completion_message():
@@ -206,23 +207,27 @@ def analyze_session(
 
 
 def announce_completion():
-    """Announce completion using the best available TTS service."""
+    """Announce completion, trying each TTS provider until one succeeds."""
     try:
-        tts_script = get_tts_script_path()
-        if not tts_script:
+        tts_scripts = get_tts_scripts()
+        if not tts_scripts:
             return
 
         completion_message = get_llm_completion_message()
 
-        subprocess.run(
-            ["uv", "run", tts_script, completion_message],
-            capture_output=True,
-            timeout=10,
-        )
+        for tts_script in tts_scripts:
+            try:
+                result = subprocess.run(
+                    ["uv", "run", tts_script, completion_message],
+                    capture_output=True,
+                    timeout=15,
+                )
+                if result.returncode == 0:
+                    return  # Success, stop trying
+            except (subprocess.TimeoutExpired, subprocess.SubprocessError):
+                continue  # Try next provider
 
-    except (subprocess.TimeoutExpired, subprocess.SubprocessError, FileNotFoundError):
-        pass
-    except Exception:
+    except (FileNotFoundError, Exception):
         pass
 
 

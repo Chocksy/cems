@@ -48,6 +48,7 @@ async def api_tool_learning(request: Request):
         session_id = body.get("session_id", "unknown")
         context_snippet = body.get("context_snippet", "")
         working_dir = body.get("working_dir")
+        source_ref = body.get("source_ref")  # e.g., "project:org/repo"
 
         if not tool_name:
             return JSONResponse({"error": "tool_name is required"}, status_code=400)
@@ -125,6 +126,7 @@ async def api_tool_learning(request: Request):
             scope="personal",
             category=category,
             tags=["tool-learning", tool_name.lower(), learning_type.lower()],
+            source_ref=source_ref,
             infer=False,
         )
 

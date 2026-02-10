@@ -170,6 +170,30 @@ def extract_tool_output_summary(tool_response: dict) -> str:
     return ""
 
 
+def get_project_id(cwd: str) -> str | None:
+    """Extract project ID from git remote (e.g., 'org/repo')."""
+    if not cwd:
+        return None
+    try:
+        import subprocess
+        result = subprocess.run(
+            ["git", "-C", cwd, "remote", "get-url", "origin"],
+            capture_output=True, text=True, timeout=2
+        )
+        if result.returncode == 0:
+            import re
+            url = result.stdout.strip()
+            if url.startswith("git@"):
+                match = re.search(r":(.+?)(?:\.git)?$", url)
+            else:
+                match = re.search(r"[:/]([^/]+/[^/]+?)(?:\.git)?$", url)
+            if match:
+                return match.group(1).removesuffix('.git')
+    except Exception:
+        pass
+    return None
+
+
 def send_to_cems(
     tool_name: str,
     tool_input: dict,
@@ -183,16 +207,23 @@ def send_to_cems(
         return False
 
     try:
+        payload = {
+            "tool_name": tool_name,
+            "tool_input": tool_input,
+            "tool_output": tool_output,
+            "session_id": session_id,
+            "context_snippet": context_snippet,
+            "working_dir": cwd,
+        }
+
+        # Add project source_ref if we can determine it
+        project = get_project_id(cwd)
+        if project:
+            payload["source_ref"] = f"project:{project}"
+
         response = httpx.post(
             f"{CEMS_API_URL}/api/tool/learning",
-            json={
-                "tool_name": tool_name,
-                "tool_input": tool_input,
-                "tool_output": tool_output,
-                "session_id": session_id,
-                "context_snippet": context_snippet,
-                "working_dir": cwd,
-            },
+            json=payload,
             headers={"Authorization": f"Bearer {CEMS_API_KEY}"},
             timeout=10.0,  # Allow time for LLM extraction
         )
