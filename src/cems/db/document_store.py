@@ -222,6 +222,24 @@ class DocumentStore:
                 logger.debug(f"Document already exists with hash {doc_hash[:8]}...")
                 return str(existing["id"]), False
 
+            # Semantic dedup: check if very similar content already exists
+            # Uses first chunk's embedding to find near-duplicates (cosine > 0.92)
+            if embeddings:
+                semantic_dup = await conn.fetchrow(
+                    """
+                    SELECT d.id FROM memory_chunks c
+                    JOIN memory_documents d ON c.document_id = d.id
+                    WHERE d.user_id = $1 AND d.deleted_at IS NULL AND c.seq = 0
+                      AND 1 - (c.embedding <=> $2) > 0.92
+                    LIMIT 1
+                    """,
+                    user_uuid,
+                    embeddings[0],
+                )
+                if semantic_dup:
+                    logger.debug(f"Semantic duplicate found (>{0.92} similarity)")
+                    return str(semantic_dup["id"]), False
+
             # Insert new document
             doc_id = uuid4()
             async with conn.transaction():

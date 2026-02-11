@@ -1,64 +1,118 @@
-# Findings: PreCompact Handover Hook
+# Findings: Memory Quality Investigation
 
-## Research Date: 2026-02-10
+## Production Data Snapshot (2026-02-10)
 
-## 1. PreCompact Hook EXISTS in Claude Code
+### Scale (Corrected — much bigger than initially thought)
+- **Total memories: 2,453** (not 200 — that was just the search candidate limit)
+- **477 unique categories** for 2,453 memories (extreme fragmentation)
+- **241 singleton categories** (50.5% of all categories used for exactly 1 memory)
 
-**Confirmed.** Claude Code has 14 hook events. `PreCompact` fires before context compaction.
+### source_ref Coverage
+| Offset Range | Count | With source_ref | Without |
+|---|---|---|---|
+| 0-300 (newest) | 300 | ~175 (58%) | ~125 (42%) |
+| 300-2453 (older) | 2,153 | 0 (0%) | 2,153 (100%) |
+| **Total** | **2,453** | **~175 (7.1%)** | **~2,278 (92.9%)** |
 
-### Matcher values:
-- `"auto"` — fires when context window fills up (automatic compaction)
-- `"manual"` — fires when user runs `/compact`
+### Category Chaos — 36 Duplicate Groups
+| Category | Variants | Combined Count |
+|---|---|---|
+| seo | `SEO(6)`, `seo(138)` | 144 |
+| task management | 3 variants | 44 |
+| project management | 3 variants | 39 |
+| docker | `Docker(5)`, `docker(23)` | 28 |
+| error handling | 3 variants | 19 |
+| patterns | 1 (legacy dump) | 216 |
 
-### Input data (via stdin JSON):
-```json
-{
-  "session_id": "abc123",
-  "transcript_path": "/Users/.../.claude/projects/.../abc123.jsonl",
-  "cwd": "/Users/...",
-  "permission_mode": "default",
-  "hook_event_name": "PreCompact",
-  "trigger": "manual|auto",
-  "custom_instructions": ""
-}
-```
+### Content Quality Issues
+- **~11+ memories** contain ephemeral `/private/tmp/claude-501/...` paths (useless)
+- **~52 memories** under 80 chars with no actionable content
+- **Near-duplicates**: 6x "Background command failed...", 3x "Check production logs..."
+- Content hash dedup fails because `(session: XXXX)` suffix differs
+- **68.5% of recent 200 memories have shown_count=0** — never surfaced to user
 
-**Key insight:** `transcript_path` gives the FULL conversation (JSONL) BEFORE compaction.
+### "patterns" Category — 216 Legacy Entries
+- Migrated from old Mem0-based `memories` table
+- No `[TYPE]` prefix, no session reference, no source_ref
+- Some contain useful info but nearly impossible to find via search
+- Example: `"Device secrets have a length of 72 characters and 288 bits of entropy"`
 
-## 2. SessionStart Hook Has "compact" Matcher
+### Ingestion Pipeline Issues (from codex-investigator)
+1. **Confidence threshold too low** — 0.3 in `learning_extraction.py:234`
+2. **No content length minimum** — 30-char "learnings" get stored
+3. **Category is freeform LLM text** — no controlled vocabulary, no normalization
+4. **Dedup is content-hash only** — no semantic dedup
+5. **No noise filtering** — tmp paths, exit codes, "background command" all stored
 
-After compaction completes, `SessionStart` fires with matcher `"compact"`. Stdout from the hook becomes `additionalContext` injected into Claude's context.
+## Codex-Investigator Verdict
 
-## 3. BUG FOUND: cems_session_start.py skips compact!
+> **Both bad data AND bad search context, but bad data is the primary issue.**
+> The search infrastructure is solid (98% Recall@5 on LongMemEval).
+> The core problem is garbage in, garbage out.
 
-**Line 112:**
-```python
-if is_background_agent or source in ("resume", "compact"):
-    sys.exit(0)
-```
+## Phase 2: Hybrid Cleanup — Local DB Analysis (2026-02-10)
 
-This means even though SessionStart fires after compaction, our hook explicitly ignores it. Post-compaction Claude gets NO CEMS profile. This is a bug — `compact` should be handled like `startup` (profile needs re-injection since context is lost).
+### Local DB Restored from Production
+- pg_dump: 32MB, restored to local `cems-postgres` Docker container
+- Exact match: 2,499 memory_documents, 2,010 legacy memories, 453 relations
 
-`resume` is correctly skipped (context intact on resume).
+### Cleanup Buckets
+| Bucket | Count | Action |
+|---|---|---|
+| Gate rules (category = 'gate-rules') | 2 | **KEEP** — critical |
+| Has source_ref (project-tagged) | 212 | **KEEP** — these are good |
+| Ever shown, no ref | 399 | **KEEP** — user saw these, some value |
+| Noise (tmp paths, bg commands, <50 chars) | 127 | **SOFT-DELETE** — garbage |
+| Legacy 'patterns' category | 216 | **SOFT-DELETE** — migrated from old Mem0, mostly useless context fragments |
+| Never shown, no ref, non-patterns | 1,681 | **SOFT-DELETE** — never surfaced, no project, low value |
+| **Total keep** | **~613** | Gate rules + source_ref + ever-shown |
+| **Total soft-delete** | **~2,024** | Noise + patterns + never-shown/no-ref |
 
-## 4. Existing Hook Inventory
+### Category Normalization (14 case-duplicate groups)
+| Canonical | Variants to merge |
+|---|---|
+| ai | AI(2) → ai(16) |
+| coolify | Coolify(1) → coolify(4) |
+| css | CSS(4), CSS styling(4), CSS Styling(1) → css(19) |
+| docker | Docker(5), Docker Management(1) → docker(23), docker management(1) |
+| google-app-verification | Google app verification(1) → Google App Verification(2) |
+| oauth-configuration | OAuth configuration(1) → OAuth Configuration(4) |
+| python-imports | python imports(1) → Python imports(1) |
+| rails | Rails(1) → rails(9) |
+| seo | SEO(6) → seo(138) |
+| supabase-rls | supabase rls(3) → Supabase RLS(1) |
+| ui-design | ui design(3) → UI Design(3) |
+| ui-ux | ui/ux(4) → UI/UX(1) |
+| project-management | project management(25), project-management(11) → merge |
+| task-management | task-management(30), tool usage(11) → keep separate |
 
-| Hook | Script | Logging? |
-|------|--------|----------|
-| SessionStart (all) | `cems_session_start.py` | None |
-| UserPromptSubmit | `user_prompts_submit.py` | None |
-| PreToolUse | `pre_tool_use.py` | None |
-| PostToolUse | `cems_post_tool_use.py` | None |
-| Stop | `stop.py` | Per-session JSON |
-| SubagentStop | `subagent_stop.py` | None |
-| Notification | `notification.py` | None |
+### source_ref Normalization
+| Current | Canonical |
+|---|---|
+| project:pxls | project:EpicCoders/pxls |
+| project:pos | project:Chocksy/pos |
+| project:cems-analysis | project:Chocksy/cems |
 
-**No central event log.** Stop hook writes per-session JSON but there's no single place to see all hook events across the system.
+### Decisions Made
+1. **Always-on context search** — DONE (Phase 1 complete, committed 5af1f05)
+2. **Data cleanup** — DONE locally (Option C Hybrid): 2,499 → 584 active memories, 500 → 33 categories
+3. **Ingestion quality gates** — DONE (Phase 3 complete)
 
-## 5. CEMS Advantage Over Static HANDOVER.md
+## Phase 3: Ingestion Quality Gates (2026-02-10)
 
-Unlike the Twitter approach (generating a static HANDOVER.md via `claude -p`), we can:
-1. **PreCompact[auto]** → send transcript to CEMS for learning extraction
-2. **SessionStart[compact]** → re-inject dynamic profile from all memories
+### Changes Implemented
+| Gate | File | Before | After |
+|---|---|---|---|
+| Confidence threshold | `learning_extraction.py` | 0.3 (session), 0.5 (tool) | 0.6 (both) |
+| Min content length | `learning_extraction.py` | none | 80 chars |
+| Noise filtering | `learning_extraction.py` | none | `/private/tmp/claude`, `background command`, `exit code` |
+| Category vocabulary | `learning_extraction.py` | freeform LLM text (500 categories) | 30 canonical + alias mapping |
+| Relevance threshold | `config.py` | 0.005 (passes everything) | 0.3 (meaningful filter) |
+| Semantic dedup | `document_store.py` | content-hash only | content-hash + cosine > 0.92 |
 
-Benefits: searchable, reusable across sessions, no file cleanup, leverages existing infrastructure.
+### Expected Impact
+- New memories will be **higher quality** (confidence 0.6+, 80+ chars, no noise)
+- Categories will stay within 30 canonical values (no more `CSS Styling` vs `css` vs `CSS/UI`)
+- Search results will be **more relevant** (threshold 0.3 instead of 0.005)
+- Near-duplicate memories (`(session: XXXX)` suffix variants) will be caught by semantic dedup
+- Combined with Phase 2 cleanup (584 quality memories), search signal-to-noise ratio should improve significantly

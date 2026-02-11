@@ -1,31 +1,40 @@
-# Progress: PreCompact Handover Hook
+# Progress: Memory Quality Overhaul
 
-## Session Log
+## Session 2026-02-10
 
-### 2026-02-10 — Research Phase
-- [x] Researched Claude Code hooks documentation (14 hook events found)
-- [x] Confirmed PreCompact hook exists with `auto`/`manual` matchers
-- [x] Confirmed SessionStart has `compact` matcher for post-compaction re-injection
-- [x] Read existing hooks: stop.py, cems_session_start.py, settings.json
-- [x] Identified gap: no PreCompact hook, no SessionStart[compact] handler
-- [x] Created findings.md with full research
-- [x] Created task_plan.md
+### Phase 1: Always-on context search — COMPLETE
+- Added `read_last_assistant_message()` to `hooks/utils/transcript.py`
+- Modified `hooks/user_prompts_submit.py` to enrich ALL search queries with assistant context
+- Committed as `5af1f05`, hooks installed
 
-### 2026-02-10 — Implementation Phase
-- [x] Phase 0: Created `hooks/utils/hook_logger.py` — central JSONL event logger
-- [x] Phase 0: Added `log_hook_event()` to all 5 hooks (session_start, stop, pre_tool_use, user_prompts_submit, cems_post_tool_use)
-- [x] Phase 1: Created `hooks/pre_compact.py` — sends transcript to CEMS on auto-compact
-- [x] Phase 2: Fixed `cems_session_start.py` — removed `compact` from skip list (only `resume` skipped now)
-- [x] Phase 3: Added `PreCompact[auto]` entry to `~/.claude/settings.json`
-- [x] Phase 4: Updated `install.sh` with new files, ran install
-- [x] Fixed NameError: added `from pathlib import Path` to `cems_session_start.py` imports
-- [x] All 251 tests pass
-- [x] Verified log file is already capturing events from live sessions
+### Phase 2: Production data cleanup — COMPLETE (local)
+- pg_dump from production (Hetzner `pc0c44088c48gog8cg4wck84` container)
+- Restored 32MB dump to local `cems-postgres` Docker
+- Soft-deleted 1,915 memories (noise + legacy patterns + never-shown/no-ref)
+- Normalized 500 → 33 canonical categories
+- Normalized source_ref short names to full org/repo
+- Final: 584 active memories, 33 categories
+- **NOT yet pushed to production** — user wants to review first
+- Backups: `cems_prod_backup.dump` (original), `cems_cleaned.dump` (cleaned)
 
-### Verification
-- Log file: `~/.claude/hooks/logs/hook_events.jsonl`
-- Already seeing PreToolUse/PostToolUse events from active sessions
-- `tail -f ~/.claude/hooks/logs/hook_events.jsonl` to monitor in real time
+### Phase 3: Ingestion quality gates — COMPLETE
+- **3a**: Confidence threshold raised 0.3 → 0.6 (session + tool learnings)
+- **3b**: Min content length 80 chars (short vague learnings rejected)
+- **3c**: Noise filtering (`/private/tmp/claude`, `background command`, `exit code`)
+- **3d**: Controlled category vocabulary (30 canonical + alias mapping)
+- **3e**: Relevance threshold raised 0.005 → 0.3 in config.py
+- **3f**: Semantic dedup on ingestion (cosine > 0.92 = skip) in document_store.py
+- All 251 tests pass, sanity checks pass
 
-### Pending
-- [ ] Phase 5: Manual test — open separate Claude Code, have a conversation, run `/compact`, check log
+## Files Modified
+- `hooks/utils/transcript.py` — added `read_last_assistant_message()`
+- `hooks/user_prompts_submit.py` — always-on context search + confirmatory handling
+- `task_plan.md` — full plan with Phase 3 details
+- `findings.md` — production data analysis + cleanup buckets
+- `progress.md` — this file
+
+## Errors Encountered
+| Error | Attempt | Resolution |
+|-------|---------|------------|
+| test_short_prompts_skip_search failed | 1 | Added `len(prompt) < 15` skip after confirmatory block for non-confirmatory short prompts |
+| Production memory count wrong (200 vs 2,453) | 1 | 200 was search API's candidate limit; actual count from `SELECT count(*)` |

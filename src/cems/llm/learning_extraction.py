@@ -22,6 +22,48 @@ LEARNING_TYPES = [
     "GUIDELINE",         # Rules, conventions, best practices
 ]
 
+# Controlled category vocabulary — prevents category fragmentation.
+# Must match the canonical categories established in Phase 2 cleanup.
+CANONICAL_CATEGORIES = [
+    "api", "ai", "architecture", "cems", "configuration", "css",
+    "database", "debugging", "deployment", "design", "development",
+    "email", "environment", "error-handling", "frontend", "gate-rules",
+    "general", "git", "hooks", "infrastructure", "preferences",
+    "project-management", "refactoring", "ruby", "security", "seo",
+    "task-management", "testing", "ui", "workflow",
+]
+
+# Common aliases that map to canonical categories
+_CATEGORY_ALIASES = {
+    "docker": "deployment", "coolify": "deployment", "ci-cd": "deployment",
+    "ci/cd": "deployment", "devops": "deployment",
+    "rails": "ruby", "rspec": "testing", "python": "development",
+    "javascript": "frontend", "typescript": "frontend", "svelte": "frontend",
+    "react": "frontend", "html": "frontend",
+    "postgres": "database", "postgresql": "database", "sql": "database",
+    "nginx": "infrastructure", "server": "infrastructure", "networking": "infrastructure",
+    "cors": "infrastructure", "ssl": "infrastructure",
+    "auth": "security", "authentication": "security", "oauth": "security",
+    "styling": "css", "scss": "css", "tailwind": "css",
+    "error-fix": "error-handling", "errors": "error-handling", "bug-fix": "error-handling",
+    "performance": "testing", "monitoring": "testing",
+    "documentation": "general", "learnings": "general", "patterns": "general",
+}
+
+# Noise patterns to filter from extracted learnings
+_NOISE_PATTERNS = [
+    "/private/tmp/claude",
+    "/tmp/claude-",
+    "background command",
+    "exit code 0",
+]
+
+# Minimum content length for a learning to be stored
+MIN_LEARNING_LENGTH = 80
+
+# Minimum confidence threshold for storing learnings
+MIN_CONFIDENCE = 0.6
+
 
 def chunk_content(content: str, max_chunk_size: int = 6000) -> list[str]:
     """Split long content intelligently for processing.
@@ -165,7 +207,7 @@ Return a JSON array. Each learning needs:
 - "type": One of the 6 types above
 - "content": Clear, actionable learning (can be 1-3 sentences for simple items, or longer for detailed guidelines)
 - "confidence": 0.0-1.0 (how useful is this to remember)
-- "category": Topic category (e.g., "docker", "deployment", "git", "python", "testing", "rspec", "preferences")
+- "category": MUST be one of: api, ai, architecture, cems, configuration, css, database, debugging, deployment, design, development, email, environment, error-handling, frontend, general, git, hooks, infrastructure, preferences, project-management, refactoring, ruby, security, seo, task-management, testing, ui, workflow
 
 Extract ALL learnings you find - be generous, not restrictive. For documents with many rules/guidelines, extract EACH ONE as a separate item.
 
@@ -231,7 +273,7 @@ If truly nothing useful, return: []"""
         learnings = _parse_learnings_response(response)
 
         # Lower confidence threshold - be generous with what we store
-        learnings = [l for l in learnings if l.get("confidence", 0) >= 0.3]
+        learnings = [l for l in learnings if l.get("confidence", 0) >= MIN_CONFIDENCE]
 
         logger.info(f"Extracted {len(learnings)} learnings from session")
         return learnings
@@ -296,7 +338,7 @@ If nothing useful in this section, return: []"""
             )
 
             chunk_learnings = _parse_learnings_response(response)
-            chunk_learnings = [l for l in chunk_learnings if l.get("confidence", 0) >= 0.3]
+            chunk_learnings = [l for l in chunk_learnings if l.get("confidence", 0) >= MIN_CONFIDENCE]
 
             logger.info(f"Chunk {i + 1}/{len(chunks)}: extracted {len(chunk_learnings)} learnings")
             all_learnings.extend(chunk_learnings)
@@ -399,11 +441,29 @@ def _parse_learnings_response(response: str) -> list[dict]:
         if not learning.get("content"):
             continue
 
+        content = str(learning["content"])[:500]
+
+        # Skip short content — too vague to be useful
+        if len(content) < MIN_LEARNING_LENGTH:
+            continue
+
+        # Skip noise content (tmp paths, background commands, exit codes)
+        content_lower = content.lower()
+        if any(pattern in content_lower for pattern in _NOISE_PATTERNS):
+            continue
+
+        # Normalize category to canonical vocabulary
+        raw_category = str(learning.get("category", "general")).lower().strip()
+        # Replace common separators with hyphens
+        raw_category = raw_category.replace(" ", "-").replace("_", "-")
+        if raw_category not in CANONICAL_CATEGORIES:
+            raw_category = _CATEGORY_ALIASES.get(raw_category, "general")
+
         valid_learnings.append({
             "type": learning["type"],
-            "content": str(learning["content"])[:500],  # Limit content length
+            "content": content,
             "confidence": float(learning.get("confidence", 0.5)),
-            "category": str(learning.get("category", "general"))[:50],
+            "category": raw_category,
         })
 
     return valid_learnings
@@ -510,7 +570,7 @@ Return ONLY valid JSON (object or null)."""
             return None
         if not learning.get("content"):
             return None
-        if learning.get("confidence", 0) < 0.5:  # Higher threshold for tool learning
+        if learning.get("confidence", 0) < MIN_CONFIDENCE:
             return None
 
         return {

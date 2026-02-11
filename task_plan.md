@@ -1,134 +1,165 @@
-# Task Plan: PreCompact Handover Hook for CEMS
+# Task Plan: Memory Quality Overhaul + Always-On Context Search
 
 ## Goal
-When Claude Code auto-compacts (context window fills up), capture the full session transcript and re-inject CEMS memories after compaction. This prevents amnesia during long sessions.
+Fix two fundamental problems with CEMS:
+1. **Bad data**: ~85% of 200 production memories have NULL source_ref, many are duplicates or noise from legacy migration
+2. **Limited context**: The UserPromptSubmit hook should ALWAYS use conversation context to improve search — not just for confirmatory prompts
 
-## Current Problem
-- Auto-compaction happens silently mid-session
-- Full transcript is lost (replaced with a summary)
-- Post-compaction Claude has no CEMS context (no profile, no relevant memories)
-- Our `Stop` hook only captures transcript at session END, not at compaction time
-- **FOUND BUG:** `cems_session_start.py:112` explicitly skips `compact` events: `if source in ("resume", "compact"): sys.exit(0)` — this means even if SessionStart fires after compaction, we ignore it
+## Current Problems
+
+### Problem 1: Production Memory Quality
+- **200 total memories** in production DB
+- **~170 (85%) have NULL source_ref** — no project association, can't scope results
+- **Duplicate content**: Same learnings stored multiple times (e.g., "output files stored in /private/tmp/..." appears 3+ times)
+- **Noisy categories**: "unknown", "general", overlapping categories like "hooks" vs "hooks-logging" vs "hook logging"
+- **Low relevance threshold**: 0.005 — basically returns everything, no quality filter
+- **Root cause**: Older memories predate source_ref tracking (added later). Tool learning and session analysis now pass source_ref, but legacy data doesn't have it.
+
+### Problem 2: Search Only Uses User Prompt Text
+- The hook searches CEMS using `extract_intent(prompt)` — raw user text
+- User text like "yes" or "refactor auth" has NO context about what Claude was doing
+- The ASSISTANT's last message (the proposal) is the real context, but it's only used for confirmatory prompts
+- Result: Even non-confirmatory prompts get poor search results because the user's text alone isn't enough
 
 ## Approach
-Three changes:
 
-1. **Add central hook event logging** — all hooks append to one JSONL file so we can observe exactly which hooks fire and when
-2. **Create PreCompact[auto] hook** → send full transcript to CEMS before it's lost
-3. **Fix SessionStart to handle `compact`** → remove `compact` from the skip list so profile gets re-injected after compaction
+### Phase 1: Always-On Context-Enriched Search (Code Change)
+**Expand transcript context usage to ALL prompts**, not just confirmatory ones.
 
----
+For every prompt, optionally enrich the search query with keywords from the last assistant message. This gives CEMS "what is Claude doing?" context alongside "what did the user ask?".
 
-## Phase 0: Add central hook event logger `[pending]`
+**File**: `hooks/user_prompts_submit.py`
+**Change**: In the main search path (line ~526), after extracting intent from user prompt, also read the last assistant message and blend keywords from it into the search query.
 
-**File:** `hooks/utils/hook_logger.py` (shared utility)
+### Phase 2: Production Data Cleanup (DB Operations)
+Three options (present for user decision):
 
-A simple function all hooks can call:
-```python
-def log_hook_event(event_name, session_id, extra=None):
-    """Append one line to ~/.claude/hooks/logs/hook_events.jsonl"""
-```
+**Option A: Surgical Cleanup** (Conservative)
+- Export all production memories via API
+- Analyze locally: deduplicate, tag with project IDs where inferrable from session context
+- Delete confirmed noise/duplicates via soft-delete
+- Backfill source_ref where session_id can map to a project
+- Pro: No data loss. Con: Labor-intensive, may not fix category mess
 
-Each line: `{"ts": "...", "event": "SessionStart", "session_id": "...", "source": "compact", ...}`
+**Option B: Fresh Start** (Aggressive)
+- Export production memories as backup
+- Wipe `memory_documents` table
+- Re-ingest from session transcripts (stored in CEMS via /api/session/analyze)
+- All new memories get proper source_ref from day one
+- Pro: Clean slate. Con: Loses any manually-added memories, gate rules
 
-Then add `log_hook_event()` calls to:
-- `cems_session_start.py` (log event + source/matcher)
-- `stop.py` (log event)
-- `pre_tool_use.py` (log event + tool name)
-- `user_prompts_submit.py` (log event)
-- NEW `pre_compact.py` (log event + trigger)
+**Option C: Hybrid** (Recommended)
+- Export and backup everything
+- Keep gate rules and manually-added memories (category = "gate-rules" or no session tag)
+- Wipe auto-generated learnings (those with "session-learning" or "tool-learning" tags)
+- Raise relevance threshold from 0.005 to something meaningful (0.3-0.4)
+- Improve deduplication: tighten content_hash + add semantic dedup in consolidation job
+- Pro: Keeps important manual memories, eliminates noise. Con: Moderate complexity
 
-**Central log file:** `~/.claude/hooks/logs/hook_events.jsonl`
+### Phase 3: Ingestion Quality Gates (Going Forward)
 
-This lets us:
-- Open a separate Claude Code instance, do work, run `/compact`
-- Then `tail -f ~/.claude/hooks/logs/hook_events.jsonl` to see exactly what fired
-- Answer the matcher question empirically
+Prevent the data quality issues from recurring by tightening the ingestion pipeline.
 
-## Phase 1: Create PreCompact hook script `[pending]`
+#### 3a. Raise Confidence Threshold (learning_extraction.py)
+**File**: `src/cems/llm/learning_extraction.py`
 
-**File:** `hooks/pre_compact.py` (canonical source in CEMS repo)
+**Current**: Line 234 — `confidence >= 0.3` for session learnings, line 513 — `confidence < 0.5` for tool learnings.
 
-What it does:
-- Reads stdin JSON (gets `transcript_path`, `session_id`, `trigger`)
-- Logs the event via `log_hook_event()`
-- Reads the full JSONL transcript
-- Sends to CEMS `/api/session/analyze` (same as `stop.py:analyze_session()`)
-- Fire-and-forget (non-blocking, informational only)
+**Change**:
+- Session learnings: `0.3` → `0.6` (line 234 and line 299 for chunk path)
+- Tool learning already at `0.5` — raise to `0.6` for consistency (line 513)
 
-**Only fires on `auto` matcher** — manual `/compact` is user-controlled.
+#### 3b. Minimum Content Length (learning_extraction.py)
+**File**: `src/cems/llm/learning_extraction.py`
 
-## Phase 2: Fix SessionStart to handle compact events `[pending]`
+**Current**: `_parse_learnings_response()` at line 404 caps content at 500 chars but has no minimum.
 
-**File:** `hooks/cems_session_start.py`
+**Change**: In `_parse_learnings_response()`, after validation, skip learnings where `len(content) < 80`.
 
-Change line 112 from:
-```python
-if is_background_agent or source in ("resume", "compact"):
-    sys.exit(0)
-```
-To:
-```python
-if is_background_agent or source == "resume":
-    sys.exit(0)
-```
+#### 3c. Noise Content Filtering (learning_extraction.py)
+**File**: `src/cems/llm/learning_extraction.py`
 
-This way, after compaction, the profile (prefs, guidelines, gate rules, recent memories) gets re-injected into the fresh context window. Same behavior as a new session — exactly what we want.
+**Current**: No content filtering — `/private/tmp/claude` paths, "background command", exit codes all stored.
 
-We keep skipping `resume` because that's a session restore where context is already intact.
+**Change**: Add `_is_noise()` check in `_parse_learnings_response()`:
+- Skip if content contains `/private/tmp/claude`
+- Skip if content matches `^(background command|exit code \d)`
+- Skip if content length < 80 chars (from 3b)
 
-## Phase 3: Wire hooks in settings.json `[pending]`
+#### 3d. Controlled Category Vocabulary (learning_extraction.py)
+**File**: `src/cems/llm/learning_extraction.py`
 
-**File:** `~/.claude/settings.json`
+**Current**: Category is freeform LLM text — produces 500 unique categories, case variants, singletons.
 
-Add PreCompact entry:
-```json
-"PreCompact": [
-  {
-    "matcher": "auto",
-    "hooks": [
-      { "type": "command", "command": "uv run ~/.claude/hooks/pre_compact.py" }
-    ]
-  }
-]
-```
+**Change**:
+1. Define `CANONICAL_CATEGORIES` list (the 33 categories from Phase 2 cleanup)
+2. In the LLM system prompt, list these as the ONLY valid categories
+3. In `_parse_learnings_response()`, normalize the category:
+   - lowercase + strip
+   - if not in `CANONICAL_CATEGORIES`, map to closest match or "general"
 
-No need to add a separate `SessionStart[compact]` entry — the existing empty matcher `""` already matches all events including `compact`. We just need to remove the skip in the Python code (Phase 2).
+#### 3e. Raise Relevance Threshold (config.py)
+**File**: `src/cems/config.py`
 
-## Phase 4: Install + update install.sh `[pending]`
+**Current**: `relevance_threshold: float = 0.005` (line 194-196)
 
-1. Copy `pre_compact.py` to `~/.claude/hooks/`
-2. Copy updated `hook_logger.py` to `~/.claude/hooks/utils/`
-3. Update `hooks/install.sh` in CEMS repo
+**Change**: `0.005` → `0.3` — this is the scored threshold after all adjustments. With 584 quality memories instead of 2,499, we can afford to be selective.
 
-## Phase 5: Test with logging `[pending]`
+**Risk**: May reduce recall for some queries. Mitigated by Phase 1's always-on context enrichment.
 
-1. Deploy all hooks
-2. Open a separate Claude Code instance
-3. Have a conversation, then run `/compact`
-4. Check `~/.claude/hooks/logs/hook_events.jsonl` to verify:
-   - PreCompact hook fired (with trigger=manual or auto)
-   - SessionStart hook fired after compaction (with source=compact)
-   - CEMS profile was re-injected
-5. Check CEMS API logs to verify transcript was analyzed
+#### 3f. Semantic Dedup on Ingestion (document_store.py)
+**File**: `src/cems/db/document_store.py`
+
+**Current**: Dedup is content-hash only (exact match). Near-duplicates with `(session: XXXX)` suffix get through.
+
+**Change**: In `add_document()`, after the content-hash check, do a quick vector search for the new chunk's embedding against existing chunks. If cosine similarity > 0.92 (from `config.duplicate_similarity_threshold`), skip insertion and return the existing document ID.
+
+**Timing budget**: One extra vector query (~5ms) per document add — negligible.
 
 ---
 
-## Files to Create/Modify
+**Implementation order**: 3a → 3b → 3c → 3d → 3e → 3f (each builds on the previous)
 
-| File | Action | Purpose |
-|------|--------|---------|
-| `hooks/utils/hook_logger.py` | CREATE | Central event logger utility |
-| `hooks/pre_compact.py` | CREATE | PreCompact hook script |
-| `hooks/cems_session_start.py` | MODIFY | Remove `compact` from skip list |
-| `hooks/stop.py` | MODIFY | Add log_hook_event() call |
-| `hooks/pre_tool_use.py` | MODIFY | Add log_hook_event() call |
-| `hooks/user_prompts_submit.py` | MODIFY | Add log_hook_event() call |
-| `hooks/install.sh` | MODIFY | Add new files to install list |
-| `~/.claude/settings.json` | MODIFY | Add PreCompact entry |
+---
 
-## Key Decisions
-- Central JSONL log file (not per-session) for easy `tail -f` observability
-- Reuse `stop.py`'s `analyze_session()` pattern in pre_compact.py (duplicate ~30 lines rather than refactoring shared module)
-- Only fire PreCompact on `auto` (not `manual`)
-- Keep skipping `resume` in SessionStart (context intact), stop skipping `compact` (context lost)
+## Status
+
+| Phase | Status | Notes |
+|-------|--------|-------|
+| Phase 1: Always-on context search | `complete` | Enriches all prompts with assistant context (5af1f05) |
+| Phase 2: Production data cleanup | `complete` | Local DB cleaned, ready to push to prod |
+| Phase 3: Ingestion quality gates | `complete` | All 6 sub-tasks implemented, 251 tests pass |
+
+### Phase 2 Results
+- **Before**: 2,499 memory_documents, 500 categories, 92.9% missing source_ref
+- **After**: 584 active memories, 33 canonical categories, 33.7% have source_ref
+- **Soft-deleted**: 1,915 memories (noise, legacy patterns, never-shown/no-ref)
+- **Category normalization**: 500 → 33 canonical categories
+- **source_ref normalization**: `project:pxls` → `project:EpicCoders/pxls`, etc.
+- **Cleanup is local** — needs pg_dump + restore to production
+
+## Research Findings
+
+### Production Data Analysis (2026-02-10) — CORRECTED by codex-investigator
+- **Total memories: 2,453** (200 was just the search candidate limit!)
+- With source_ref: ~175 (7.1%) — only the newest ~300 entries
+- Without source_ref: ~2,278 (92.9%) — everything before hooks added source_ref
+- **477 unique categories** — 241 are singletons (50.5%), 36 duplicate groups
+- "patterns" category: 216 legacy entries from old Mem0 migration
+- Relevance threshold: 0.005 (effectively no filtering)
+- 68.5% of recent memories have shown_count=0 (never surfaced)
+- Ingestion confidence threshold: 0.3 (too low — lets noise through)
+- Gate rules: ~5-6 memories with category "gate-rules"
+
+### How source_ref flows
+- `hooks/stop.py` → sends `source_ref: project:org/repo` to `/api/session/analyze` ✅
+- `hooks/cems_post_tool_use.py` → sends `source_ref` to `/api/tool/learning` ✅
+- `hooks/pre_compact.py` → sends `source_ref` to `/api/session/analyze` ✅
+- Server stores `source_ref` in `memory_documents` table ✅
+- **Gap**: Older memories were created BEFORE these hooks passed source_ref → NULL forever
+
+### Why search returns irrelevant results
+1. No source_ref → can't boost current-project memories
+2. Low threshold (0.005) → everything passes
+3. User prompt alone is thin context → "yes" or "refactor" matches too broadly
+4. No "no results" path → always returns top-10 regardless of actual relevance

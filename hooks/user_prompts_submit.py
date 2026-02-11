@@ -524,17 +524,35 @@ Review these memories before proceeding.
         populate_gate_cache(project)
 
         # 1. Memory awareness - search CEMS
+        # Enrich the search query with assistant context (what Claude was doing)
         intent = extract_intent(prompt)
+
+        # Read last assistant message to add context about what Claude proposed/discussed
+        transcript_path = input_data.get('transcript_path', '')
+        if transcript_path and intent:
+            assistant_text = read_last_assistant_message(transcript_path, max_chars=500)
+            if assistant_text:
+                sentences = re.split(r'[.!?]\s+', assistant_text.strip())
+                assistant_keywords = extract_keywords(' '.join(sentences[-2:]))
+                if assistant_keywords and len(assistant_keywords) >= 3:
+                    # Blend: user intent first (primary), assistant context second
+                    intent = f"{intent} {assistant_keywords}"
+                    # Cap total length to avoid noisy embeddings
+                    if len(intent) > 200:
+                        intent = intent[:200]
+
         if intent and len(intent) >= 3:
             memories, memory_ids = search_cems(intent, project=project)
             if memories:
+                # Show the user-facing intent (without assistant keywords clutter)
+                display_intent = extract_intent(prompt)
                 memory_context = f"""<memory-recall>
-RELEVANT MEMORIES found for "{intent}":
+RELEVANT MEMORIES found for "{display_intent}":
 
 {memories}
 
 If these memories are helpful to the current task, you may reference them.
-Use /recall "{intent}" for more detailed results.
+Use /recall "{display_intent}" for more detailed results.
 </memory-recall>"""
                 output_parts.append(memory_context)
 
