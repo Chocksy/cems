@@ -212,6 +212,61 @@ def search_cems(query: str, project: str | None = None) -> tuple[str | None, lis
         return None, []
 
 
+def fetch_recent_observations(project: str | None = None, limit: int = 5) -> str | None:
+    """Fetch recent observations for the current project.
+
+    Searches for observations tagged with the project's source_ref.
+    Returns formatted string for context injection, or None.
+    """
+    if not CEMS_API_URL or not CEMS_API_KEY:
+        return None
+
+    try:
+        query = f"recent observations"
+        if project:
+            query += f" for {project}"
+
+        payload = {
+            "query": query,
+            "scope": "personal",
+            "max_results": limit,
+        }
+        if project:
+            payload["project"] = project
+
+        response = httpx.post(
+            f"{CEMS_API_URL}/api/memory/search",
+            json=payload,
+            headers={"Authorization": f"Bearer {CEMS_API_KEY}"},
+            timeout=3.0,
+        )
+
+        if response.status_code != 200:
+            return None
+
+        data = response.json()
+        results = data.get("results", [])
+
+        # Filter to only observation category
+        observations = [
+            r for r in results
+            if r.get("category") == "observation"
+        ]
+
+        if not observations:
+            return None
+
+        lines = [f"- {r.get('content', r.get('memory', ''))}" for r in observations[:limit]]
+        project_label = project or "current project"
+        return f"""<recent-observations>
+Recent observations ({project_label}):
+{chr(10).join(lines)}
+</recent-observations>"""
+
+    except (httpx.RequestError, httpx.TimeoutException, json.JSONDecodeError):
+        return None
+
+
 def log_shown_memories(memory_ids: list[str]) -> None:
     """Fire-and-forget: log that memories were shown to the user.
 
@@ -559,7 +614,12 @@ Use /recall "{display_intent}" for more detailed results.
                 # Log that these memories were shown (fire-and-forget)
                 log_shown_memories(memory_ids)
 
-        # 2. Ultrathink flag
+        # 2. Recent observations for project context
+        obs_context = fetch_recent_observations(project=project)
+        if obs_context:
+            output_parts.append(obs_context)
+
+        # 3. Ultrathink flag
         if prompt.rstrip().endswith('-u'):
             output_parts.append("Use the maximum amount of ultrathink. Take all the time you need. It's much better if you do too much research and thinking than not enough.")
 

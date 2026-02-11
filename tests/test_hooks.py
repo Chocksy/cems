@@ -251,8 +251,9 @@ class TestUserPromptSubmit:
         assert "docker compose build" in ctx
 
         # Verify search was called with intent extraction
+        # (2 requests: memory search + observation fetch)
         search_reqs = cems_server.get_requests("/api/memory/search")
-        assert len(search_reqs) == 1
+        assert len(search_reqs) == 2
         assert "query" in search_reqs[0].body
 
         # Verify log-shown was called with the memory IDs

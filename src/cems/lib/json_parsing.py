@@ -40,7 +40,13 @@ def extract_json_from_response(response: str) -> str:
 
     # Try to extract from markdown code blocks anywhere in the response
     if "```" in response:
+        # First try: complete code block with closing backticks
         match = re.search(r"```(?:json)?\s*([\s\S]*?)```", response)
+        if match:
+            return match.group(1).strip()
+
+        # Fallback: opening backticks without closing (truncated response)
+        match = re.search(r"```(?:json)?\s*([\s\S]+)", response)
         if match:
             return match.group(1).strip()
 

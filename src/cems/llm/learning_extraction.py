@@ -28,9 +28,9 @@ CANONICAL_CATEGORIES = [
     "api", "ai", "architecture", "cems", "configuration", "css",
     "database", "debugging", "deployment", "design", "development",
     "email", "environment", "error-handling", "frontend", "gate-rules",
-    "general", "git", "hooks", "infrastructure", "preferences",
-    "project-management", "refactoring", "ruby", "security", "seo",
-    "task-management", "testing", "ui", "workflow",
+    "general", "git", "hooks", "infrastructure", "observation",
+    "preferences", "project-management", "refactoring", "ruby",
+    "security", "seo", "task-management", "testing", "ui", "workflow",
 ]
 
 # Common aliases that map to canonical categories
@@ -63,6 +63,21 @@ MIN_LEARNING_LENGTH = 80
 
 # Minimum confidence threshold for storing learnings
 MIN_CONFIDENCE = 0.6
+
+
+def normalize_category(raw: str) -> str:
+    """Normalize a category string to canonical vocabulary.
+
+    Args:
+        raw: Raw category string from LLM output
+
+    Returns:
+        Canonical category string (lowercase, hyphenated)
+    """
+    cleaned = raw.lower().strip().replace(" ", "-").replace("_", "-")
+    if cleaned in CANONICAL_CATEGORIES:
+        return cleaned
+    return _CATEGORY_ALIASES.get(cleaned, "general")
 
 
 def chunk_content(content: str, max_chunk_size: int = 6000) -> list[str]:
@@ -453,11 +468,7 @@ def _parse_learnings_response(response: str) -> list[dict]:
             continue
 
         # Normalize category to canonical vocabulary
-        raw_category = str(learning.get("category", "general")).lower().strip()
-        # Replace common separators with hyphens
-        raw_category = raw_category.replace(" ", "-").replace("_", "-")
-        if raw_category not in CANONICAL_CATEGORIES:
-            raw_category = _CATEGORY_ALIASES.get(raw_category, "general")
+        raw_category = normalize_category(str(learning.get("category", "general")))
 
         valid_learnings.append({
             "type": learning["type"],

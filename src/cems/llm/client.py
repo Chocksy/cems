@@ -115,11 +115,13 @@ class OpenRouterClient:
         max_tokens: int = 4096,  # High default - let model use what it needs
         temperature: float = 0.3,
         model: str | None = None,
+        fast_route: bool = True,
     ) -> str:
         """Generate a completion from the LLM.
 
-        Always routes through fast inference providers (Cerebras, Groq, SambaNova)
-        for speed. Falls back to other providers if unavailable.
+        By default, routes through fast inference providers (Cerebras, Groq, SambaNova)
+        for speed. Set fast_route=False for models not available on fast providers
+        (e.g., Gemini, Claude).
 
         Args:
             prompt: User prompt
@@ -127,6 +129,8 @@ class OpenRouterClient:
             max_tokens: Maximum response tokens
             temperature: Sampling temperature (0-2)
             model: Override model for this call
+            fast_route: Route through fast providers (default True). Disable for
+                models only available from specific providers (e.g., Gemini).
 
         Returns:
             Generated text response
@@ -136,20 +140,21 @@ class OpenRouterClient:
             messages.append({"role": "system", "content": system})
         messages.append({"role": "user", "content": prompt})
 
-        # Build request kwargs - always use fast providers
         kwargs: dict = {
             "model": model or self.model,
             "messages": messages,
             "max_tokens": max_tokens,
             "temperature": temperature,
-            # Always route through fast providers (Cerebras ~3000 t/s, Groq ~900 t/s)
-            "extra_body": {
+        }
+
+        if fast_route:
+            # Route through fast providers (Cerebras ~3000 t/s, Groq ~900 t/s)
+            kwargs["extra_body"] = {
                 "provider": {
                     "order": FAST_PROVIDERS,  # ["cerebras", "groq", "sambanova"]
-                    "allow_fallbacks": True,  # Fall back to slower providers if all fast ones unavailable
+                    "allow_fallbacks": True,
                 }
-            },
-        }
+            }
 
         response = self._client.chat.completions.create(**kwargs)
 

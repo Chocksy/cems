@@ -116,3 +116,63 @@
 - Search results will be **more relevant** (threshold 0.3 instead of 0.005)
 - Near-duplicate memories (`(session: XXXX)` suffix variants) will be caught by semantic dedup
 - Combined with Phase 2 cleanup (584 quality memories), search signal-to-noise ratio should improve significantly
+
+## Observer Real-World Test Results (2026-02-11)
+
+### Test 1: Session c10f0702 (earlier today — confirmatory prompts + hook work)
+- **127 messages**, 23K chars (~5.7K tokens)
+- **5 observations extracted** — all HIGH priority:
+
+| # | Observation | Quality |
+|---|---|---|
+| 1 | "User wants to implement context-aware memory search for confirmatory prompts (e.g., 'yes' to 'push and deploy?') to surface relevant memories" | Excellent — captures project goal, includes concrete example |
+| 2 | "User confirmed that hooks are copied to their system and requested a commit and push of changes, followed by log verification" | Good — captures workflow step |
+| 3 | "User expressed strong dissatisfaction with the limited scope of confirmatory prompt detection ('yes', 'go ahead', 'ship it') and wants it applied 'always all the time'" | Excellent — captures user sentiment AND preference, quotes their words |
+| 4 | "User wants to use persistent markdown files (planning-with-files skill) as working memory" | Good — captures tool preference |
+| 5 | "User decided to export production CEMS data as a PostgreSQL dump for local cleanup, rather than JSON" | Excellent — captures decision + alternative rejected |
+
+**Verdict**: 4/5 excellent or good. Captures decisions, preferences, sentiment. No implementation noise.
+
+### Test 2: Session a968ab3a (current session — observer build)
+- **187 messages**, 37K chars (~9.3K tokens)
+- **4 observations extracted** (mix of priorities):
+
+| # | Priority | Observation | Quality |
+|---|---|---|---|
+| 1 | HIGH | "User wants to test the new Observer implementation on a real session to evaluate its intelligence and effectiveness" | Good — captures intent |
+| 2 | MEDIUM | "User asked if the current plan is complete and to redeploy local Docker to test the Observer on a recent session" | Mediocre — too specific to one moment |
+| 3 | LOW | "Assistant will use an earlier session (c10f0702) for testing" | Weak — assistant action, not user context |
+| 4 | LOW | "Assistant will write a script to simulate the Observer daemon's behavior" | Weak — transient detail |
+
+**Verdict**: 1/4 good. This session was after context compaction, so the transcript was mostly the tail-end testing phase. The observer correctly identified USER intent (#1) but also captured assistant implementation details that it shouldn't have (#3, #4).
+
+### Assessment
+- **Strong when sessions have rich user-assistant dialogue about goals, decisions, preferences**
+- **Weaker when transcript is dominated by assistant implementation (code, tests, debugging)**
+- The Mastra-inspired prompt successfully avoids CLI commands, file paths, and error messages
+- Priority classification works: assertions → HIGH, questions → MEDIUM, informational → LOW
+- Temporal anchoring not tested yet (no date references in these sessions)
+
+## API Endpoint Tests (2026-02-11)
+
+### Bug Found: Markdown-fenced JSON parsing
+- **Symptom**: `/api/session/observe` returned `observations_stored: 0` for valid transcripts
+- **Root cause**: LLM (Gemini 2.5 Flash) returned JSON wrapped in ` ```json ``` ` with truncated closing backticks
+- **Fix**: Added fallback regex in `extract_json_from_response()` to handle opening backticks without closing ones
+- **File**: `src/cems/lib/json_parsing.py` — line 48-51
+
+### Test 3: API endpoint with assistant-heavy transcript (session a968ab3a, 7KB)
+- 5 observations stored, all about Assistant actions (no user messages in that chunk)
+- Quality: captures implementation changes but attributes them to "Assistant" not "User"
+- **Issue**: When transcript has no user messages, observations are about assistant work
+
+### Test 4: API endpoint with rich user dialogue (session c10f0702, 18KB)
+- 3 observations stored after JSON parsing fix
+- Quality: 2/3 good — captures user concern about restrictive threshold, testing intent
+- **Issue**: Obs #2 includes specific file references (`@test_integration.py`) despite prompt saying not to
+
+### Overall API Test Verdict
+- Endpoint works end-to-end: accepts transcript → LLM extraction → stores observations → returns IDs
+- JSON parsing fix was needed for production reliability
+- Observation quality depends heavily on user message density in the transcript
+- The observer daemon's transcript extraction (in `daemon.py`) should ensure user messages are included

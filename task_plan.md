@@ -1,124 +1,156 @@
-# Task Plan: Memory Quality Overhaul + Always-On Context Search
+# Task Plan: Option D — Hybrid Observer for CEMS
 
 ## Goal
-Fix two fundamental problems with CEMS:
-1. **Bad data**: ~85% of 200 production memories have NULL source_ref, many are duplicates or noise from legacy migration
-2. **Limited context**: The UserPromptSubmit hook should ALWAYS use conversation context to improve search — not just for confirmatory prompts
+Replace CEMS's verbose implementation-detail learnings with **high-level observations** inspired by Mastra's Observational Memory. Memories should be context ("User is deploying CEMS to production") not documentation ("docker compose build rebuilds containers").
 
-## Current Problems
+**Detailed plan**: `research/option-d-observer-plan.md`
 
-### Problem 1: Production Memory Quality
-- **200 total memories** in production DB
-- **~170 (85%) have NULL source_ref** — no project association, can't scope results
-- **Duplicate content**: Same learnings stored multiple times (e.g., "output files stored in /private/tmp/..." appears 3+ times)
-- **Noisy categories**: "unknown", "general", overlapping categories like "hooks" vs "hooks-logging" vs "hook logging"
-- **Low relevance threshold**: 0.005 — basically returns everything, no quality filter
-- **Root cause**: Older memories predate source_ref tracking (added later). Tool learning and session analysis now pass source_ref, but legacy data doesn't have it.
+## Phases
 
-### Problem 2: Search Only Uses User Prompt Text
-- The hook searches CEMS using `extract_intent(prompt)` — raw user text
-- User text like "yes" or "refactor auth" has NO context about what Claude was doing
-- The ASSISTANT's last message (the proposal) is the real context, but it's only used for confirmatory prompts
-- Result: Even non-confirmatory prompts get poor search results because the user's text alone isn't enough
+### Phase 1: Observer Prompt + API Endpoint + Extraction
+**Status:** complete
 
-## Approach
+Create the observation extraction pipeline server-side.
 
-### Phase 1: Always-On Context-Enriched Search (Code Change)
-**Expand transcript context usage to ALL prompts**, not just confirmatory ones.
+**Files to create:**
+- `src/cems/llm/observation_extraction.py` — Observer prompt + extraction logic (Gemini 2.5 Flash via OpenRouter)
+- `src/cems/api/handlers/observation.py` — `POST /api/session/observe` endpoint
+- `tests/test_observation_extraction.py` — unit tests for extraction
 
-For every prompt, optionally enrich the search query with keywords from the last assistant message. This gives CEMS "what is Claude doing?" context alongside "what did the user ask?".
+**Files to modify:**
+- `src/cems/api/handlers/__init__.py` — export new handler
+- `src/cems/server.py` — register `/api/session/observe` route
 
-**File**: `hooks/user_prompts_submit.py`
-**Change**: In the main search path (line ~526), after extracting intent from user prompt, also read the last assistant message and blend keywords from it into the search query.
+**Key decisions:**
+- Model: Gemini 2.5 Flash via OpenRouter (same as Mastra uses)
+- Observer prompt adapted from Mastra: assertion vs question, temporal anchoring, observation-level not implementation-level
+- Storage: `memory_documents` with `category="observation"`, `tags=["observation"]`
+- Max 3 observations per extraction call, each under 200 chars
 
-### Phase 2: Production Data Cleanup (DB Operations)
-Three options (present for user decision):
+### Phase 2: stop.py Quick Win
+**Status:** complete
 
-**Option A: Surgical Cleanup** (Conservative)
-- Export all production memories via API
-- Analyze locally: deduplicate, tag with project IDs where inferrable from session context
-- Delete confirmed noise/duplicates via soft-delete
-- Backfill source_ref where session_id can map to a project
-- Pro: No data loss. Con: Labor-intensive, may not fix category mess
+Add observation extraction to the existing stop hook for immediate value.
 
-**Option B: Fresh Start** (Aggressive)
-- Export production memories as backup
-- Wipe `memory_documents` table
-- Re-ingest from session transcripts (stored in CEMS via /api/session/analyze)
-- All new memories get proper source_ref from day one
-- Pro: Clean slate. Con: Loses any manually-added memories, gate rules
+**Files to modify:**
+- `hooks/stop.py` — after existing `analyze_session()`, also call `/api/session/observe`
 
-**Option C: Hybrid** (Recommended)
-- Export and backup everything
-- Keep gate rules and manually-added memories (category = "gate-rules" or no session tag)
-- Wipe auto-generated learnings (those with "session-learning" or "tool-learning" tags)
-- Raise relevance threshold from 0.005 to something meaningful (0.3-0.4)
-- Improve deduplication: tighten content_hash + add semantic dedup in consolidation job
-- Pro: Keeps important manual memories, eliminates noise. Con: Moderate complexity
+**Key behavior:**
+- At session end, compress transcript to text, send to new endpoint
+- Fire-and-forget, same pattern as existing `analyze_session()`
+- Gets us observations on every session end with zero new infrastructure
 
-### Phase 3: Ingestion Quality Gates (Going Forward)
+### Phase 3: Observer Daemon
+**Status:** complete
 
-Prevent the data quality issues from recurring by tightening the ingestion pipeline.
+Standalone Python daemon for mid-session observations.
 
-#### 3a. Raise Confidence Threshold (learning_extraction.py)
-**File**: `src/cems/llm/learning_extraction.py`
+**Files to create:**
+- `src/cems/observer/__init__.py`
+- `src/cems/observer/daemon.py` — main polling loop (30s interval)
+- `src/cems/observer/session.py` — session discovery from `~/.claude/projects/*/`
+- `src/cems/observer/state.py` — per-session state tracking (`~/.claude/observer/`)
+- Entry point: `python -m cems.observer`
 
-**Current**: Line 234 — `confidence >= 0.3` for session learnings, line 513 — `confidence < 0.5` for tool learnings.
+**Key behavior:**
+- Scans `~/.claude/projects/*/` for JSONL files modified in last 2 hours
+- Reads `cwd` + `gitBranch` from JSONL entries for project identification
+- Triggers observation when 50KB of new content accumulates
+- Tracks byte offset per session to only process new content
 
-**Change**:
-- Session learnings: `0.3` → `0.6` (line 234 and line 299 for chunk path)
-- Tool learning already at `0.5` — raise to `0.6` for consistency (line 513)
+### Phase 4: Observation Surfacing in Hooks
+**Status:** complete
 
-#### 3b. Minimum Content Length (learning_extraction.py)
-**File**: `src/cems/llm/learning_extraction.py`
+Surface recent observations in Claude's context.
 
-**Current**: `_parse_learnings_response()` at line 404 caps content at 500 chars but has no minimum.
+**Files to modify:**
+- `hooks/user_prompts_submit.py` — fetch recent observations for current project
+- Possibly `hooks/cems_session_start.py` — inject project observations at session start
 
-**Change**: In `_parse_learnings_response()`, after validation, skip learnings where `len(content) < 80`.
+**Key behavior:**
+- After existing search, also fetch recent observations filtered by `source_ref`
+- Inject as "Recent Observations" section in context
 
-#### 3c. Noise Content Filtering (learning_extraction.py)
-**File**: `src/cems/llm/learning_extraction.py`
+### Phase 5: Rich Transcript Extraction
+**Status:** complete
 
-**Current**: No content filtering — `/private/tmp/claude` paths, "background command", exit codes all stored.
+Improve the quality of data sent to the observer by extracting richer signals from JSONL session files.
 
-**Change**: Add `_is_noise()` check in `_parse_learnings_response()`:
-- Skip if content contains `/private/tmp/claude`
-- Skip if content matches `^(background command|exit code \d)`
-- Skip if content length < 80 chars (from 3b)
+**Problem discovered:**
+- Sessions have very few `type: "text"` user messages (3 out of 211 entries in a typical session)
+- Most user entries are `tool_result` (191/211) — currently ignored
+- Assistant text blocks average 276 chars (short narration between tool calls)
+- The real substance is in tool_use inputs (what files were read/edited, commands run)
+- Result: observer gets thin content → weak observations for tool-heavy sessions
 
-#### 3d. Controlled Category Vocabulary (learning_extraction.py)
-**File**: `src/cems/llm/learning_extraction.py`
+**Research completed:**
+- Claude Code JSONL has 6 entry types: `user`, `assistant`, `progress`, `system`, `file-history-snapshot`, `queue-operation`
+- `assistant` content blocks: `text`, `thinking`, `tool_use` (with name + input)
+- `user` content blocks: `text`, `tool_result` (with content, stdout, stderr)
+- `isMeta` flag distinguishes system-injected messages from real user input
+- Entire.io extracts: user prompts, last assistant text, modified files from Write/Edit/NotebookEdit
+- Simon Willison's parser: most mature, handles edge cases
 
-**Current**: Category is freeform LLM text — produces 500 unique categories, case variants, singletons.
+**Files to modify:**
+- `src/cems/observer/session.py` — `read_content_delta()` to include tool_use summaries
+- `hooks/stop.py` — `_extract_message_text()` + `observe_session()` to match
 
-**Change**:
-1. Define `CANONICAL_CATEGORIES` list (the 33 categories from Phase 2 cleanup)
-2. In the LLM system prompt, list these as the ONLY valid categories
-3. In `_parse_learnings_response()`, normalize the category:
-   - lowercase + strip
-   - if not in `CANONICAL_CATEGORIES`, map to closest match or "general"
+**Strategy: Add tool action summaries**
+For `assistant` entries with `tool_use` blocks, extract a one-line summary:
+- `[TOOL] Read: src/cems/server.py` (file path from input)
+- `[TOOL] Edit: src/cems/config.py` (file path from input)
+- `[TOOL] Bash: docker compose build` (command, truncated)
+- `[TOOL] Write: tests/test_new.py` (new file created)
+- `[TOOL] Grep: "pattern" in src/` (search pattern + path)
 
-#### 3e. Raise Relevance Threshold (config.py)
-**File**: `src/cems/config.py`
+For `user` entries that are raw strings (not tool_result), ensure they're captured as `[USER]`.
 
-**Current**: `relevance_threshold: float = 0.005` (line 194-196)
+Skip: `progress` entries, `file-history-snapshot`, `tool_result` content (too verbose), `thinking` blocks.
 
-**Change**: `0.005` → `0.3` — this is the scored threshold after all adjustments. With 584 quality memories instead of 2,499, we can afford to be selective.
+**Acceptance criteria:**
+- Same session that previously produced 0 user messages now produces rich content
+- Observer daemon and stop.py both use the same extraction logic (shared function)
+- Existing tests still pass, new tests cover tool_use extraction
+- Docker integration test confirms observations are stored
 
-**Risk**: May reduce recall for some queries. Mitigated by Phase 1's always-on context enrichment.
+### Phase 6: Transcript Compaction
+**Status:** complete
 
-#### 3f. Semantic Dedup on Ingestion (document_store.py)
-**File**: `src/cems/db/document_store.py`
+Compact raw tool action lines into higher-level activity summaries before sending to the observer. Currently the transcript sends 184 individual `[TOOL] Read: /path` lines — the observer sees noise and sometimes leaks file paths into observations.
 
-**Current**: Dedup is content-hash only (exact match). Near-duplicates with `(session: XXXX)` suffix get through.
+**Problem:**
+- Phase 5 added tool_use summaries, but they're 1:1 (one line per tool call)
+- A session with 50 file reads in `src/cems/` produces 50 `[TOOL] Read:` lines
+- The observer LLM sees all these paths and sometimes includes them in observations despite exclusion rules
+- WebFetch/WebSearch actions get lost in the noise of file operations
 
-**Change**: In `add_document()`, after the content-hash check, do a quick vector search for the new chunk's embedding against existing chunks. If cosine similarity > 0.92 (from `config.duplicate_similarity_threshold`), skip insertion and return the existing document ID.
+**Strategy: Aggregate tool actions into activity summaries**
 
-**Timing budget**: One extra vector query (~5ms) per document add — negligible.
+Transform individual tool lines into compacted activity descriptions:
+- `[TOOL] Read: src/cems/server.py` x12 → `[ACTIVITY] Assistant explored src/cems/ (12 files read)`
+- `[TOOL] Edit: src/cems/config.py` + `[TOOL] Edit: src/cems/server.py` → `[ACTIVITY] Assistant modified 2 files in src/cems/`
+- `[TOOL] Bash: docker compose build` + `[TOOL] Bash: docker compose up` → `[ACTIVITY] Assistant ran Docker commands (build, deploy)`
+- `[TOOL] Grep: "pattern" in src/` x5 → `[ACTIVITY] Assistant searched codebase for patterns`
+- WebFetch/WebSearch → `[ACTIVITY] Assistant visited mastra.ai docs` (preserve URLs — these matter for context)
 
----
+**Files to modify:**
+- `src/cems/observer/transcript.py` — add `compact_tool_lines()` post-processing step
+- `hooks/stop.py` — mirror the same compaction in inlined extraction
 
-**Implementation order**: 3a → 3b → 3c → 3d → 3e → 3f (each builds on the previous)
+**Acceptance criteria:**
+- Transcript sent to observer is ~70% shorter (fewer individual tool lines)
+- Tool actions grouped by type + directory
+- Web visits preserved with domain names
+- Observer produces observations without file path leakage
+- Existing tests still pass, new tests for compaction logic
+
+### Phase 7: Reflector / Consolidation (Optional)
+**Status:** pending
+
+Merge old overlapping observations, soft-delete superseded ones.
+
+**Files to modify:**
+- `src/cems/maintenance/consolidation.py` or new maintenance job
 
 ---
 
@@ -126,40 +158,20 @@ Prevent the data quality issues from recurring by tightening the ingestion pipel
 
 | Phase | Status | Notes |
 |-------|--------|-------|
-| Phase 1: Always-on context search | `complete` | Enriches all prompts with assistant context (5af1f05) |
-| Phase 2: Production data cleanup | `complete` | Local DB cleaned, ready to push to prod |
-| Phase 3: Ingestion quality gates | `complete` | All 6 sub-tasks implemented, 251 tests pass |
+| Phase 1: Observer Prompt + API + Extraction | `complete` | 18 tests, Mastra-style prompt |
+| Phase 2: stop.py Quick Win | `complete` | Fire-and-forget observe at session end |
+| Phase 3: Observer Daemon | `complete` | 14 tests, `python -m cems.observer` |
+| Phase 4: Observation Surfacing | `complete` | Fetch + inject in UserPromptSubmit |
+| Phase 5: Rich Transcript Extraction | `complete` | 28 new tests, shared extraction, 5/5 user-focused obs |
+| Phase 6: Transcript Compaction | `complete` | 23 new tests, 42% tool line reduction, 5/5 observations clean |
+| Phase 7: Reflector/Consolidation | `pending` | Optional |
 
-### Phase 2 Results
-- **Before**: 2,499 memory_documents, 500 categories, 92.9% missing source_ref
-- **After**: 584 active memories, 33 canonical categories, 33.7% have source_ref
-- **Soft-deleted**: 1,915 memories (noise, legacy patterns, never-shown/no-ref)
-- **Category normalization**: 500 → 33 canonical categories
-- **source_ref normalization**: `project:pxls` → `project:EpicCoders/pxls`, etc.
-- **Cleanup is local** — needs pg_dump + restore to production
-
-## Research Findings
-
-### Production Data Analysis (2026-02-10) — CORRECTED by codex-investigator
-- **Total memories: 2,453** (200 was just the search candidate limit!)
-- With source_ref: ~175 (7.1%) — only the newest ~300 entries
-- Without source_ref: ~2,278 (92.9%) — everything before hooks added source_ref
-- **477 unique categories** — 241 are singletons (50.5%), 36 duplicate groups
-- "patterns" category: 216 legacy entries from old Mem0 migration
-- Relevance threshold: 0.005 (effectively no filtering)
-- 68.5% of recent memories have shown_count=0 (never surfaced)
-- Ingestion confidence threshold: 0.3 (too low — lets noise through)
-- Gate rules: ~5-6 memories with category "gate-rules"
-
-### How source_ref flows
-- `hooks/stop.py` → sends `source_ref: project:org/repo` to `/api/session/analyze` ✅
-- `hooks/cems_post_tool_use.py` → sends `source_ref` to `/api/tool/learning` ✅
-- `hooks/pre_compact.py` → sends `source_ref` to `/api/session/analyze` ✅
-- Server stores `source_ref` in `memory_documents` table ✅
-- **Gap**: Older memories were created BEFORE these hooks passed source_ref → NULL forever
-
-### Why search returns irrelevant results
-1. No source_ref → can't boost current-project memories
-2. Low threshold (0.005) → everything passes
-3. User prompt alone is thin context → "yes" or "refactor" matches too broadly
-4. No "no results" path → always returns top-10 regardless of actual relevance
+## Errors Encountered
+| Error | Attempt | Resolution |
+|-------|---------|------------|
+| `_parse_observations` empty for valid JSON | 1 | Used `parse_json_list()` not `extract_json_from_response()` |
+| Test AttributeError on lazy import | 1 | Moved to top-level import for test patching |
+| Test expects 1 search req, now 2 | 1 | Updated assertion to `== 2` (memory + observation) |
+| FAST_PROVIDERS latency for Gemini | codex | Added `fast_route=False` parameter to `complete()` |
+| Markdown-fenced JSON without closing backticks | 1 | Added fallback regex in `extract_json_from_response()` |
+| 0 user messages in 211-entry session | research | JSONL stores user text as raw_string, not always in content blocks |
