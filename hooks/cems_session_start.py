@@ -125,6 +125,13 @@ def main():
         if not CEMS_API_URL or not CEMS_API_KEY:
             sys.exit(0)
 
+        # Ensure observer daemon is running (spawns if dead)
+        try:
+            from utils.observer_manager import ensure_daemon_running
+            ensure_daemon_running(force_check=True)
+        except Exception:
+            pass  # Observer is nice-to-have, never block session start
+
         project = get_project_id(cwd) if cwd else None
         profile = fetch_profile(project)
 

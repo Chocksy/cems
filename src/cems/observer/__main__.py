@@ -6,13 +6,35 @@ Usage:
 """
 
 import argparse
+import atexit
 import logging
 import os
 import sys
+from pathlib import Path
 
 from dotenv import load_dotenv
 
 load_dotenv()
+
+PID_FILE = Path.home() / ".claude" / "observer" / "daemon.pid"
+
+
+def _write_pid_file() -> None:
+    """Write current PID to file so hooks can find us."""
+    PID_FILE.parent.mkdir(parents=True, exist_ok=True)
+    PID_FILE.write_text(str(os.getpid()))
+
+
+def _cleanup_pid_file() -> None:
+    """Remove PID file on clean exit."""
+    try:
+        if PID_FILE.exists():
+            # Only remove if it's our PID (another instance might have taken over)
+            stored_pid = int(PID_FILE.read_text().strip())
+            if stored_pid == os.getpid():
+                PID_FILE.unlink()
+    except (ValueError, OSError):
+        pass
 
 
 def main():
@@ -39,6 +61,10 @@ def main():
         triggered = run_cycle(api_url, api_key)
         print(f"Observations triggered: {triggered}")
     else:
+        _write_pid_file()
+        atexit.register(_cleanup_pid_file)
+        # SIGTERM is handled in daemon.py — raises SystemExit(0)
+        # which triggers atexit → _cleanup_pid_file()
         run_daemon(api_url, api_key)
 
 

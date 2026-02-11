@@ -1,177 +1,187 @@
-# Task Plan: Option D — Hybrid Observer for CEMS
+# Task Plan: Option B — End-to-End LongMemEval (Leaderboard-Comparable)
 
 ## Goal
-Replace CEMS's verbose implementation-detail learnings with **high-level observations** inspired by Mastra's Observational Memory. Memories should be context ("User is deploying CEMS to production") not documentation ("docker compose build rebuilds containers").
+Upgrade CEMS's LongMemEval eval from retrieval-only (Recall@5 on Oracle) to a full end-to-end benchmark (answer accuracy on S variant) that produces scores directly comparable to the Mastra leaderboard (84.23% GPT-4o).
 
-**Detailed plan**: `research/option-d-observer-plan.md`
+## Architecture
+
+### Current Eval (longmemeval.py)
+```
+Oracle dataset (1-6 sessions) → Bulk ingest → Search → Recall@5
+```
+
+### New Eval (longmemeval_e2e.py)
+```
+S dataset (40 sessions) → Bulk ingest → Search → LLM answers → LLM judges → Accuracy
+```
+
+### Key Design Decisions
+1. **New file, not modification** — keep `longmemeval.py` for retrieval-only eval (backward compat)
+2. **Reuse shared infra** — import `CEMSEvalClient`, `collect_all_sessions`, `format_session_content` from existing eval
+3. **OpenRouter for all LLM calls** — GPT-4o via OpenRouter (same client as CEMS uses everywhere)
+4. **Shared store** (not per-question isolation) — matches CEMS production behavior. If cross-contamination is an issue, we'll add isolation later.
+5. **S variant first** — 277 MB, ~40 sessions per question, ~115k tokens total. Leaderboard standard.
 
 ## Phases
 
-### Phase 1: Observer Prompt + API Endpoint + Extraction
-**Status:** complete
-
-Create the observation extraction pipeline server-side.
-
-**Files to create:**
-- `src/cems/llm/observation_extraction.py` — Observer prompt + extraction logic (Gemini 2.5 Flash via OpenRouter)
-- `src/cems/api/handlers/observation.py` — `POST /api/session/observe` endpoint
-- `tests/test_observation_extraction.py` — unit tests for extraction
-
-**Files to modify:**
-- `src/cems/api/handlers/__init__.py` — export new handler
-- `src/cems/server.py` — register `/api/session/observe` route
-
-**Key decisions:**
-- Model: Gemini 2.5 Flash via OpenRouter (same as Mastra uses)
-- Observer prompt adapted from Mastra: assertion vs question, temporal anchoring, observation-level not implementation-level
-- Storage: `memory_documents` with `category="observation"`, `tags=["observation"]`
-- Max 3 observations per extraction call, each under 200 chars
-
-### Phase 2: stop.py Quick Win
-**Status:** complete
-
-Add observation extraction to the existing stop hook for immediate value.
-
-**Files to modify:**
-- `hooks/stop.py` — after existing `analyze_session()`, also call `/api/session/observe`
-
-**Key behavior:**
-- At session end, compress transcript to text, send to new endpoint
-- Fire-and-forget, same pattern as existing `analyze_session()`
-- Gets us observations on every session end with zero new infrastructure
-
-### Phase 3: Observer Daemon
-**Status:** complete
-
-Standalone Python daemon for mid-session observations.
-
-**Files to create:**
-- `src/cems/observer/__init__.py`
-- `src/cems/observer/daemon.py` — main polling loop (30s interval)
-- `src/cems/observer/session.py` — session discovery from `~/.claude/projects/*/`
-- `src/cems/observer/state.py` — per-session state tracking (`~/.claude/observer/`)
-- Entry point: `python -m cems.observer`
-
-**Key behavior:**
-- Scans `~/.claude/projects/*/` for JSONL files modified in last 2 hours
-- Reads `cwd` + `gitBranch` from JSONL entries for project identification
-- Triggers observation when 50KB of new content accumulates
-- Tracks byte offset per session to only process new content
-
-### Phase 4: Observation Surfacing in Hooks
-**Status:** complete
-
-Surface recent observations in Claude's context.
-
-**Files to modify:**
-- `hooks/user_prompts_submit.py` — fetch recent observations for current project
-- Possibly `hooks/cems_session_start.py` — inject project observations at session start
-
-**Key behavior:**
-- After existing search, also fetch recent observations filtered by `source_ref`
-- Inject as "Recent Observations" section in context
-
-### Phase 5: Rich Transcript Extraction
-**Status:** complete
-
-Improve the quality of data sent to the observer by extracting richer signals from JSONL session files.
-
-**Problem discovered:**
-- Sessions have very few `type: "text"` user messages (3 out of 211 entries in a typical session)
-- Most user entries are `tool_result` (191/211) — currently ignored
-- Assistant text blocks average 276 chars (short narration between tool calls)
-- The real substance is in tool_use inputs (what files were read/edited, commands run)
-- Result: observer gets thin content → weak observations for tool-heavy sessions
-
-**Research completed:**
-- Claude Code JSONL has 6 entry types: `user`, `assistant`, `progress`, `system`, `file-history-snapshot`, `queue-operation`
-- `assistant` content blocks: `text`, `thinking`, `tool_use` (with name + input)
-- `user` content blocks: `text`, `tool_result` (with content, stdout, stderr)
-- `isMeta` flag distinguishes system-injected messages from real user input
-- Entire.io extracts: user prompts, last assistant text, modified files from Write/Edit/NotebookEdit
-- Simon Willison's parser: most mature, handles edge cases
-
-**Files to modify:**
-- `src/cems/observer/session.py` — `read_content_delta()` to include tool_use summaries
-- `hooks/stop.py` — `_extract_message_text()` + `observe_session()` to match
-
-**Strategy: Add tool action summaries**
-For `assistant` entries with `tool_use` blocks, extract a one-line summary:
-- `[TOOL] Read: src/cems/server.py` (file path from input)
-- `[TOOL] Edit: src/cems/config.py` (file path from input)
-- `[TOOL] Bash: docker compose build` (command, truncated)
-- `[TOOL] Write: tests/test_new.py` (new file created)
-- `[TOOL] Grep: "pattern" in src/` (search pattern + path)
-
-For `user` entries that are raw strings (not tool_result), ensure they're captured as `[USER]`.
-
-Skip: `progress` entries, `file-history-snapshot`, `tool_result` content (too verbose), `thinking` blocks.
-
-**Acceptance criteria:**
-- Same session that previously produced 0 user messages now produces rich content
-- Observer daemon and stop.py both use the same extraction logic (shared function)
-- Existing tests still pass, new tests cover tool_use extraction
-- Docker integration test confirms observations are stored
-
-### Phase 6: Transcript Compaction
-**Status:** complete
-
-Compact raw tool action lines into higher-level activity summaries before sending to the observer. Currently the transcript sends 184 individual `[TOOL] Read: /path` lines — the observer sees noise and sometimes leaks file paths into observations.
-
-**Problem:**
-- Phase 5 added tool_use summaries, but they're 1:1 (one line per tool call)
-- A session with 50 file reads in `src/cems/` produces 50 `[TOOL] Read:` lines
-- The observer LLM sees all these paths and sometimes includes them in observations despite exclusion rules
-- WebFetch/WebSearch actions get lost in the noise of file operations
-
-**Strategy: Aggregate tool actions into activity summaries**
-
-Transform individual tool lines into compacted activity descriptions:
-- `[TOOL] Read: src/cems/server.py` x12 → `[ACTIVITY] Assistant explored src/cems/ (12 files read)`
-- `[TOOL] Edit: src/cems/config.py` + `[TOOL] Edit: src/cems/server.py` → `[ACTIVITY] Assistant modified 2 files in src/cems/`
-- `[TOOL] Bash: docker compose build` + `[TOOL] Bash: docker compose up` → `[ACTIVITY] Assistant ran Docker commands (build, deploy)`
-- `[TOOL] Grep: "pattern" in src/` x5 → `[ACTIVITY] Assistant searched codebase for patterns`
-- WebFetch/WebSearch → `[ACTIVITY] Assistant visited mastra.ai docs` (preserve URLs — these matter for context)
-
-**Files to modify:**
-- `src/cems/observer/transcript.py` — add `compact_tool_lines()` post-processing step
-- `hooks/stop.py` — mirror the same compaction in inlined extraction
-
-**Acceptance criteria:**
-- Transcript sent to observer is ~70% shorter (fewer individual tool lines)
-- Tool actions grouped by type + directory
-- Web visits preserved with domain names
-- Observer produces observations without file path leakage
-- Existing tests still pass, new tests for compaction logic
-
-### Phase 7: Reflector / Consolidation (Optional)
+### Phase 1: Dataset + Data Structures
 **Status:** pending
 
-Merge old overlapping observations, soft-delete superseded ones.
+**Files to create:**
+- `src/cems/eval/longmemeval_e2e.py` — main end-to-end eval module
 
-**Files to modify:**
-- `src/cems/maintenance/consolidation.py` or new maintenance job
+**Work:**
+- Add `LONGMEMEVAL_S_URL` pointing to `xiaowu0162/longmemeval-cleaned/longmemeval_s_cleaned.json`
+- Add `download_longmemeval_s()` — downloads 277 MB S variant
+- Define `E2EResult` dataclass: question_id, question_type, question, ground_truth, generated_answer, judge_verdict (bool), judge_explanation, retrieved_session_ids, correct_session_ids, recall_any, search_time_ms, answer_time_ms, judge_time_ms
+- Define `E2ESummary` dataclass: total_questions, correct_count, accuracy, by_type (with per-type accuracy), macro_accuracy (average of per-type accuracies — this is the leaderboard metric)
+- Import shared utilities from `longmemeval.py`: CEMSEvalClient, format_session_content, collect_all_sessions
+
+### Phase 2: Answer Generation
+**Status:** pending
+
+**Work in `longmemeval_e2e.py`:**
+- Create `generate_answer()` function:
+  - Input: question (str), context (str, formatted retrieved memories), model (str)
+  - System prompt: `"You are a helpful assistant with access to extensive conversation history. Use the provided context to answer the user's question. If the information is not available in the context, say so."`
+  - Uses OpenRouterClient with `temperature=0`, `fast_route=False` (GPT-4o not on fast providers)
+  - Returns generated answer string
+- Context formatting: take search results, format each memory's content with its source_ref/session_id
+- Handle empty search results gracefully (let the model say "I don't know")
+
+### Phase 3: LLM Judge
+**Status:** pending
+
+**Work in `longmemeval_e2e.py`:**
+- Create `judge_answer()` function:
+  - Input: question, correct_answer, generated_answer, question_type, model
+  - Returns (verdict: bool, explanation: str)
+- Type-specific judge prompts (adapted from Mastra/LongMemEval paper):
+  - **Standard** (single-session-user, single-session-assistant, multi-session): "Does the response contain the correct answer?"
+  - **Temporal-reasoning**: "Does the response contain the correct answer? Allow minor date discrepancies (off by one day/time)."
+  - **Knowledge-update**: "Does the response contain the UPDATED answer? It's acceptable if both old and new answers appear, as long as the updated answer is present."
+  - **Single-session-preference**: "Does the response correctly reflect the user's preference or personal information? Be lenient — partial matches are acceptable."
+  - **Abstention**: "Did the model correctly identify that this information is not available? The model should NOT fabricate an answer."
+- Parse YES/NO from judge response (with fallback regex)
+- Default to NO on parse failure (conservative)
+
+### Phase 4: Main Eval Loop + Scoring
+**Status:** pending
+
+**Work in `longmemeval_e2e.py`:**
+- Create `run_e2e_eval()` function:
+  1. Collect all unique sessions → bulk ingest (reuse existing logic)
+  2. For each question:
+     a. Search CEMS (same as current eval)
+     b. Format retrieved context
+     c. Generate answer via LLM
+     d. Judge answer via LLM
+     e. Record result
+  3. Compute per-type accuracy + macro accuracy
+- Progress reporting: `[42/500] temporal-reasoning: ✓ (search 120ms, answer 1.2s, judge 0.8s)`
+- Handle API errors gracefully (retry once, then mark as incorrect)
+
+### Phase 5: CLI + Entry Point
+**Status:** pending
+
+**Files to create:**
+- `src/cems/eval/longmemeval_e2e.py` — add `main()` with CLI (same file)
+
+**CLI arguments:**
+- `--questions N` — number of questions (default: 500 for full, use 5 for testing)
+- `--api-url` — CEMS API URL (default: http://localhost:8765)
+- `--api-key` — CEMS API key
+- `--reader-model` — model for answer generation (default: `openai/gpt-4o`)
+- `--judge-model` — model for judging (default: `openai/gpt-4o`)
+- `--output FILE` — JSON output file with detailed results
+- `--verbose` — show detailed per-question output
+- `--no-cleanup` — keep eval memories after run
+- `--dataset` — `oracle` or `s` (default: `s`)
+- `--no-clean-stale` — skip stale data cleanup
+
+**Entry point:** `python -m cems.eval.longmemeval_e2e --questions 5`
+
+### Phase 6: Unit Tests
+**Status:** pending
+
+**Files to create:**
+- `tests/test_longmemeval_e2e.py` — unit tests for new module
+
+**Tests:**
+- `test_generate_answer_formats_context` — verify context formatting
+- `test_judge_standard_yes` / `test_judge_standard_no` — binary parsing
+- `test_judge_type_specific_prompts` — each type gets correct prompt
+- `test_e2e_result_scoring` — macro accuracy calculation
+- `test_download_s_variant` — URL is correct, file saves
+- `test_context_truncation` — long results get truncated to token budget
 
 ---
 
-## Status
+## Validation Plan (for validator agent)
 
-| Phase | Status | Notes |
-|-------|--------|-------|
-| Phase 1: Observer Prompt + API + Extraction | `complete` | 18 tests, Mastra-style prompt |
-| Phase 2: stop.py Quick Win | `complete` | Fire-and-forget observe at session end |
-| Phase 3: Observer Daemon | `complete` | 14 tests, `python -m cems.observer` |
-| Phase 4: Observation Surfacing | `complete` | Fetch + inject in UserPromptSubmit |
-| Phase 5: Rich Transcript Extraction | `complete` | 28 new tests, shared extraction, 5/5 user-focused obs |
-| Phase 6: Transcript Compaction | `complete` | 23 new tests, 42% tool line reduction, 5/5 observations clean |
-| Phase 7: Reflector/Consolidation | `pending` | Optional |
+1. Run unit tests: `.venv/bin/python3 -m pytest tests/test_longmemeval_e2e.py -xvs`
+2. Run full test suite: `.venv/bin/python3 -m pytest tests/ -x -q` (ensure no regressions)
+3. Rebuild Docker: `docker compose build cems-server && docker compose up -d cems-server`
+4. Wait for healthy: `curl http://localhost:8765/health`
+5. Run mini eval (5 questions): `cd /Users/razvan/Development/cems && .venv/bin/python3 -m cems.eval.longmemeval_e2e --questions 5 --api-url http://localhost:8765 --api-key <key> --verbose --output /tmp/eval_e2e_test.json --no-cleanup`
+6. Check Docker logs: `docker logs cems-server --tail 100`
+7. Read output: `cat /tmp/eval_e2e_test.json`
+8. Report results back
+
+## Expected Output
+
+```
+LONGMEMEVAL E2E BENCHMARK FOR CEMS
+============================================================
+Dataset: S variant (40 sessions/question)
+Reader model: openai/gpt-4o
+Judge model: openai/gpt-4o
+Questions: 500
+
+Phase 1: Collecting unique sessions...
+  Found ~20,000 unique sessions across 500 questions
+Phase 2: Bulk ingesting...
+  Ingested 20,000 sessions in ~300s
+Phase 3: Running end-to-end eval...
+
+[1/500] temporal-reasoning: ✓ (search 120ms, answer 1.2s, judge 0.8s)
+[2/500] multi-session: ✗ (search 85ms, answer 1.5s, judge 0.9s)
+...
+
+============================================================
+EVALUATION SUMMARY
+============================================================
+Overall: 420/500 = 84.0%
+Macro accuracy (leaderboard metric): 82.5%
+
+By type:
+  single-session-user:       62/70  = 88.6%
+  single-session-assistant:  48/56  = 85.7%
+  single-session-preference: 26/30  = 86.7%
+  multi-session:            108/133 = 81.2%
+  knowledge-update:          59/78  = 75.6%
+  temporal-reasoning:       105/133 = 78.9%
+
+Comparison to leaderboard:
+  Mastra OM (gpt-4o): 84.23%
+  CEMS:               82.5%  ← us
+  Supermemory:        81.6%
+  Mastra RAG:         80.0%
+
+Total time: 45min | Cost: ~$35
+```
+
+## Cost Estimate (500 questions)
+
+| Component | Calls | Cost |
+|-----------|-------|------|
+| Session ingestion (~20K) | 20K embeddings | ~$2 |
+| Search (500 questions) | 500 hybrid searches | ~$0.50 |
+| Answer generation (500) | 500 GPT-4o calls | ~$15-25 |
+| Judge (500) | 500 GPT-4o calls | ~$10-15 |
+| **Total** | | **~$30-45** |
 
 ## Errors Encountered
 | Error | Attempt | Resolution |
 |-------|---------|------------|
-| `_parse_observations` empty for valid JSON | 1 | Used `parse_json_list()` not `extract_json_from_response()` |
-| Test AttributeError on lazy import | 1 | Moved to top-level import for test patching |
-| Test expects 1 search req, now 2 | 1 | Updated assertion to `== 2` (memory + observation) |
-| FAST_PROVIDERS latency for Gemini | codex | Added `fast_route=False` parameter to `complete()` |
-| Markdown-fenced JSON without closing backticks | 1 | Added fallback regex in `extract_json_from_response()` |
-| 0 user messages in 211-entry session | research | JSONL stores user text as raw_string, not always in content blocks |
+| | | |

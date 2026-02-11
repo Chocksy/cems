@@ -49,6 +49,11 @@ from cems.llm.observation_extraction import (
     extract_observations,
 )
 
+# Observation reflection exports
+from cems.llm.observation_reflection import (
+    reflect_observations,
+)
+
 __all__ = [
     # Client
     "OpenRouterClient",
@@ -68,4 +73,6 @@ __all__ = [
     "normalize_category",
     # Observation extraction
     "extract_observations",
+    # Observation reflection
+    "reflect_observations",
 ]

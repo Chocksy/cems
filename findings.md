@@ -176,3 +176,112 @@
 - JSON parsing fix was needed for production reliability
 - Observation quality depends heavily on user message density in the transcript
 - The observer daemon's transcript extraction (in `daemon.py`) should ensure user messages are included
+
+## LongMemEval End-to-End Eval Research (2026-02-11)
+
+### Key Discovery: CEMS Eval Measures Something Different From the Leaderboard
+
+| | CEMS Current | Leaderboard (Mastra, Supermemory, etc.) |
+|---|---|---|
+| **Dataset** | Oracle (1-6 evidence sessions only) | S variant (40 sessions, 30+ distractors) |
+| **Metric** | Retrieval Recall@5 | Answer accuracy (LLM-as-judge) |
+| **LLM involved?** | No (pure vector search) | Yes (LLM reads context and answers) |
+| **Judge** | Session ID match | GPT-4o says "yes/no" to answer quality |
+| **Our score** | 98% Recall@5 | NOT COMPARABLE to leaderboard |
+
+Our 98% is on Oracle (finding the needle among 1-6 sessions). The leaderboard tests finding + reading among 40 sessions. These are fundamentally different difficulties.
+
+### How Mastra's Benchmark Works (from source code analysis)
+
+**Phase 1: Prepare** — Per question, creates isolated memory store, feeds sessions through observer/reflector (Gemini 2.5 Flash). Observer runs DURING prepare as a processor on agent.generate(). Shortcut configs do single finalize() pass instead.
+
+**Phase 2: Run** — Answering agent (e.g., GPT-4o) receives question + memory context (observations or semantic recall). System prompt: "You are a helpful assistant with access to extensive conversation history." Answer generated at temperature=0.
+
+**Phase 3: Judge** — Separate GPT-4o judge receives question + correct answer + model answer. Evaluates with type-specific prompts:
+- Standard types: "does the response contain the correct answer?"
+- Temporal: allows off-by-one errors
+- Knowledge-update: accepts old+new if updated answer present
+- Preference: lenient, just needs correct use of personal info
+- Abstention: "did model correctly identify as unanswerable?"
+
+**Key insight: Per-question isolation.** Each question gets its own independent memory store. No cross-contamination between questions. 500 independent memory instances.
+
+### Leaderboard Scores (LongMemEval_S, GPT-4o reader)
+
+| System | Score | Notes |
+|--------|-------|-------|
+| Mastra OM (gpt-5-mini) | 94.87% | Best model, not just best memory |
+| Mastra OM (gpt-4o) | 84.23% | Fair comparison to others |
+| Emergence Internal | 86.0% | Not reproducible |
+| Supermemory (gpt-4o) | 81.6% | Open source |
+| Emergence Simple | 82.4% | Surprisingly close to fancy systems |
+| Mastra RAG (topK=20) | 80.0% | Pure RAG, no observer |
+| Zep (gpt-4o) | 71.2% | Knowledge graph approach |
+| GPT-4o full context | 60.6% | Baseline (everything in context window) |
+
+### CEMS Adaptation Design
+
+**Option A: Retrieval-only upgrade (easy)**
+- Switch from Oracle → S dataset (40 sessions)
+- Keep retrieval-only metric (Recall@5)
+- Would reveal true retrieval difficulty (currently Oracle makes it too easy)
+- Estimated: ~1 day work
+
+**Option B: Full end-to-end eval (Mastra-comparable)**
+- Switch to S dataset
+- Add LLM answer generation step (GPT-4o reads retrieved context + answers)
+- Add LLM-as-judge step (GPT-4o evaluates answer correctness)
+- Use same type-specific judge prompts as paper/Mastra
+- Would produce a score directly comparable to leaderboard
+- Estimated: ~2-3 days work
+
+**Option C: Observer impact measurement (Option B + observer)**
+- Run Option B as baseline
+- Also run sessions through observer (create observations)
+- At query time, include observations alongside vector search results
+- Compare: baseline retrieval-only vs retrieval + observations
+- Measures the VALUE of the observer system we just built
+- Estimated: ~3-4 days (includes Option B)
+
+### Would It Skip CEMS Tools?
+
+**No — it would exercise MORE of the pipeline than current eval:**
+
+| Pipeline Component | Current Eval | Option B | Option C |
+|---|---|---|---|
+| Ingestion (add_async) | ✅ | ✅ | ✅ |
+| Chunking (800 tokens) | ✅ | ✅ | ✅ |
+| Embedding (1536-dim) | ✅ | ✅ | ✅ |
+| Dedup (hash + semantic) | ✅ | ✅ | ✅ |
+| Vector search | ✅ | ✅ | ✅ |
+| Hybrid search (BM25) | partial | ✅ | ✅ |
+| Query synthesis (LLM) | ❌ | ✅ | ✅ |
+| Score adjustments | ✅ | ✅ | ✅ |
+| Observer extraction | ❌ | ❌ | ✅ |
+| Observation retrieval | ❌ | ❌ | ✅ |
+| LLM answer generation | ❌ | ✅ | ✅ |
+| LLM-as-judge | ❌ | ✅ | ✅ |
+
+**Option C is the most comprehensive test** — it exercises every component in the CEMS pipeline including the observer we just built.
+
+### Per-Question Isolation Question
+
+Mastra uses per-question isolation (fresh memory store per question). Two approaches for CEMS:
+
+1. **Shared store** (simpler): All sessions go in one store, tagged with source_ref. At query time, no filtering — tests real cross-question contamination. Simpler but less pure.
+2. **Per-question store** (purer): Clean eval DB before each question, ingest only that question's sessions. More work but directly comparable to Mastra. Could use admin cleanup API we already have.
+
+**Recommendation**: Start with shared store (it's what CEMS actually does in production). If scores are anomalously low/high due to cross-contamination, switch to per-question isolation.
+
+### Cost Estimate for Full Eval (500 questions)
+
+| Component | API Calls | Est. Cost |
+|---|---|---|
+| Session ingestion (S: ~20K unique sessions) | 20K embeddings | ~$2 (text-embedding-3-small) |
+| Observer extraction (20K sessions) | 20K Gemini Flash calls | ~$5-10 |
+| Search (500 questions) | 500 hybrid searches | ~$0.50 |
+| Query synthesis (500 questions) | 500 Gemini Flash calls | ~$1 |
+| LLM answer generation (500 questions) | 500 GPT-4o calls | ~$15-25 |
+| LLM-as-judge (500 questions) | 500 GPT-4o calls | ~$10-15 |
+| **Total Option B** | | **~$30-45** |
+| **Total Option C** | | **~$35-55** |

@@ -7,6 +7,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 
 from cems.maintenance.consolidation import ConsolidationJob
+from cems.maintenance.observation_reflector import ObservationReflector
 from cems.maintenance.reindex import ReindexJob
 from cems.maintenance.summarization import SummarizationJob
 
@@ -48,6 +49,16 @@ class CEMSScheduler:
             replace_existing=True,
         )
 
+        # Nightly observation reflection (runs 30 min after consolidation)
+        reflect_hour = self.config.nightly_hour
+        self._scheduler.add_job(
+            self._run_reflection,
+            CronTrigger(hour=reflect_hour, minute=30),
+            id="nightly_reflection",
+            name="Nightly Observation Reflection",
+            replace_existing=True,
+        )
+
         # Weekly summarization
         self._scheduler.add_job(
             self._run_summarization,
@@ -83,6 +94,22 @@ class CEMSScheduler:
             logger.info(f"Nightly consolidation completed: {result}")
         except Exception as e:
             logger.error(f"Nightly consolidation failed: {e}")
+
+    def _run_reflection(self) -> None:
+        """Run the nightly observation reflection job."""
+        import asyncio
+
+        logger.info("Starting nightly observation reflection...")
+        try:
+            reflector = ObservationReflector(self.memory)
+            loop = asyncio.new_event_loop()
+            try:
+                result = loop.run_until_complete(reflector.run_async())
+            finally:
+                loop.close()
+            logger.info(f"Nightly observation reflection completed: {result}")
+        except Exception as e:
+            logger.error(f"Nightly observation reflection failed: {e}")
 
     def _run_summarization(self) -> None:
         """Run the weekly summarization job."""

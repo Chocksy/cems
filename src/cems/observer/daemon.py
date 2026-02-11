@@ -11,6 +11,7 @@ Usage:
 import json
 import logging
 import os
+import signal
 import time
 import urllib.error
 import urllib.request
@@ -38,6 +39,11 @@ POLL_INTERVAL = 30  # seconds
 
 # State cleanup frequency (in poll cycles)
 CLEANUP_EVERY_N_CYCLES = 100  # ~50 minutes
+
+# Consecutive API failure backoff
+MAX_CONSECUTIVE_FAILURES = 10  # After this many, increase sleep interval
+BACKOFF_INTERVAL = 300  # 5 minutes between cycles when backed off
+
 
 
 def send_observation(
@@ -89,7 +95,15 @@ def send_observation(
                 return True
             return False
 
-    except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError) as e:
+    except urllib.error.HTTPError as e:
+        if e.code in (401, 403):
+            # Auth errors should propagate — no point retrying every 30s
+            raise RuntimeError(f"Auth failed ({e.code}): check CEMS_API_KEY") from e
+        if e.code == 404:
+            raise RuntimeError("Observe endpoint not found (404): deploy CEMS update") from e
+        logger.warning(f"Observation API call failed for {session_id[:8]}: {e}")
+        return False
+    except (urllib.error.URLError, TimeoutError) as e:
         logger.warning(f"Observation API call failed for {session_id[:8]}: {e}")
         return False
     except Exception as e:
@@ -171,6 +185,10 @@ def run_cycle(api_url: str, api_key: str) -> int:
         try:
             if process_session(session, api_url, api_key):
                 observations_triggered += 1
+        except RuntimeError as e:
+            # Auth/404 errors — propagate so daemon backs off
+            logger.error(f"Error processing session {session.session_id[:8]}: {e}")
+            raise
         except Exception as e:
             logger.error(f"Error processing session {session.session_id[:8]}: {e}")
             continue
@@ -178,26 +196,47 @@ def run_cycle(api_url: str, api_key: str) -> int:
     return observations_triggered
 
 
+def _handle_sigterm(signum, frame):
+    """Handle SIGTERM for graceful shutdown.
+
+    Raises SystemExit to interrupt time.sleep() and exit immediately
+    rather than waiting for the next cycle.
+    """
+    logger.info("SIGTERM received, shutting down...")
+    raise SystemExit(0)
+
+
 def run_daemon(api_url: str, api_key: str) -> None:
     """Run the observer daemon continuously.
 
     Polls every POLL_INTERVAL seconds, processes active sessions,
-    and periodically cleans up old state files.
+    and periodically cleans up old state files. Backs off on
+    consecutive API failures to avoid hammering a broken server.
 
     Args:
         api_url: CEMS server URL.
         api_key: CEMS API key.
     """
-    logger.info(f"Observer daemon started (polling every {POLL_INTERVAL}s)")
+    # Register SIGTERM handler for clean shutdown (e.g., kill <pid>)
+    signal.signal(signal.SIGTERM, _handle_sigterm)
+
+    logger.info(f"Observer daemon started (PID {os.getpid()}, polling every {POLL_INTERVAL}s)")
     logger.info(f"CEMS API: {api_url}")
     logger.info(f"Observation threshold: {OBSERVATION_THRESHOLD} bytes")
 
     cycle = 0
+    consecutive_failures = 0
+
     while True:
         try:
             triggered = run_cycle(api_url, api_key)
+
             if triggered > 0:
                 logger.info(f"Cycle {cycle}: {triggered} observation(s) triggered")
+                consecutive_failures = 0  # Reset on success
+            elif triggered == 0:
+                # No observations triggered but no errors — reset failures
+                consecutive_failures = 0
 
             # Periodic cleanup
             cycle += 1
@@ -209,5 +248,17 @@ def run_daemon(api_url: str, api_key: str) -> None:
             break
         except Exception as e:
             logger.error(f"Error in observer cycle: {e}")
+            consecutive_failures += 1
 
-        time.sleep(POLL_INTERVAL)
+        # Back off if too many consecutive failures
+        if consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
+            if consecutive_failures == MAX_CONSECUTIVE_FAILURES:
+                logger.warning(
+                    f"{consecutive_failures} consecutive failures, "
+                    f"backing off to {BACKOFF_INTERVAL}s interval"
+                )
+            time.sleep(BACKOFF_INTERVAL)
+        else:
+            time.sleep(POLL_INTERVAL)
+
+    logger.info("Observer daemon stopped")

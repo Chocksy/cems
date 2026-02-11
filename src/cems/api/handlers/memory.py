@@ -654,11 +654,24 @@ async def api_memory_maintenance(request: Request):
     """REST API endpoint to run maintenance jobs.
 
     POST /api/memory/maintenance
-    Body: {"job_type": "consolidation|summarization|reindex|all"}
+    Body: {"job_type": "consolidation|summarization|reindex|reflect|all"}
     """
     try:
         body = await request.json()
         job_type = body.get("job_type", "consolidation")
+
+        # Handle observation reflection separately (async-native)
+        if job_type == "reflect":
+            from cems.maintenance.observation_reflector import ObservationReflector
+
+            memory = get_memory()
+            reflector = ObservationReflector(memory)
+            result = await reflector.run_async()
+            return JSONResponse({
+                "success": True,
+                "job_type": "reflect",
+                "results": result,
+            })
 
         scheduler = get_scheduler()
 
@@ -666,6 +679,14 @@ async def api_memory_maintenance(request: Request):
             results = {}
             for jt in ["consolidation", "summarization", "reindex"]:
                 results[jt] = scheduler.run_now(jt)
+
+            # Also run reflection (async)
+            from cems.maintenance.observation_reflector import ObservationReflector
+
+            memory = get_memory()
+            reflector = ObservationReflector(memory)
+            results["reflect"] = await reflector.run_async()
+
             return JSONResponse({
                 "success": True,
                 "job_type": "all",
@@ -682,7 +703,7 @@ async def api_memory_maintenance(request: Request):
         logger.error(f"API memory_maintenance error: {e}")
         return JSONResponse({
             "success": False,
-            "job_type": job_type,
+            "job_type": body.get("job_type", "unknown"),
             "error": str(e),
         }, status_code=500)
 

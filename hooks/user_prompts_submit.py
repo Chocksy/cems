@@ -528,6 +528,13 @@ def main():
         if os.environ.get('CLAUDE_AGENT_ID'):
             return
 
+        # Ensure observer daemon is running (rate-limited, checks every 5 min)
+        try:
+            from utils.observer_manager import ensure_daemon_running
+            ensure_daemon_running()
+        except Exception:
+            pass  # Observer is nice-to-have, never block prompts
+
         # Handle confirmatory prompts ("yes", "go ahead", etc.)
         # Instead of skipping, derive search intent from what Claude proposed
         if is_confirmatory(prompt):

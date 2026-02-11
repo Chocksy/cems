@@ -19,7 +19,7 @@ for f in cems_session_start.py user_prompts_submit.py cems_post_tool_use.py stop
 done
 
 # Copy utils
-for f in constants.py transcript.py hook_logger.py; do
+for f in constants.py transcript.py hook_logger.py observer_manager.py; do
     cp "$SCRIPT_DIR/utils/$f" "$TARGET_DIR/utils/$f"
     echo "  Installed utils/$f"
 done
