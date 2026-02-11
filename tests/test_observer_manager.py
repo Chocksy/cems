@@ -158,9 +158,12 @@ class TestSpawnDaemon:
             assert result is False
 
     def test_fails_without_api_key(self, tmp_path):
-        with patch.dict(os.environ, {"CEMS_API_KEY": ""}, clear=False):
+        import utils.credentials
+        with patch.dict(os.environ, {"CEMS_API_KEY": "", "CEMS_CREDENTIALS_FILE": "/dev/null"}, clear=False):
+            utils.credentials._cache = None  # Force reload with new path
             result = _spawn_daemon()
             assert result is False
+            utils.credentials._cache = None  # Clean up
 
     def test_finds_cems_root_from_env(self, tmp_path):
         """Should use CEMS_PROJECT_ROOT env var when set and attempt Popen."""

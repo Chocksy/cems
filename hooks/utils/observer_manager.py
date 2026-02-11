@@ -16,6 +16,8 @@ import sys
 import time
 from pathlib import Path
 
+from utils.credentials import get_cems_key, get_credentials_env
+
 OBSERVER_DIR = Path.home() / ".claude" / "observer"
 PID_FILE = OBSERVER_DIR / "daemon.pid"
 COOLDOWN_FILE = OBSERVER_DIR / ".spawn_cooldown"
@@ -144,12 +146,16 @@ def _spawn_daemon() -> bool:
     if not venv_python.exists():
         return False
 
-    # Check required env vars
-    if not os.getenv("CEMS_API_KEY"):
+    # Check required env vars (env or ~/.cems/credentials)
+    if not get_cems_key():
         return False
 
     try:
         OBSERVER_DIR.mkdir(parents=True, exist_ok=True)
+
+        # Build env with credentials from file fallback
+        spawn_env = get_credentials_env()
+        spawn_env["PYTHONPATH"] = str(cems_path / "src")
 
         # Spawn daemon as fully detached process
         # stdout/stderr go to a log file for debugging
@@ -162,7 +168,7 @@ def _spawn_daemon() -> bool:
                 stderr=logf,
                 stdin=subprocess.DEVNULL,
                 start_new_session=True,  # Detach from parent process group
-                env={**os.environ, "PYTHONPATH": str(cems_path / "src")},
+                env=spawn_env,
             )
 
         # Write PID file

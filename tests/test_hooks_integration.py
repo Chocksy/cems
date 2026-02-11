@@ -90,6 +90,9 @@ def run_hook(
     env.setdefault("CEMS_API_KEY", "")
     if env_overrides:
         env.update(env_overrides)
+    # Disable credentials file fallback so offline tests don't pick up real creds
+    if not env.get("CEMS_API_KEY"):
+        env["CEMS_CREDENTIALS_FILE"] = "/dev/null"
 
     cmd = ["uv", "run", str(hook_path)]
     if extra_args:

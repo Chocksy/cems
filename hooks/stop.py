@@ -1,9 +1,6 @@
 #!/usr/bin/env -S uv run --script
 # /// script
 # requires-python = ">=3.11"
-# dependencies = [
-#     "python-dotenv",
-# ]
 # ///
 
 """
@@ -24,20 +21,15 @@ import random
 import subprocess
 from pathlib import Path
 
-try:
-    from dotenv import load_dotenv
-    load_dotenv()
-except ImportError:
-    pass  # dotenv is optional
-
 # Import utilities
 sys.path.insert(0, str(Path(__file__).parent))
 from utils.constants import ensure_session_log_dir
+from utils.credentials import get_cems_key, get_cems_url
 from utils.hook_logger import log_hook_event
 
-# CEMS configuration
-CEMS_API_URL = os.getenv("CEMS_API_URL", "https://cems.chocksy.com")
-CEMS_API_KEY = os.getenv("CEMS_API_KEY", "")
+# CEMS configuration — env vars first, then ~/.cems/credentials fallback
+CEMS_API_URL = get_cems_url()
+CEMS_API_KEY = get_cems_key()
 
 
 def get_project_id(cwd: str) -> str | None:

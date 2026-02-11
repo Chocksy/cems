@@ -12,10 +12,6 @@ import os
 import sys
 from pathlib import Path
 
-from dotenv import load_dotenv
-
-load_dotenv()
-
 PID_FILE = Path.home() / ".claude" / "observer" / "daemon.pid"
 
 
@@ -48,8 +44,23 @@ def main():
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     )
 
-    api_url = os.getenv("CEMS_API_URL", "https://cems.chocksy.com")
-    api_key = os.getenv("CEMS_API_KEY", "")
+    # Load credentials: env vars first, then ~/.cems/credentials fallback
+    _creds_file = Path.home() / ".cems" / "credentials"
+    _file_creds: dict[str, str] = {}
+    try:
+        if _creds_file.exists():
+            for _line in _creds_file.read_text().splitlines():
+                _line = _line.strip()
+                if _line and not _line.startswith("#") and "=" in _line:
+                    _k, _, _v = _line.partition("=")
+                    _k, _v = _k.strip(), _v.strip().strip("'\"")
+                    if _k and _v:
+                        _file_creds[_k] = _v
+    except OSError:
+        pass
+
+    api_url = os.getenv("CEMS_API_URL") or _file_creds.get("CEMS_API_URL", "https://cems.chocksy.com")
+    api_key = os.getenv("CEMS_API_KEY") or _file_creds.get("CEMS_API_KEY", "")
 
     if not api_key:
         print("Error: CEMS_API_KEY environment variable is required", file=sys.stderr)

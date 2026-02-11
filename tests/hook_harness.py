@@ -271,6 +271,8 @@ def run_hook(
         # No server = hooks should gracefully skip API calls
         env["CEMS_API_URL"] = ""
         env["CEMS_API_KEY"] = ""
+        # Disable credentials file fallback so tests truly run without CEMS
+        env["CEMS_CREDENTIALS_FILE"] = "/dev/null"
 
     if extra_env:
         env.update(extra_env)

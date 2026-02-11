@@ -31,12 +31,13 @@ from pathlib import Path
 import httpx
 
 sys.path.insert(0, str(Path(__file__).parent))
+from utils.credentials import get_cems_key, get_cems_url
 from utils.hook_logger import log_hook_event
 from utils.transcript import read_last_assistant_message
 
-# CEMS configuration from environment (no defaults - set CEMS_API_URL and CEMS_API_KEY)
-CEMS_API_URL = os.getenv("CEMS_API_URL", "")
-CEMS_API_KEY = os.getenv("CEMS_API_KEY", "")
+# CEMS configuration — env vars first, then ~/.cems/credentials fallback
+CEMS_API_URL = get_cems_url()
+CEMS_API_KEY = get_cems_key()
 
 CONFIRMATORY = re.compile(
     r'^(yes|yeah|yep|yup|ok|okay|sure|go|do it|proceed|'
