@@ -4,25 +4,63 @@ A dual-layer memory system (personal + shared) with scheduled maintenance and kn
 
 ## Quick Start
 
-### One-Command Install (no clone required)
+You need two things from your CEMS admin: a **server URL** and an **API key**.
+
+### Option A: Interactive install (recommended)
+
+Download the installer first, then run it — this lets it prompt you for credentials:
 
 ```bash
-curl -sSf https://raw.githubusercontent.com/chocksy/cems/main/remote-install.sh | bash
+curl -sSf https://raw.githubusercontent.com/chocksy/cems/main/remote-install.sh -o install-cems.sh
+bash install-cems.sh
 ```
 
-This installs the CEMS CLI, hooks, skills, and prompts for your API credentials.
+It will ask for your API URL and key interactively.
 
-### Alternative: Install from source
+### Option B: Non-interactive install
+
+Pass credentials as environment variables (useful for scripting):
+
+```bash
+CEMS_API_KEY=your-key-here CEMS_API_URL=https://cems.example.com \
+  curl -sSf https://raw.githubusercontent.com/chocksy/cems/main/remote-install.sh | bash
+```
+
+### Option C: Install from source (developers)
 
 ```bash
 git clone https://github.com/chocksy/cems.git && cd cems
 ./install.sh
 ```
 
+### What it does
+
+1. Installs [uv](https://docs.astral.sh/uv/) if not already installed
+2. Installs the CEMS CLI (`cems`, `cems-server`, `cems-observer`) via `uv tool install`
+3. Runs `cems setup --claude` which:
+   - Copies 6 hook scripts to `~/.claude/hooks/`
+   - Copies skill files to `~/.claude/skills/cems/`
+   - Merges CEMS config into `~/.claude/settings.json` (preserves your existing settings)
+   - Saves credentials to `~/.cems/credentials`
+
+### After install
+
+```bash
+# Verify installation
+cems --version
+cems health
+
+# Reconfigure credentials or re-install hooks
+cems setup
+
+# Update to latest version (re-run the installer)
+CEMS_API_KEY=your-key CEMS_API_URL=https://cems.example.com \
+  curl -sSf https://raw.githubusercontent.com/chocksy/cems/main/remote-install.sh | bash
+```
+
 ### Credentials
 
-Your API key and server URL are stored in `~/.cems/credentials` (created during setup).
-To reconfigure: `cems setup`
+Stored in `~/.cems/credentials` (chmod 600). Environment variables (`CEMS_API_URL`, `CEMS_API_KEY`) take priority if set.
 
 ## Configuration
 
@@ -34,12 +72,12 @@ To reconfigure: `cems setup`
 ~/.claude/
 ├── settings.json           # Hooks config (merged, not overwritten)
 ├── hooks/
-│   ├── cems_session_start.py       # Profile injection
-│   ├── user_prompts_submit.py      # Memory search + context
-│   ├── cems_post_tool_use.py       # Tool learning
-│   ├── pre_tool_use.py             # Gate rules
-│   ├── stop.py                     # Session analysis + observer
-│   ├── pre_compact.py              # Pre-compaction hook
+│   ├── cems_session_start.py        # Profile injection
+│   ├── cems_user_prompts_submit.py  # Memory search + context
+│   ├── cems_post_tool_use.py        # Tool learning
+│   ├── cems_pre_tool_use.py         # Gate rules
+│   ├── cems_stop.py                 # Session analysis + observer
+│   ├── cems_pre_compact.py          # Pre-compaction hook
 │   └── utils/                      # Shared utilities
 └── skills/
     └── cems/

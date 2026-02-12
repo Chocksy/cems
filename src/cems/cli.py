@@ -1,8 +1,11 @@
 """CLI interface for CEMS.
 
 This CLI communicates with a CEMS server via HTTP API.
-All operations require CEMS_API_URL and CEMS_API_KEY to be set.
+Reads credentials from env vars, CLI flags, or ~/.cems/credentials.
 """
+
+from importlib.metadata import version
+from pathlib import Path
 
 import click
 
@@ -15,7 +18,26 @@ from cems.commands.admin import admin
 from cems.commands.setup import setup
 
 
+def _read_credentials_file() -> dict[str, str]:
+    """Read ~/.cems/credentials as fallback for env vars."""
+    creds_file = Path.home() / ".cems" / "credentials"
+    result = {}
+    try:
+        if creds_file.exists():
+            for line in creds_file.read_text().splitlines():
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                if "=" in line:
+                    key, _, value = line.partition("=")
+                    result[key.strip()] = value.strip().strip("'\"")
+    except OSError:
+        pass
+    return result
+
+
 @click.group()
+@click.version_option(version=version("cems"), prog_name="cems")
 @click.option("-v", "--verbose", is_flag=True, help="Enable verbose output")
 @click.option("--api-url", envvar="CEMS_API_URL", help="CEMS server URL")
 @click.option("--api-key", envvar="CEMS_API_KEY", help="API key for authentication")
@@ -25,10 +47,19 @@ def main(ctx: click.Context, verbose: bool, api_url: str | None, api_key: str | 
 
     A memory system for AI assistants. Requires a CEMS server.
 
-    Configuration:
-      CEMS_API_URL  - Server URL (e.g., https://cems.example.com)
-      CEMS_API_KEY  - Your API key
+    Configuration (checked in order):
+      1. CLI flags: --api-url, --api-key
+      2. Environment: CEMS_API_URL, CEMS_API_KEY
+      3. Credentials file: ~/.cems/credentials
     """
+    # Fall back to ~/.cems/credentials if no env vars or flags
+    if not api_url or not api_key:
+        creds = _read_credentials_file()
+        if not api_url:
+            api_url = creds.get("CEMS_API_URL")
+        if not api_key:
+            api_key = creds.get("CEMS_API_KEY")
+
     ctx.ensure_object(dict)
     ctx.obj["verbose"] = verbose
     ctx.obj["api_url"] = api_url

@@ -237,7 +237,7 @@ class TestUserPromptSubmit:
         ))
 
         result = run_hook(
-            "user_prompts_submit.py",
+            "cems_user_prompts_submit.py",
             make_user_prompt_input(prompt="How do I configure Docker for this project?"),
             server=cems_server,
             extra_env={"HOME": str(tmp_path)},
@@ -273,7 +273,7 @@ class TestUserPromptSubmit:
         ))
 
         result = run_hook(
-            "user_prompts_submit.py",
+            "cems_user_prompts_submit.py",
             make_user_prompt_input(prompt="Tell me about quantum physics in detail"),
             server=cems_server,
             extra_env={"HOME": str(tmp_path)},
@@ -294,7 +294,7 @@ class TestUserPromptSubmit:
         ))
 
         result = run_hook(
-            "user_prompts_submit.py",
+            "cems_user_prompts_submit.py",
             make_user_prompt_input(prompt="Explain the architecture of this project -u"),
             server=cems_server,
             extra_env={"HOME": str(tmp_path)},
@@ -308,7 +308,7 @@ class TestUserPromptSubmit:
     def test_short_prompts_skip_search(self, cems_server: RecordingServer, tmp_path):
         """Very short prompts (<15 chars) should skip memory search."""
         result = run_hook(
-            "user_prompts_submit.py",
+            "cems_user_prompts_submit.py",
             make_user_prompt_input(prompt="hi there"),
             server=cems_server,
             extra_env={"HOME": str(tmp_path)},
@@ -322,7 +322,7 @@ class TestUserPromptSubmit:
     def test_slash_commands_skip(self, cems_server: RecordingServer, tmp_path):
         """Slash commands should be skipped entirely."""
         result = run_hook(
-            "user_prompts_submit.py",
+            "cems_user_prompts_submit.py",
             make_user_prompt_input(prompt="/recall something from last week about docker"),
             server=cems_server,
             extra_env={"HOME": str(tmp_path)},
@@ -351,7 +351,7 @@ class TestUserPromptSubmit:
         ))
 
         result = run_hook(
-            "user_prompts_submit.py",
+            "cems_user_prompts_submit.py",
             make_user_prompt_input(prompt="Help me clean up old build artifacts from the project"),
             server=cems_server,
             extra_env={"HOME": str(tmp_path)},
@@ -370,7 +370,7 @@ class TestUserPromptSubmit:
     def test_graceful_without_api(self):
         """Without CEMS configured, hook exits cleanly."""
         result = run_hook(
-            "user_prompts_submit.py",
+            "cems_user_prompts_submit.py",
             make_user_prompt_input(),
             server=None,
         )
@@ -380,7 +380,7 @@ class TestUserPromptSubmit:
     def test_subagent_skips(self, cems_server: RecordingServer, tmp_path):
         """Subagents (CLAUDE_AGENT_ID set) should be skipped."""
         result = run_hook(
-            "user_prompts_submit.py",
+            "cems_user_prompts_submit.py",
             make_user_prompt_input(),
             server=cems_server,
             extra_env={
@@ -404,7 +404,7 @@ class TestPreToolUse:
     def test_allows_normal_commands(self, cems_server: RecordingServer, tmp_path):
         """Normal commands with no gate rules should pass through."""
         result = run_hook(
-            "pre_tool_use.py",
+            "cems_pre_tool_use.py",
             make_pre_tool_use_input(command="git status"),
             server=cems_server,
             extra_env={"HOME": str(tmp_path)},
@@ -429,7 +429,7 @@ class TestPreToolUse:
         ]))
 
         result = run_hook(
-            "pre_tool_use.py",
+            "cems_pre_tool_use.py",
             make_pre_tool_use_input(command="rm -rf /important-data"),
             server=cems_server,
             extra_env={"HOME": str(tmp_path)},
@@ -455,7 +455,7 @@ class TestPreToolUse:
         ]))
 
         result = run_hook(
-            "pre_tool_use.py",
+            "cems_pre_tool_use.py",
             make_pre_tool_use_input(command="docker push myapp:latest"),
             server=cems_server,
             extra_env={"HOME": str(tmp_path)},
@@ -483,7 +483,7 @@ class TestPreToolUse:
         ]))
 
         result = run_hook(
-            "pre_tool_use.py",
+            "cems_pre_tool_use.py",
             {
                 "session_id": "test-session-001",
                 "tool_name": "Read",
@@ -500,7 +500,7 @@ class TestPreToolUse:
     def test_no_cache_allows_all(self, cems_server: RecordingServer, tmp_path):
         """With no gate cache file, all commands should be allowed."""
         result = run_hook(
-            "pre_tool_use.py",
+            "cems_pre_tool_use.py",
             make_pre_tool_use_input(command="rm -rf /"),
             server=cems_server,
             extra_env={"HOME": str(tmp_path)},
@@ -535,7 +535,7 @@ class TestStop:
         transcript_path.write_text("\n".join(lines))
 
         result = run_hook(
-            "stop.py",
+            "cems_stop.py",
             make_stop_input(
                 transcript_path=str(transcript_path),
                 cwd=str(tmp_path),
@@ -569,7 +569,7 @@ class TestStop:
         transcript_path.write_text("\n".join(lines))
 
         result = run_hook(
-            "stop.py",
+            "cems_stop.py",
             make_stop_input(
                 transcript_path=str(transcript_path),
                 cwd=str(tmp_path),
@@ -590,7 +590,7 @@ class TestStop:
     def test_graceful_without_transcript(self, cems_server: RecordingServer, tmp_path):
         """No transcript path should not crash."""
         result = run_hook(
-            "stop.py",
+            "cems_stop.py",
             make_stop_input(cwd=str(tmp_path)),
             server=cems_server,
             extra_env={
@@ -734,7 +734,7 @@ class TestHookIntegration:
 
         # Step 2: Run UserPromptSubmit (populates gate cache)
         run_hook(
-            "user_prompts_submit.py",
+            "cems_user_prompts_submit.py",
             make_user_prompt_input(
                 prompt="Help me deploy this application to the production server",
             ),
@@ -750,7 +750,7 @@ class TestHookIntegration:
         # Step 4: Run PreToolUse with a command that should be blocked
         cems_server.clear()
         result = run_hook(
-            "pre_tool_use.py",
+            "cems_pre_tool_use.py",
             make_pre_tool_use_input(command="coolify deploy myapp"),
             server=cems_server,
             extra_env={"HOME": str(tmp_path)},
@@ -803,7 +803,7 @@ class TestHookIntegration:
 
         # 2. UserPromptSubmit
         r2 = run_hook(
-            "user_prompts_submit.py",
+            "cems_user_prompts_submit.py",
             make_user_prompt_input(
                 prompt="What framework does this project use for the API server?",
                 cwd=str(tmp_path),
@@ -816,7 +816,7 @@ class TestHookIntegration:
 
         # 3. PreToolUse (no gate rules = allow)
         r3 = run_hook(
-            "pre_tool_use.py",
+            "cems_pre_tool_use.py",
             make_pre_tool_use_input(command="grep -r 'FastAPI' src/", cwd=str(tmp_path)),
             server=cems_server,
             extra_env={"HOME": str(tmp_path)},
@@ -844,7 +844,7 @@ class TestHookIntegration:
             json.dumps({"type": "assistant", "message": {"content": "Here are the routes..."}}),
         ]))
         r5 = run_hook(
-            "stop.py",
+            "cems_stop.py",
             make_stop_input(
                 transcript_path=str(transcript_path),
                 cwd=str(tmp_path),
@@ -880,9 +880,9 @@ class TestEdgeCases:
         """All hooks should handle empty/invalid JSON gracefully."""
         for hook in [
             "cems_session_start.py",
-            "user_prompts_submit.py",
-            "pre_tool_use.py",
-            "stop.py",
+            "cems_user_prompts_submit.py",
+            "cems_pre_tool_use.py",
+            "cems_stop.py",
             "cems_post_tool_use.py",
         ]:
             result = run_hook(
@@ -912,8 +912,8 @@ class TestEdgeCases:
 
         hooks_and_inputs = [
             ("cems_session_start.py", make_session_start_input()),
-            ("user_prompts_submit.py", make_user_prompt_input()),
-            ("pre_tool_use.py", make_pre_tool_use_input()),
+            ("cems_user_prompts_submit.py", make_user_prompt_input()),
+            ("cems_pre_tool_use.py", make_pre_tool_use_input()),
         ]
 
         for hook, input_data in hooks_and_inputs:

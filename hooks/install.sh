@@ -13,7 +13,7 @@ mkdir -p "$TARGET_DIR/utils"
 
 echo "Installing CEMS hooks to $TARGET_DIR..."
 
-for f in cems_session_start.py user_prompts_submit.py cems_post_tool_use.py stop.py pre_tool_use.py pre_compact.py; do
+for f in cems_session_start.py cems_user_prompts_submit.py cems_post_tool_use.py cems_stop.py cems_pre_tool_use.py cems_pre_compact.py; do
     if [ -f "$SCRIPT_DIR/$f" ]; then
         cp "$SCRIPT_DIR/$f" "$TARGET_DIR/$f"
         chmod +x "$TARGET_DIR/$f"

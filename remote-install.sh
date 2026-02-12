@@ -1,8 +1,13 @@
 #!/bin/bash
 # CEMS — One-command remote installer
 #
-# Usage:
-#   curl -sSf https://raw.githubusercontent.com/chocksy/cems/main/remote-install.sh | bash
+# Usage (interactive — download first):
+#   curl -sSf https://raw.githubusercontent.com/chocksy/cems/main/remote-install.sh -o install-cems.sh
+#   bash install-cems.sh
+#
+# Usage (non-interactive — pipe with env vars):
+#   CEMS_API_KEY=your-key CEMS_API_URL=https://cems.example.com \
+#     curl -sSf https://raw.githubusercontent.com/chocksy/cems/main/remote-install.sh | bash
 #
 # What it does:
 #   1. Installs uv (if missing)
@@ -77,4 +82,15 @@ fi
 # ─── 3. Run cems setup ───────────────────────────────────────────────────────
 
 echo
-cems setup
+
+# Build setup flags from environment variables
+SETUP_FLAGS="--claude"
+if [ -n "$CEMS_API_KEY" ]; then
+    SETUP_FLAGS="$SETUP_FLAGS --api-key $CEMS_API_KEY"
+fi
+if [ -n "$CEMS_API_URL" ]; then
+    SETUP_FLAGS="$SETUP_FLAGS --api-url $CEMS_API_URL"
+fi
+
+# shellcheck disable=SC2086
+cems setup $SETUP_FLAGS

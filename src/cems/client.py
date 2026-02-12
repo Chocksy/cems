@@ -69,11 +69,11 @@ class CEMSClient:
 
         if not self.api_url:
             raise CEMSClientError(
-                "CEMS_API_URL is required. Set it via environment variable or --api-url flag."
+                "CEMS_API_URL is required. Run: cems setup"
             )
         if not self.api_key:
             raise CEMSClientError(
-                "CEMS_API_KEY is required. Set it via environment variable or --api-key flag."
+                "CEMS_API_KEY is required. Run: cems setup"
             )
 
         self._headers = {
@@ -417,7 +417,7 @@ class CEMSAdminClient:
 
         if not self.api_url:
             raise CEMSClientError(
-                "CEMS_API_URL is required. Set it via environment variable or --api-url flag."
+                "CEMS_API_URL is required. Run: cems setup"
             )
         if not self.admin_key:
             raise CEMSClientError(

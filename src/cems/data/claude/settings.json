@@ -17,7 +17,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "uv run ~/.claude/hooks/user_prompts_submit.py"
+            "command": "uv run ~/.claude/hooks/cems_user_prompts_submit.py"
           }
         ]
       }
@@ -39,7 +39,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "uv run ~/.claude/hooks/pre_tool_use.py"
+            "command": "uv run ~/.claude/hooks/cems_pre_tool_use.py"
           }
         ]
       }
@@ -50,7 +50,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "uv run ~/.claude/hooks/stop.py"
+            "command": "uv run ~/.claude/hooks/cems_stop.py"
           }
         ]
       }
@@ -61,7 +61,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "uv run ~/.claude/hooks/pre_compact.py"
+            "command": "uv run ~/.claude/hooks/cems_pre_compact.py"
           }
         ]
       }

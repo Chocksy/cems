@@ -1,51 +1,108 @@
-# Progress: Option B — End-to-End LongMemEval
+# Progress: One-Command CEMS Install
 
-## Session 2026-02-11 (session 3)
+## Session: 2026-02-12
 
-### Planning — COMPLETE
-- Researched S variant dataset: `longmemeval_s_cleaned.json` (277 MB) at `xiaowu0162/longmemeval-cleaned`
-- Reviewed existing eval code (821 lines in longmemeval.py)
-- Reviewed LLM client (OpenRouterClient with fast_route param)
-- Reviewed search API handler (9-stage retrieval pipeline)
-- Designed 6-phase implementation plan
-- Team: executor (leader) + validator agent
+### Pre-planning: Observer + Install Fixes — COMPLETE
+- Fixed `observer_manager.py` to use `shutil.which("cems-observer")` — no CEMS_PROJECT_ROOT needed
+- Added `cems-observer` entry point to `pyproject.toml`
+- Rewrote root `install.sh` to use `~/.cems/credentials` + canonical hooks
+- Simplified `hooks/install.sh`
+- Updated tests — 28 pass
+- Full test suite: 417 passed, 7 skipped
 
-### Phase 1-5: Implementation — COMPLETE
-- Created `src/cems/eval/longmemeval_e2e.py` (~500 lines):
-  - S variant dataset download (277 MB streaming download with progress)
-  - `E2EResult` and `E2ESummary` dataclasses with macro accuracy scoring
-  - `LLMClient` — thin OpenRouter wrapper (httpx-based, no CEMS internals dependency)
-  - `generate_answer()` — GPT-4o, temperature=0, reader system prompt
-  - `judge_answer()` — 5 type-specific prompts (standard, temporal, knowledge-update, preference, abstention)
-  - `parse_judge_response()` — YES/NO extraction with fallback
-  - `format_context()` — search results → LLM context with session labels, max_chars truncation
-  - `run_e2e_eval()` — 3-phase: bulk ingest → search+answer+judge → score
-  - `main()` CLI — --questions, --reader-model, --judge-model, --dataset, --output, etc.
-  - Imports shared infra from longmemeval.py (CEMSEvalClient, collect_all_sessions)
+### Phase 1: Bundle hooks as package data — COMPLETE
+- Created `src/cems/data/` with all hooks, utils, skills, cursor hooks, settings template
+- `importlib.resources.files("cems.data")` works correctly
+- Hatchling includes it automatically via existing `packages = ["src/cems"]`
+- Created `scripts/sync-package-data.sh` for dev convenience
 
-### Phase 6: Unit Tests — COMPLETE
-- Created `tests/test_longmemeval_e2e.py` (35 tests):
-  - TestParseJudgeResponse (9 tests): YES/NO parsing, edge cases, ambiguous
-  - TestFormatContext (4 tests): session labels, truncation, empty results
-  - TestJudgePromptSelection (5 tests): type→prompt mapping
-  - TestE2ESummary (6 tests): accuracy, macro accuracy, micro vs macro difference
-  - TestJudgeAnswer (4 tests): mocked LLM, prompt verification
-  - TestGenerateAnswer (2 tests): context inclusion, temperature=0
-  - TestDownloadDataset (2 tests): URL validation, error handling
-  - TestLoadQuestions (2 tests): limit, abstention inclusion
-  - TestE2EResult (1 test): dataclass creation
-- All 35 tests pass
-- Full suite: 389 passed, 7 skipped (up from 354 — 35 new tests)
+### Phase 2: `cems setup` CLI command — COMPLETE
+- Created `src/cems/commands/setup.py` with interactive IDE selection + credential prompts
+- Registered in `src/cems/cli.py`
+- Settings.json merge preserves existing non-CEMS config
+- Tested: `cems setup --help` works, `cems setup --claude` installs correctly
 
-### Validation — COMPLETE (validator agent)
-- Unit tests: 35/35 passed
-- Full suite: 389 passed, 7 skipped, 0 failures
-- Docker rebuild: successful, healthy immediately
-- 5-question mini eval results:
-  - Accuracy: 60% (3/5) — small sample
-  - Retrieval: 80% (4/5)
-  - Avg search: 1839ms, answer: 951ms, judge: 1243ms
-  - 2 misses: 1 retrieval failure + 1 GPT-4o hallucination (retrieval correct but reader wrong)
-  - Total time: 46s, cost: ~$0.30
-- Output file: /tmp/eval_e2e_test.json — full structured results
-- Verdict: production-ready for full eval run
+### Phase 3: Remote install script — COMPLETE
+- Created `remote-install.sh` — installs uv, then `uv tool install cems from git`, then runs `cems setup`
+- URL: `curl -sSf https://raw.githubusercontent.com/chocksy/cems/main/remote-install.sh | bash`
+
+### Phase 4: Repo cleanup — COMPLETE
+- Deleted `claude-setup/` (stale, only had 2 of 6 hooks)
+- Deleted `skills/` top-level (moved to `src/cems/data/claude/skills/cems/`)
+- Deleted `cursor-setup/` (moved to `src/cems/data/cursor/`)
+- Deleted `deploy/setup-client.sh` and `deploy/client-config.example.json` (obsolete)
+- Simplified `install.sh` → slim dev script that delegates to `cems setup`
+- Simplified `hooks/install.sh` → dev-only, points to `cems setup` for non-devs
+- Updated `scripts/sync-package-data.sh` (removed cursor-setup/skills references)
+- Updated `README.md` with new install flow
+- Updated `IMPLEMENTATION_STATUS.md` with new file paths
+
+### Phase 5: Tests — COMPLETE
+- Full test suite: **417 passed, 7 skipped** in 31.66s
+- Package data accessible via `importlib.resources`: verified
+- `cems setup --help`: verified
+- `cems-observer` on PATH: verified
+
+## Session: 2026-02-12 (continued)
+
+### Hook Naming + Versioning + Non-interactive Setup — COMPLETE
+
+#### Phase 1: Hook renames to `cems_` prefix
+- Renamed 8 hook files (4 in `hooks/`, 4 in `src/cems/data/claude/hooks/`)
+- Updated references in 8 files: setup.py, settings.json, sync script, install.sh, test_hooks.py, test_hooks_integration.py, README.md, findings.md
+- Added `_migrate_old_hook_names()` to remove old-named entries from settings.json
+- Added old hook file cleanup in `_install_claude_hooks()`
+- Verified: `cems setup --claude` installs new names, removes old files
+
+#### Phase 2: Non-interactive `cems setup`
+- Added `--api-url` and `--api-key` CLI options
+- Added `_is_interactive()` TTY detection via `sys.stdin.isatty()`
+- Non-interactive mode defaults to `--claude`
+- `hide_input=True` for API key prompt
+- Updated `remote-install.sh` to pass through `CEMS_API_KEY`/`CEMS_API_URL` env vars
+
+#### Phase 3: Versioning
+- `importlib.metadata.version("cems")` — single source of truth from pyproject.toml
+- `cems --version` shows version via `@click.version_option()`
+- Remote installer is idempotent — re-run to upgrade
+
+#### Phase 4: TTS separation
+- TTS stripped from stop.py (previous commit)
+- No further code changes needed
+
+#### Tests
+- Full test suite: **417 passed, 7 skipped**
+
+## Summary of All Changes
+
+### Created
+- `remote-install.sh` — curl|bash remote installer
+- `src/cems/data/` — package data (hooks, skills, settings, cursor)
+- `src/cems/commands/setup.py` — `cems setup` CLI command
+- `scripts/sync-package-data.sh` — dev sync script
+
+### Deleted
+- `claude-setup/` — stale hooks + settings
+- `skills/` — duplicated in package data
+- `cursor-setup/` — duplicated in package data
+- `deploy/setup-client.sh` — obsolete MCP setup
+- `deploy/client-config.example.json` — obsolete
+
+### Renamed (hooks to `cems_` prefix)
+- `hooks/user_prompts_submit.py` → `hooks/cems_user_prompts_submit.py`
+- `hooks/stop.py` → `hooks/cems_stop.py`
+- `hooks/pre_tool_use.py` → `hooks/cems_pre_tool_use.py`
+- `hooks/pre_compact.py` → `hooks/cems_pre_compact.py`
+- (Same renames in `src/cems/data/claude/hooks/`)
+
+### Modified
+- `install.sh` — slim dev script delegating to `cems setup`
+- `hooks/install.sh` — simplified, dev-only
+- `src/cems/cli.py` — registered setup command, added `--version`
+- `src/cems/__init__.py` — version from importlib.metadata
+- `src/cems/commands/setup.py` — non-interactive support, migration logic
+- `src/cems/data/claude/settings.json` — new hook names
+- `scripts/sync-package-data.sh` — new hook names
+- `README.md` — new install instructions + hook names
+- `tests/test_hooks.py` — updated hook name references
+- `tests/test_hooks_integration.py` — updated hook name constants

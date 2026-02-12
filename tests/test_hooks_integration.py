@@ -40,10 +40,10 @@ import pytest
 # ---------------------------------------------------------------------------
 
 HOOKS_DIR = Path(__file__).parent.parent / "hooks"
-HOOK_USER_PROMPT = HOOKS_DIR / "user_prompts_submit.py"
+HOOK_USER_PROMPT = HOOKS_DIR / "cems_user_prompts_submit.py"
 HOOK_SESSION_START = HOOKS_DIR / "cems_session_start.py"
-HOOK_PRE_TOOL_USE = HOOKS_DIR / "pre_tool_use.py"
-HOOK_STOP = HOOKS_DIR / "stop.py"
+HOOK_PRE_TOOL_USE = HOOKS_DIR / "cems_pre_tool_use.py"
+HOOK_STOP = HOOKS_DIR / "cems_stop.py"
 HOOK_POST_TOOL_USE = HOOKS_DIR / "cems_post_tool_use.py"
 
 # Gate cache directory (mirrors the hooks' constant)

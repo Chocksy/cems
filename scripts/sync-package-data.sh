@@ -14,11 +14,11 @@ echo "Syncing hooks → package data..."
 
 # Claude hooks
 cp "$REPO_ROOT"/hooks/cems_session_start.py \
-   "$REPO_ROOT"/hooks/user_prompts_submit.py \
+   "$REPO_ROOT"/hooks/cems_user_prompts_submit.py \
    "$REPO_ROOT"/hooks/cems_post_tool_use.py \
-   "$REPO_ROOT"/hooks/stop.py \
-   "$REPO_ROOT"/hooks/pre_tool_use.py \
-   "$REPO_ROOT"/hooks/pre_compact.py \
+   "$REPO_ROOT"/hooks/cems_stop.py \
+   "$REPO_ROOT"/hooks/cems_pre_tool_use.py \
+   "$REPO_ROOT"/hooks/cems_pre_compact.py \
    "$DATA_DIR/claude/hooks/"
 
 cp "$REPO_ROOT"/hooks/utils/constants.py \
