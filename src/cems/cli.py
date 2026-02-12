@@ -12,6 +12,7 @@ from cems.commands.memory import add, delete, list_memories, search, update
 from cems.commands.index import index
 from cems.commands.maintenance import maintenance
 from cems.commands.admin import admin
+from cems.commands.setup import setup
 
 
 @click.group()
@@ -46,6 +47,7 @@ main.add_command(update)
 main.add_command(index)
 main.add_command(maintenance)
 main.add_command(admin)
+main.add_command(setup)
 
 
 if __name__ == "__main__":

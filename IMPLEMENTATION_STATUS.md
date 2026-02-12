@@ -109,12 +109,14 @@ The server was simplified from 15 tools down to 5 essential tools. Internal meth
 |------|--------|----------|-------|
 | MCP config template | ✅ | `examples/mcp_config.json` | |
 | Cursor config template | ✅ | `examples/cursor_mcp.json` | |
-| `/remember` skill | ✅ | `skills/remember.md` | |
-| `/share` skill | ✅ | `skills/share.md` | |
-| `/recall` skill | ✅ | `skills/recall.md` | |
-| `/forget` skill | ✅ | `skills/forget.md` | |
-| `/context` skill | ✅ | `skills/context.md` | |
-| Install script | ✅ | `install.sh` | |
+| `/remember` skill | ✅ | `src/cems/data/claude/skills/cems/remember.md` | |
+| `/share` skill | ✅ | `src/cems/data/claude/skills/cems/share.md` | |
+| `/recall` skill | ✅ | `src/cems/data/claude/skills/cems/recall.md` | |
+| `/forget` skill | ✅ | `src/cems/data/claude/skills/cems/forget.md` | |
+| `/context` skill | ✅ | `src/cems/data/claude/skills/cems/context.md` | |
+| Install (remote) | ✅ | `remote-install.sh` | `curl \| bash` one-liner |
+| Install (dev) | ✅ | `install.sh` | For cloned repos |
+| Setup command | ✅ | `src/cems/commands/setup.py` | `cems setup` |
 
 ### 5. Extended Features (Added After Initial Plan)
 

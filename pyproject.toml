@@ -53,6 +53,7 @@ dev = [
 [project.scripts]
 cems = "cems.cli:main"
 cems-server = "cems.server:run_server"
+cems-observer = "cems.observer.__main__:main"
 
 [build-system]
 requires = ["hatchling"]

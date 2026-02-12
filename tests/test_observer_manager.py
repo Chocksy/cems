@@ -21,6 +21,7 @@ sys.path.insert(0, str(HOOKS_DIR))
 from utils.observer_manager import (
     HEALTH_CHECK_INTERVAL,
     SPAWN_COOLDOWN_SECONDS,
+    _find_observer_command,
     _is_in_cooldown,
     _is_process_alive,
     _read_pid,
@@ -144,18 +145,38 @@ class TestShouldCheck:
             assert _should_check() is True
 
 
+class TestFindObserverCommand:
+    """Tests for _find_observer_command()."""
+
+    def test_finds_installed_command(self):
+        """Should return cems-observer path when it's on PATH."""
+        with patch("shutil.which", return_value="/usr/local/bin/cems-observer"):
+            cmd = _find_observer_command()
+            assert cmd == ["/usr/local/bin/cems-observer"]
+
+    def test_falls_back_to_source_tree(self, tmp_path):
+        """Should use CEMS_PROJECT_ROOT when cems-observer is not installed."""
+        cems_root = tmp_path / "cems"
+        (cems_root / "src" / "cems" / "observer").mkdir(parents=True)
+        venv_python = cems_root / ".venv" / "bin" / "python3"
+        venv_python.parent.mkdir(parents=True)
+        venv_python.write_text("#!/bin/bash\nexit 0")
+
+        with patch("shutil.which", return_value=None), \
+             patch.dict(os.environ, {"CEMS_PROJECT_ROOT": str(cems_root)}, clear=False):
+            cmd = _find_observer_command()
+            assert cmd == [str(venv_python), "-m", "cems.observer"]
+
+    def test_returns_none_when_nothing_found(self, tmp_path):
+        """Should return None when no observer is available."""
+        with patch("shutil.which", return_value=None), \
+             patch.dict(os.environ, {"CEMS_PROJECT_ROOT": ""}, clear=False):
+            cmd = _find_observer_command()
+            assert cmd is None
+
+
 class TestSpawnDaemon:
     """Tests for _spawn_daemon()."""
-
-    def test_fails_without_cems_root(self, tmp_path):
-        # Point CEMS_PROJECT_ROOT to nonexistent dir and also prevent fallback candidates
-        fake_home = tmp_path / "fakehome"
-        fake_home.mkdir()
-        with patch("utils.observer_manager.OBSERVER_DIR", tmp_path / "observer"), \
-             patch("pathlib.Path.home", return_value=fake_home), \
-             patch.dict(os.environ, {"CEMS_PROJECT_ROOT": "", "CEMS_API_KEY": "test"}, clear=False):
-            result = _spawn_daemon()
-            assert result is False
 
     def test_fails_without_api_key(self, tmp_path):
         import utils.credentials
@@ -165,19 +186,15 @@ class TestSpawnDaemon:
             assert result is False
             utils.credentials._cache = None  # Clean up
 
-    def test_finds_cems_root_from_env(self, tmp_path):
-        """Should use CEMS_PROJECT_ROOT env var when set and attempt Popen."""
-        from unittest.mock import ANY
+    def test_fails_without_observer_command(self):
+        """Should fail when neither cems-observer nor source tree is available."""
+        with patch("utils.observer_manager._find_observer_command", return_value=None), \
+             patch.dict(os.environ, {"CEMS_API_KEY": "test-key"}, clear=False):
+            result = _spawn_daemon()
+            assert result is False
 
-        cems_root = tmp_path / "cems"
-        cems_root.mkdir()
-        (cems_root / "src" / "cems" / "observer").mkdir(parents=True)
-        venv_bin = cems_root / ".venv" / "bin"
-        venv_bin.mkdir(parents=True)
-        fake_python = venv_bin / "python3"
-        fake_python.write_text("#!/bin/bash\nexit 0")
-        fake_python.chmod(0o755)
-
+    def test_spawns_with_installed_command(self, tmp_path):
+        """Should spawn using cems-observer when available."""
         observer_dir = tmp_path / "observer"
 
         mock_proc = MagicMock()
@@ -185,19 +202,16 @@ class TestSpawnDaemon:
 
         with patch("utils.observer_manager.OBSERVER_DIR", observer_dir), \
              patch("utils.observer_manager.PID_FILE", observer_dir / "daemon.pid"), \
+             patch("utils.observer_manager._find_observer_command",
+                   return_value=["/usr/local/bin/cems-observer"]), \
              patch("subprocess.Popen", return_value=mock_proc) as mock_popen, \
              patch("utils.observer_manager._is_process_alive", return_value=True), \
-             patch.dict(os.environ, {
-                 "CEMS_PROJECT_ROOT": str(cems_root),
-                 "CEMS_API_KEY": "test-key",
-             }, clear=False):
+             patch.dict(os.environ, {"CEMS_API_KEY": "test-key"}, clear=False):
             result = _spawn_daemon()
             assert result is True
-            # Verify it called Popen with the correct python path
             mock_popen.assert_called_once()
             cmd = mock_popen.call_args[0][0]
-            assert cmd[0] == str(fake_python)
-            assert cmd[1:] == ["-m", "cems.observer"]
+            assert cmd == ["/usr/local/bin/cems-observer"]
 
 
 class TestEnsureDaemonRunning:

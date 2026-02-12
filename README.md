@@ -4,94 +4,43 @@ A dual-layer memory system (personal + shared) with scheduled maintenance and kn
 
 ## Quick Start
 
-### Option 1: Automatic Install
+### One-Command Install (no clone required)
 
 ```bash
-git clone https://github.com/yourusername/cems.git
-cd cems
+curl -sSf https://raw.githubusercontent.com/chocksy/cems/main/remote-install.sh | bash
+```
+
+This installs the CEMS CLI, hooks, skills, and prompts for your API credentials.
+
+### Alternative: Install from source
+
+```bash
+git clone https://github.com/chocksy/cems.git && cd cems
 ./install.sh
 ```
 
-The installer will:
-1. Install the CEMS Python package
-2. Set up Claude Code hooks and skills
-3. Configure environment variables
+### Credentials
 
-### Option 2: Manual Install
-
-**If you have no existing `~/.claude` folder:**
-```bash
-cp -r claude-setup ~/.claude
-```
-
-**If you have existing Claude Code config:**
-```bash
-# Backup existing
-cp -r ~/.claude ~/.claude.backup
-
-# Copy hooks and skills
-cp claude-setup/hooks/cems_*.py ~/.claude/hooks/
-cp -r claude-setup/skills/cems ~/.claude/skills/
-
-# Then manually add hooks to ~/.claude/settings.json (see below)
-```
-
-### Environment Variables
-
-Add to your shell profile (`~/.zshrc` or `~/.bashrc`):
-
-```bash
-export CEMS_API_URL="https://your-cems-server.com"
-export CEMS_API_KEY="your-api-key"
-```
-
-Then restart your terminal and Claude Code.
+Your API key and server URL are stored in `~/.cems/credentials` (created during setup).
+To reconfigure: `cems setup`
 
 ## Configuration
 
-### Hooks Configuration
+### What Gets Installed
 
-If merging into existing config, add to `~/.claude/settings.json`:
-
-```json
-{
-  "hooks": {
-    "UserPromptSubmit": [
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "uv run ~/.claude/hooks/cems_user_prompts_submit.py"
-          }
-        ]
-      }
-    ],
-    "Stop": [
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "uv run ~/.claude/hooks/cems_stop.py"
-          }
-        ]
-      }
-    ]
-  }
-}
-```
-
-### Directory Structure
-
-After installation, your `~/.claude` folder should contain:
+`cems setup` installs hooks, skills, and merges settings into your existing config:
 
 ```
 ~/.claude/
-├── settings.json           # Hooks configuration
+├── settings.json           # Hooks config (merged, not overwritten)
 ├── hooks/
-│   ├── cems_user_prompts_submit.py  # Memory injection on each prompt
-│   └── cems_stop.py                 # Session summary storage
+│   ├── cems_session_start.py       # Profile injection
+│   ├── user_prompts_submit.py      # Memory search + context
+│   ├── cems_post_tool_use.py       # Tool learning
+│   ├── pre_tool_use.py             # Gate rules
+│   ├── stop.py                     # Session analysis + observer
+│   ├── pre_compact.py              # Pre-compaction hook
+│   └── utils/                      # Shared utilities
 └── skills/
     └── cems/
         ├── remember.md     # /remember - Add personal memory
