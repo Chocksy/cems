@@ -166,6 +166,7 @@
             <span class="cat">${esc(m.category || "general")}</span>
             ${tags}
             ${m.scope ? `<span>${esc(m.scope)}</span>` : ""}
+            ${m.source_ref ? `<span class="source-ref">${esc(m.source_ref)}</span>` : ""}
             ${date ? `<span>${date}</span>` : ""}
             ${shown ? `<span>${shown}</span>` : ""}
             ${m.score != null ? `<span>score: ${Number(m.score).toFixed(3)}</span>` : ""}

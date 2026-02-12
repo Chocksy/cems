@@ -155,10 +155,10 @@ def get_project_id(cwd: str) -> str | None:
     return None
 
 
-def search_cems(query: str, project: str | None = None) -> tuple[str | None, list[str]]:
+def search_cems(query: str, project: str | None = None) -> tuple[str | None, list[str], list[dict]]:
     """
     Search CEMS for relevant memories.
-    Returns (formatted_string, memory_ids) tuple.
+    Returns (formatted_string, memory_ids, score_details) tuple.
 
     Args:
         query: Search query string
@@ -167,10 +167,10 @@ def search_cems(query: str, project: str | None = None) -> tuple[str | None, lis
     Note: No limit imposed here - the API handles relevance filtering and limits.
     """
     if not CEMS_API_URL or not CEMS_API_KEY:
-        return None, []
+        return None, [], []
 
     if not query or len(query) < 3:
-        return None, []
+        return None, [], []
 
     try:
         payload = {"query": query, "scope": "both"}
@@ -185,32 +185,41 @@ def search_cems(query: str, project: str | None = None) -> tuple[str | None, lis
         )
 
         if response.status_code != 200:
-            return None, []
+            return None, [], []
 
         data = response.json()
         if not data.get("success") or not data.get("results"):
-            return None, []
+            return None, [], []
 
         results = data["results"]
         if not results:
-            return None, []
+            return None, [], []
 
-        # Format results for Claude and collect memory IDs
+        # Format results for Claude and collect memory IDs + scores
         formatted = []
         memory_ids = []
+        score_details = []
         for i, r in enumerate(results, 1):
             content = r.get("content", r.get("memory", ""))
             category = r.get("category", "general")
             mem_id = r.get("memory_id", r.get("id", ""))
             short_id = mem_id[:8] if mem_id else ""
-            formatted.append(f"{i}. [{category}] {content} (id: {short_id})")
+            score = r.get("score", 0.0)
+            formatted.append(f"{i}. [{category}] (score: {score:.2f}) {content} (id: {short_id})")
             if mem_id:
                 memory_ids.append(mem_id)
+            score_details.append({"id": short_id, "score": round(score, 3), "category": category})
 
-        return "\n".join(formatted), memory_ids
+        # Add retrieval summary footer
+        scores = [d["score"] for d in score_details]
+        avg_score = sum(scores) / len(scores) if scores else 0
+        top_score = max(scores) if scores else 0
+        formatted.append(f"\n--- Retrieval: {len(results)} results, avg score {avg_score:.2f}, top {top_score:.2f} ---")
+
+        return "\n".join(formatted), memory_ids, score_details
 
     except (httpx.RequestError, httpx.TimeoutException, json.JSONDecodeError):
-        return None, []
+        return None, [], []
 
 
 def fetch_recent_observations(project: str | None = None, limit: int = 5) -> str | None:
@@ -554,7 +563,7 @@ def main():
                     intent = extract_keywords(proposal)
                     if intent and len(intent) >= 3:
                         project = get_project_id(cwd) if cwd else None
-                        memories, memory_ids = search_cems(intent, project=project)
+                        memories, memory_ids, _ = search_cems(intent, project=project)
                         if memories:
                             output_parts.append(f"""<memory-recall>
 CONTEXT for confirmed action "{intent}":
@@ -605,7 +614,7 @@ Review these memories before proceeding.
                         intent = intent[:200]
 
         if intent and len(intent) >= 3:
-            memories, memory_ids = search_cems(intent, project=project)
+            memories, memory_ids, score_details = search_cems(intent, project=project)
             if memories:
                 # Show the user-facing intent (without assistant keywords clutter)
                 display_intent = extract_intent(prompt)
@@ -614,10 +623,21 @@ RELEVANT MEMORIES found for "{display_intent}":
 
 {memories}
 
-If these memories are helpful to the current task, you may reference them.
+After responding, note which memories (by number) were relevant vs noise.
 Use /recall "{display_intent}" for more detailed results.
 </memory-recall>"""
                 output_parts.append(memory_context)
+
+                # Log retrieval scores for offline analysis
+                if score_details:
+                    scores = [d["score"] for d in score_details]
+                    log_hook_event("MemoryRetrieval", session_id, {
+                        "query": display_intent[:100],
+                        "result_count": len(score_details),
+                        "avg_score": round(sum(scores) / len(scores), 3),
+                        "top_score": round(max(scores), 3),
+                        "details": score_details,
+                    })
 
                 # Log that these memories were shown (fire-and-forget)
                 log_shown_memories(memory_ids)

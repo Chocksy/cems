@@ -109,12 +109,20 @@ For technical/numerical results, preserve specific values:
 - Routine operations (reading files, running tests, git status)
 - Temporary state (current branch, current file being edited)
 
+## IMPORTANT: INCLUDE PROJECT NAME
+
+Always mention the project/repo name in each observation so it's searchable without metadata:
+- BAD: "User is adding relevance scoring to the memory system"
+- GOOD: "User is adding relevance scoring to CEMS memory system (Chocksy/cems)"
+
+The project context "{project_context}" should appear naturally in each observation.
+
 ## OUTPUT FORMAT
 
 Return a JSON array:
 [
   {{
-    "content": "User is overhauling CEMS memory quality, reducing 2499 memories to 584 active ones",
+    "content": "In Chocksy/cems: User is overhauling memory quality, reducing 2499 memories to 584 active",
     "priority": "high",
     "category": "observation"
   }}

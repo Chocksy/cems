@@ -49,6 +49,7 @@ header{display:flex;justify-content:space-between;align-items:center;padding:.75
 .memory-meta{display:flex;gap:.5rem;align-items:center;margin-bottom:.4rem;flex-wrap:wrap;font-size:.75rem;color:var(--fg2)}
 .memory-meta .cat{background:var(--bg2);padding:.1rem .4rem;border-radius:4px;font-weight:500}
 .memory-meta .tag{color:var(--accent);font-size:.75rem}
+.memory-meta .source-ref{background:#1a3a2a;color:#6ee7b7;padding:.1rem .4rem;border-radius:4px;font-size:.7rem;font-family:monospace}
 .memory-content{font-size:.87rem;white-space:pre-wrap;word-break:break-word;max-height:6rem;overflow:hidden;cursor:pointer;position:relative}
 .memory-content.expanded{max-height:none}
 .memory-content:not(.expanded)::after{content:"";position:absolute;bottom:0;left:0;right:0;height:2rem;background:linear-gradient(transparent,var(--bg))}
