@@ -1,8 +1,10 @@
 <p align="center">
-  <h1 align="center">CEMS</h1>
-  <p align="center"><strong>Continuous Evolving Memory System</strong></p>
-  <p align="center">Persistent memory for AI coding assistants. Store, retrieve, and evolve memories to make Claude Code and Cursor smarter over time.</p>
+  <img src="assets/banner-chef.png" alt="CEMS — Continuous Evolving Memory System" width="800">
 </p>
+
+<h1 align="center">CEMS</h1>
+<p align="center"><strong>Continuous Evolving Memory System</strong></p>
+<p align="center">Persistent memory for AI coding assistants. Store, retrieve, and evolve memories to make Claude Code and Cursor smarter over time.</p>
 
 <p align="center">
   <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT"></a>

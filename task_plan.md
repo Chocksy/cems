@@ -1,87 +1,105 @@
-# Task: Hook Naming Consistency + Versioning System + TTS Separation
+# Task: CEMS Polish — CLAUDE.md Memory Instructions, Banner/Logo, Deploy Guides
 
 ## Goal
-1. Rename all CEMS hooks to `cems_` prefix for consistency
-2. Add a versioning/update system so `cems setup` doesn't go stale
-3. Separate TTS announcement into a standalone hook (not part of CEMS core)
+1. Add CLAUDE.md instructions so Claude Code proactively stores memories
+2. Generate a creative banner/logo with mascot for the README
+3. Create deployment guides (AWS, local, self-hosted)
+4. Update README with banner and deploy sections
 
 ## Context
-- Committed: package data bundling, `cems setup`, `remote-install.sh`, repo cleanup, TTS stripped from stop.py
-- Remaining: hook renames touch ~30 test references, settings.json, setup.py, and the live `~/.claude/settings.json`
+- README already rewritten with correct architecture (no Mem0/Kuzu/Qdrant)
+- `cems setup` and `cems uninstall` work
+- Observer handles passive memory extraction from session transcripts
+- Skills (/remember, /recall, etc.) handle manual memory operations
+- Gap: Claude Code doesn't proactively add memories during sessions
 
-## Code Review Findings (codex-investigator)
-Issues found in the committed code that should be fixed alongside the rename:
+## Image Generation Models (OpenRouter, Feb 2026)
 
-1. **`curl | bash` + interactive prompt conflict** — **FIXED**: Added `--api-url` and `--api-key` flags, TTY detection, non-interactive defaults.
+| Model ID | Name | Best For | Price |
+|----------|------|----------|-------|
+| `google/gemini-3-pro-image-preview` | Nano Banana Pro | Best text rendering, complex compositions | $0.12/1K img tokens |
+| `openai/gpt-5-image` | GPT-5 Image | Superior instruction following, editing | $40/M img tokens |
 
-2. **`_merge_settings()` brittleness** — **FIXED**: Added `_migrate_old_hook_names()` that removes old-named entries before merging new ones. Also removes old hook files from `~/.claude/hooks/`.
+**Decision**: Use Nano Banana Pro (`google/gemini-3-pro-image-preview`) — best text rendering for logo text, cheaper.
 
-3. **API key prompt shows input** — **FIXED**: `hide_input=True`.
+## Mascot/Brand Ideas
 
-4. **Dual version source** — **FIXED**: `importlib.metadata.version("cems")` at runtime. `cems --version` works.
+CEMS = Continuous Evolving Memory System
 
-5. **Missing file in rename plan** — `tests/test_transcript.py` reference is test data for compaction, not a hook filename reference. Left as-is.
+Creative angles:
+- **CEMS the Cephalopod** — A cuttlefish (not octopus — GitHub has that). Cuttlefish have the best memory of all invertebrates, can camouflage (adapt/evolve), and have 3 hearts (personal + shared + system memory). Tentacles reaching out to grab data from different sources.
+- **CEMS the Elephant** — Elephants never forget. Classic but effective. Trunk could wrap around code symbols.
+- **Brain with circuits** — Neural network meets code. More abstract, less fun.
+- **Memory palace / library** — Architectural metaphor. Filing cabinet with tentacles.
+
+**Winner: Cuttlefish** — Unique (not octopus), scientifically accurate (great memory), visually distinctive, fits "evolving" theme (camouflage = adaptation).
 
 ---
 
-## Phase 1: Rename hooks to `cems_` prefix — `status: complete`
+## Phase 1: CLAUDE.md Memory Instructions — `status: pending`
 
-### Files renamed (8)
-| Old Name | New Name |
-|----------|----------|
-| `hooks/user_prompts_submit.py` | `hooks/cems_user_prompts_submit.py` |
-| `hooks/stop.py` | `hooks/cems_stop.py` |
-| `hooks/pre_tool_use.py` | `hooks/cems_pre_tool_use.py` |
-| `hooks/pre_compact.py` | `hooks/cems_pre_compact.py` |
-| `src/cems/data/claude/hooks/user_prompts_submit.py` | `src/cems/data/claude/hooks/cems_user_prompts_submit.py` |
-| `src/cems/data/claude/hooks/stop.py` | `src/cems/data/claude/hooks/cems_stop.py` |
-| `src/cems/data/claude/hooks/pre_tool_use.py` | `src/cems/data/claude/hooks/cems_pre_tool_use.py` |
-| `src/cems/data/claude/hooks/pre_compact.py` | `src/cems/data/claude/hooks/cems_pre_compact.py` |
+Add a section to the CEMS skills or CLAUDE.md that instructs Claude Code to:
+- Proactively use /remember when it discovers project conventions
+- Store architectural decisions, preferences, and workflow patterns
+- NOT store session-specific details (that's the observer's job)
+- Use appropriate categories (preferences, conventions, architecture, workflow)
 
-### References updated (8 files)
-1. `src/cems/commands/setup.py` — `hook_files` list ✓
-2. `src/cems/data/claude/settings.json` — all `command` fields ✓
-3. `scripts/sync-package-data.sh` — cp commands ✓
-4. `hooks/install.sh` — for loop list ✓
-5. `tests/test_hooks.py` — all filename references ✓
-6. `tests/test_hooks_integration.py` — HOOK_USER_PROMPT, HOOK_PRE_TOOL_USE, HOOK_STOP constants ✓
-7. `README.md` — directory structure section ✓
-8. `findings.md` — access pattern example ✓
+Options:
+a) Add to `~/.claude/CLAUDE.md` (global, user's file — we shouldn't touch)
+b) Add a `.claude/CLAUDE.md` per-project file (project-level instructions)
+c) Bundle instructions in a CEMS skill file that gets injected via SessionStart hook
+d) Add to the SessionStart profile context that already gets injected
 
-### Migration for existing installs ✓
-- `_migrate_old_hook_names()` removes old-named entries from settings.json
-- `_install_claude_hooks()` deletes old hook files from `~/.claude/hooks/`
+**Best approach**: Option (c) or (d) — add memory-proactive instructions to the profile context that SessionStart hook injects. This way it's automatic and doesn't require modifying user's CLAUDE.md.
 
-## Phase 2: Fix `cems setup` for non-interactive use — `status: complete`
+### Files to modify
+- `src/cems/data/claude/skills/cems/memory-guide.md` — NEW skill with guidelines
+- OR modify the server's profile endpoint response to include instructions
 
-- Added `--api-url` and `--api-key` CLI options ✓
-- Added `_is_interactive()` TTY detection ✓
-- Non-interactive mode defaults to `--claude` ✓
-- `hide_input=True` for API key prompt ✓
-- Updated `remote-install.sh` to pass `CEMS_API_KEY`/`CEMS_API_URL` env vars ✓
+## Phase 2: Banner & Logo Generation — `status: pending`
 
-## Phase 3: Versioning — `status: complete`
+### Step 1: Generate banner with cuttlefish mascot
+- Model: `google/gemini-3-pro-image-preview` (Nano Banana Pro)
+- Prompt: Dark background, cuttlefish with data/memory tentacles, "CEMS" text, developer aesthetic
+- Size: 1280x320 (4:1 aspect ratio for GitHub README)
+- Generate dark and light variants
 
-- `importlib.metadata.version("cems")` as single source of truth ✓
-- `cems --version` shows version from pyproject.toml ✓
-- Remote installer is idempotent (`--force` flag) — re-run to upgrade ✓
+### Step 2: Create assets directory
+- `assets/banner-dark.png`
+- `assets/banner-light.png`
 
-## Phase 4: TTS as separate hook — `status: complete`
+### Step 3: Update README header
+- Use `<picture>` element for dark/light mode switching
 
-- TTS already stripped from stop.py (previous commit)
-- TTS is personal, NOT part of CEMS package — no code changes needed
+## Phase 3: Deploy Guides — `status: pending`
 
-## Phase 5: Tests + Verification — `status: complete`
+### Local Development
+- Simple `docker compose up -d` guide (already in README)
+- Add: how to run without Docker (direct Python + PostgreSQL)
 
-- Full test suite: **417 passed, 7 skipped** ✓
-- `cems --version`: verified ✓
-- `cems setup --help`: shows new options ✓
-- TTY detection: verified with piped stdin ✓
+### Self-Hosted (VPS)
+- Hetzner/DigitalOcean VPS + Docker Compose
+- Add Coolify deployment guide (we already use it)
+- Nginx reverse proxy + SSL via Certbot or Coolify
+
+### AWS
+- ECS/Fargate option (most common)
+- Or simple EC2 + docker-compose (cheapest)
+- Include a basic CloudFormation template or step-by-step
+
+### What to add to README
+- Collapsible `<details>` sections for each deploy target
+- Keep the Server Deployment section clean, link to detailed guides
+
+## Phase 4: Final README Update — `status: pending`
+
+- Add banner with `<picture>` dark/light
+- Add deploy guide sections
+- Verify all links work
 
 ---
 
 ## Errors Encountered
 | Error | Attempt | Resolution |
 |-------|---------|------------|
-| Test failure after renaming hooks | 1 | Reverted renames, committed clean state, plan properly |
-| Test failure (attempt 2) | 2 | Correctly updated all 8 reference files — 417 tests pass |
+| (none yet) | | |
