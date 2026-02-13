@@ -105,6 +105,73 @@ def fetch_profile(project: str | None = None, token_budget: int = 2500) -> dict:
         return {}
 
 
+AUTO_UPDATE_INTERVAL = 86400  # 24 hours in seconds
+
+
+def _maybe_auto_update() -> None:
+    """Check if CEMS should auto-update (once per 24h, background, non-blocking).
+
+    Checks ~/.cems/.last_update_check timestamp. If older than 24h,
+    spawns `cems update` in the background. Respects CEMS_AUTO_UPDATE=0.
+    """
+    import shutil
+    import time
+
+    # Check if auto-update is disabled
+    auto_update = os.environ.get("CEMS_AUTO_UPDATE", "").strip()
+    if auto_update == "0":
+        return
+
+    # Also check credentials file for the setting
+    if not auto_update:
+        creds_file = Path.home() / ".cems" / "credentials"
+        try:
+            if creds_file.exists():
+                for line in creds_file.read_text().splitlines():
+                    line = line.strip()
+                    if line.startswith("CEMS_AUTO_UPDATE="):
+                        val = line.partition("=")[2].strip().strip("'\"")
+                        if val == "0":
+                            return
+        except OSError:
+            pass
+
+    marker = Path.home() / ".cems" / ".last_update_check"
+    now = time.time()
+
+    # Check if we updated recently
+    try:
+        if marker.exists():
+            last_check = marker.stat().st_mtime
+            if now - last_check < AUTO_UPDATE_INTERVAL:
+                return  # Too soon
+    except OSError:
+        pass
+
+    # Touch the marker BEFORE updating (prevents concurrent updates)
+    try:
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text(str(int(now)))
+    except OSError:
+        return
+
+    # Find cems binary
+    cems_bin = shutil.which("cems")
+    if not cems_bin:
+        return
+
+    # Spawn update in background (completely detached, fire-and-forget)
+    try:
+        subprocess.Popen(
+            [cems_bin, "update"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+    except OSError:
+        pass
+
+
 def main():
     try:
         input_data = json.load(sys.stdin)
@@ -125,6 +192,12 @@ def main():
         # Skip if CEMS is not configured
         if not CEMS_API_URL or not CEMS_API_KEY:
             sys.exit(0)
+
+        # Auto-update check (background, non-blocking)
+        try:
+            _maybe_auto_update()
+        except Exception:
+            pass  # Auto-update is best-effort, never block session start
 
         # Ensure observer daemon is running (spawns if dead)
         try:

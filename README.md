@@ -63,6 +63,19 @@ cems setup        # Re-run setup (reconfigure credentials, re-install hooks)
 cems uninstall    # Remove hooks/skills (keeps credentials by default)
 ```
 
+### Updating
+
+CEMS auto-updates when you start a new Claude Code session — no action needed. If your install is more than 24 hours old, the SessionStart hook pulls the latest version in the background.
+
+To update manually:
+
+```bash
+cems update          # Pull latest + re-deploy hooks/skills
+cems update --hooks  # Re-deploy hooks only (skip package upgrade)
+```
+
+Auto-update can be disabled by setting `CEMS_AUTO_UPDATE=0` in your environment or `~/.cems/credentials`.
+
 ### Credentials
 
 Stored in `~/.cems/credentials` (chmod 600). Checked in order:
