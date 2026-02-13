@@ -58,6 +58,7 @@ git clone https://github.com/chocksy/cems.git && cd cems
 ```bash
 cems --version    # Verify CLI is installed
 cems health       # Check server connection
+cems update       # Pull latest version + re-deploy hooks/skills
 cems setup        # Re-run setup (reconfigure credentials, re-install hooks)
 cems uninstall    # Remove hooks/skills (keeps credentials by default)
 ```
@@ -124,6 +125,8 @@ cems health                          # Server health check
 cems add "I prefer dark mode"        # Add a memory
 cems search "coding preferences"     # Search memories
 cems list                            # List all memories
+cems update                          # Update to latest version
+cems update --hooks                  # Re-deploy hooks only (no package upgrade)
 cems maintenance --job consolidation # Run maintenance
 cems uninstall                       # Remove hooks/skills
 cems uninstall --all                 # Remove everything including credentials

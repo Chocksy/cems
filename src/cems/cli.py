@@ -11,12 +11,13 @@ import click
 
 from cems.cli_utils import setup_logging
 from cems.commands.status import health, status
-from cems.commands.memory import add, delete, list_memories, search, update
+from cems.commands.memory import add, delete, list_memories, search, update as update_memory
 from cems.commands.index import index
 from cems.commands.maintenance import maintenance
 from cems.commands.admin import admin
 from cems.commands.setup import setup
 from cems.commands.uninstall import uninstall
+from cems.commands.update import update_cmd
 
 
 def _read_credentials_file() -> dict[str, str]:
@@ -75,7 +76,8 @@ main.add_command(add)
 main.add_command(search)
 main.add_command(list_memories, name="list")
 main.add_command(delete)
-main.add_command(update)
+main.add_command(update_memory, name="update-memory")
+main.add_command(update_cmd, name="update")
 main.add_command(index)
 main.add_command(maintenance)
 main.add_command(admin)
