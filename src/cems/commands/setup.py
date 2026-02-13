@@ -154,18 +154,18 @@ def _install_claude_hooks(data_path: Path) -> None:
 
 def _migrate_old_hook_names(hooks: dict) -> None:
     """Remove old-named CEMS hooks from settings so they get replaced by new cems_ prefixed ones."""
-    # Match exact old filenames at end of command string (e.g., "hooks/stop.py" not "hooks/cems_stop.py")
-    old_suffixes = {
-        "/user_prompts_submit.py",
-        "/stop.py",
-        "/pre_tool_use.py",
-        "/pre_compact.py",
+    # Match only hooks under ~/.claude/hooks/ with old names (won't touch user hooks elsewhere)
+    old_patterns = {
+        ".claude/hooks/user_prompts_submit.py",
+        ".claude/hooks/stop.py",
+        ".claude/hooks/pre_tool_use.py",
+        ".claude/hooks/pre_compact.py",
     }
     for event_name, entries in hooks.items():
         hooks[event_name] = [
             entry for entry in entries
             if not any(
-                any(hook.get("command", "").endswith(suffix) for suffix in old_suffixes)
+                any(pattern in hook.get("command", "") for pattern in old_patterns)
                 for hook in entry.get("hooks", [])
             )
         ]
@@ -231,7 +231,9 @@ def _install_cursor_hooks(data_path: Path) -> None:
     # Copy hook scripts
     for f in src_hooks.iterdir():
         if f.suffix == ".py":
-            shutil.copy2(f, hooks_dir / f.name)
+            dst = hooks_dir / f.name
+            shutil.copy2(f, dst)
+            dst.chmod(dst.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP)
 
     # Handle hooks.json
     hooks_json = cursor_dir / "hooks.json"

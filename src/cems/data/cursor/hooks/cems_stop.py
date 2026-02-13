@@ -27,9 +27,34 @@ import urllib.request
 import urllib.error
 from datetime import datetime, timedelta
 
-# CEMS configuration from environment
-CEMS_API_URL = os.getenv("CEMS_API_URL", "")
-CEMS_API_KEY = os.getenv("CEMS_API_KEY", "")
+def _read_credentials() -> tuple[str, str]:
+    """Read CEMS credentials from env vars, falling back to ~/.cems/credentials."""
+    url = os.getenv("CEMS_API_URL", "")
+    key = os.getenv("CEMS_API_KEY", "")
+    if url and key:
+        return url, key
+    try:
+        creds_file = os.path.join(os.path.expanduser("~"), ".cems", "credentials")
+        if os.path.exists(creds_file):
+            with open(creds_file) as f:
+                for line in f:
+                    line = line.strip()
+                    if not line or line.startswith("#"):
+                        continue
+                    if "=" in line:
+                        k, _, v = line.partition("=")
+                        k, v = k.strip(), v.strip().strip("'\"")
+                        if k == "CEMS_API_URL" and not url:
+                            url = v
+                        elif k == "CEMS_API_KEY" and not key:
+                            key = v
+    except OSError:
+        pass
+    return url, key
+
+
+# CEMS configuration from environment or credentials file
+CEMS_API_URL, CEMS_API_KEY = _read_credentials()
 
 # Transcript storage location (must match cems_agent_response.py)
 TRANSCRIPT_DIR = "/tmp/cems-transcripts"

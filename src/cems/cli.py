@@ -16,6 +16,7 @@ from cems.commands.index import index
 from cems.commands.maintenance import maintenance
 from cems.commands.admin import admin
 from cems.commands.setup import setup
+from cems.commands.uninstall import uninstall
 
 
 def _read_credentials_file() -> dict[str, str]:
@@ -79,6 +80,7 @@ main.add_command(index)
 main.add_command(maintenance)
 main.add_command(admin)
 main.add_command(setup)
+main.add_command(uninstall)
 
 
 if __name__ == "__main__":
