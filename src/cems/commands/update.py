@@ -10,13 +10,16 @@ Usage:
 import shutil
 import subprocess
 import sys
+from datetime import datetime, timezone
 from importlib.metadata import version as pkg_version
+from pathlib import Path
 
 import click
 
 from cems.cli_utils import console
 
 PACKAGE_SOURCE = "cems @ git+https://github.com/chocksy/cems.git"
+UPDATE_LOG = Path.home() / ".cems" / "update.log"
 
 
 def _get_current_version() -> str:
@@ -27,8 +30,39 @@ def _get_current_version() -> str:
         return "unknown"
 
 
+def _get_installed_version_fresh() -> str:
+    """Get version from a fresh process (bypasses importlib cache)."""
+    cems_bin = shutil.which("cems")
+    if not cems_bin:
+        return "unknown"
+    try:
+        result = subprocess.run(
+            [cems_bin, "--version"],
+            capture_output=True, text=True, timeout=10,
+        )
+        # Output is like "cems, version 0.2.0"
+        if result.returncode == 0:
+            parts = result.stdout.strip().rsplit(" ", 1)
+            if len(parts) == 2:
+                return parts[1]
+    except (subprocess.TimeoutExpired, OSError):
+        pass
+    return "unknown"
+
+
+def _log_update(message: str) -> None:
+    """Append a line to ~/.cems/update.log."""
+    try:
+        UPDATE_LOG.parent.mkdir(parents=True, exist_ok=True)
+        ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+        with UPDATE_LOG.open("a") as f:
+            f.write(f"[{ts}] {message}\n")
+    except OSError:
+        pass
+
+
 def _upgrade_package() -> bool:
-    """Run uv tool upgrade to pull latest from GitHub.
+    """Run uv tool install to pull latest from GitHub.
 
     Returns True if upgrade succeeded.
     """
@@ -45,27 +79,21 @@ def _upgrade_package() -> bool:
     )
 
     if result.returncode != 0:
-        console.print(f"[red]Upgrade failed:[/red] {result.stderr.strip()}")
+        msg = result.stderr.strip()
+        console.print(f"[red]Upgrade failed:[/red] {msg}")
+        _log_update(f"FAILED: {msg[:200]}")
         return False
 
     return True
 
 
 def _redeploy_hooks() -> None:
-    """Re-run setup to copy latest hooks/skills.
-
-    Imports setup internals to avoid spawning another subprocess.
-    """
-    # Re-import after upgrade so we get the NEW code
-    # But since we're already running the old binary, we call setup via subprocess
+    """Re-run setup to copy latest hooks/skills."""
     cems_bin = shutil.which("cems")
     if not cems_bin:
         console.print("[yellow]cems not found on PATH — skipping hook re-deploy[/yellow]")
         console.print("Run manually: [cyan]cems setup[/cyan]")
         return
-
-    # Detect which IDEs are currently configured
-    from pathlib import Path
 
     has_claude = (Path.home() / ".claude" / "hooks" / "cems_session_start.py").exists()
     has_cursor = (Path.home() / ".cursor" / "hooks" / "cems_session_start.py").exists()
@@ -74,11 +102,24 @@ def _redeploy_hooks() -> None:
         console.print("[yellow]No existing hooks found — run [cyan]cems setup[/cyan] to configure[/yellow]")
         return
 
-    args = [sys.executable, "-m", "cems.commands._redeploy"]
-    if has_claude:
+    # Use the NEW cems binary (just installed) to redeploy
+    args = [cems_bin, "setup"]
+    if has_claude and not has_cursor:
         args.append("--claude")
-    if has_cursor:
+    elif has_cursor and not has_claude:
         args.append("--cursor")
+    else:
+        args.extend(["--claude", "--cursor"])
+
+    # Pass existing credentials so setup doesn't prompt
+    creds_file = Path.home() / ".cems" / "credentials"
+    if creds_file.exists():
+        for line in creds_file.read_text().splitlines():
+            line = line.strip()
+            if line.startswith("CEMS_API_URL="):
+                args.extend(["--api-url", line.partition("=")[2].strip().strip("'\"")])
+            elif line.startswith("CEMS_API_KEY="):
+                args.extend(["--api-key", line.partition("=")[2].strip().strip("'\"")])
 
     result = subprocess.run(args, capture_output=True, text=True)
     if result.stdout:
@@ -113,11 +154,14 @@ def update_cmd(hooks_only: bool) -> None:
         if not _upgrade_package():
             raise click.Abort()
 
-        new_version = _get_current_version()
+        # Get version from fresh process (importlib cache won't see the new version)
+        new_version = _get_installed_version_fresh()
         if new_version != old_version:
-            console.print(f"[green]Updated: {old_version} → {new_version}[/green]")
+            console.print(f"[green]Updated: {old_version} -> {new_version}[/green]")
+            _log_update(f"Updated {old_version} -> {new_version}")
         else:
             console.print(f"[green]Already on latest ({new_version})[/green]")
+            _log_update(f"Already on latest ({new_version})")
         console.print()
 
     # Re-deploy hooks/skills
