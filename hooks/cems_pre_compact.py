@@ -4,11 +4,12 @@
 # ///
 
 """
-PreCompact Hook - Capture transcript before context compaction.
+PreCompact Hook - Context compaction handler.
 
 Fires when Claude Code auto-compacts (context window fills up).
-Sends the full transcript to CEMS for learning extraction BEFORE
-the transcript is lost to compaction.
+1. Writes a "compact" signal for the observer daemon (triggers epoch bump)
+2. Sends the full transcript to CEMS for learning extraction BEFORE
+   the transcript is lost to compaction.
 
 Matcher: "auto" only (manual /compact is user-controlled).
 """
@@ -20,6 +21,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -78,7 +80,7 @@ def analyze_session(
     working_dir: str | None = None,
     project: str | None = None,
 ) -> bool:
-    """Send transcript to CEMS API for analysis. Returns True on success."""
+    """Send transcript to CEMS API for learning extraction. Returns True on success."""
     if not CEMS_API_KEY:
         return False
 
@@ -115,6 +117,25 @@ def analyze_session(
         return False
 
 
+def write_signal(session_id: str, signal_type: str, tool: str = "claude") -> None:
+    """Write a signal file for the observer daemon to pick up.
+
+    Inlined from cems.observer.signals — hooks run standalone via uv and
+    cannot import from the cems package.
+    """
+    signals_dir = Path.home() / ".claude" / "observer" / "signals"
+    signals_dir.mkdir(parents=True, exist_ok=True)
+    signal_file = signals_dir / f"{session_id}.json"
+
+    data = {"type": signal_type, "ts": time.time(), "tool": tool}
+    try:
+        tmp = signal_file.with_suffix(".tmp")
+        tmp.write_text(json.dumps(data))
+        tmp.rename(signal_file)
+    except OSError:
+        pass
+
+
 def main():
     try:
         input_data = json.load(sys.stdin)
@@ -129,7 +150,11 @@ def main():
             "cwd": cwd,
         }, input_data=input_data)
 
-        # Read and send transcript to CEMS for learning extraction
+        # Signal the observer daemon about compaction (triggers epoch bump)
+        if session_id:
+            write_signal(session_id, "compact", "claude")
+
+        # Send transcript for learning extraction before compaction loses it
         if transcript_path:
             transcript = read_transcript(transcript_path)
             if transcript and len(transcript) > 2:

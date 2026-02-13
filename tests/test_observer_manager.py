@@ -21,6 +21,7 @@ sys.path.insert(0, str(HOOKS_DIR))
 from utils.observer_manager import (
     HEALTH_CHECK_INTERVAL,
     SPAWN_COOLDOWN_SECONDS,
+    _any_observer_process_exists,
     _find_observer_command,
     _is_in_cooldown,
     _is_process_alive,
@@ -79,7 +80,8 @@ class TestIsDaemonRunning:
     """Tests for is_daemon_running()."""
 
     def test_returns_false_no_pid_file(self, tmp_path):
-        with patch("utils.observer_manager.PID_FILE", tmp_path / "daemon.pid"):
+        with patch("utils.observer_manager.PID_FILE", tmp_path / "daemon.pid"), \
+             patch("utils.observer_manager._any_observer_process_exists", return_value=False):
             assert is_daemon_running() is False
 
     def test_returns_true_for_running_process(self, tmp_path):
@@ -91,10 +93,17 @@ class TestIsDaemonRunning:
     def test_returns_false_and_cleans_stale_pid(self, tmp_path):
         pid_file = tmp_path / "daemon.pid"
         pid_file.write_text("99999999")  # non-existent process
-        with patch("utils.observer_manager.PID_FILE", pid_file):
+        with patch("utils.observer_manager.PID_FILE", pid_file), \
+             patch("utils.observer_manager._any_observer_process_exists", return_value=False):
             assert is_daemon_running() is False
             # Stale PID file should be cleaned up
             assert not pid_file.exists()
+
+    def test_pgrep_fallback_detects_orphan(self, tmp_path):
+        """When PID file is missing but pgrep finds a cems-observer process."""
+        with patch("utils.observer_manager.PID_FILE", tmp_path / "daemon.pid"), \
+             patch("utils.observer_manager._any_observer_process_exists", return_value=True):
+            assert is_daemon_running() is True
 
 
 class TestCooldown:
@@ -202,10 +211,12 @@ class TestSpawnDaemon:
 
         with patch("utils.observer_manager.OBSERVER_DIR", observer_dir), \
              patch("utils.observer_manager.PID_FILE", observer_dir / "daemon.pid"), \
+             patch("utils.observer_manager.SPAWN_LOCK_FILE", observer_dir / ".spawn.lock"), \
              patch("utils.observer_manager._find_observer_command",
                    return_value=["/usr/local/bin/cems-observer"]), \
              patch("subprocess.Popen", return_value=mock_proc) as mock_popen, \
              patch("utils.observer_manager._is_process_alive", return_value=True), \
+             patch("utils.observer_manager.is_daemon_running", return_value=False), \
              patch.dict(os.environ, {"CEMS_API_KEY": "test-key"}, clear=False):
             result = _spawn_daemon()
             assert result is True
@@ -250,6 +261,7 @@ class TestEnsureDaemonRunning:
 
         with patch("utils.observer_manager.PID_FILE", pid_file), \
              patch("utils.observer_manager.COOLDOWN_FILE", cooldown_file), \
+             patch("utils.observer_manager._any_observer_process_exists", return_value=False), \
              patch("utils.observer_manager._spawn_daemon") as mock_spawn:
             result = ensure_daemon_running(force_check=True)
             assert result is False
@@ -264,6 +276,7 @@ class TestEnsureDaemonRunning:
         with patch("utils.observer_manager.PID_FILE", pid_file), \
              patch("utils.observer_manager.COOLDOWN_FILE", cooldown_file), \
              patch("utils.observer_manager.OBSERVER_DIR", observer_dir), \
+             patch("utils.observer_manager._any_observer_process_exists", return_value=False), \
              patch("utils.observer_manager._spawn_daemon", return_value=True) as mock_spawn:
             result = ensure_daemon_running(force_check=True)
             assert result is True
@@ -278,6 +291,7 @@ class TestEnsureDaemonRunning:
         with patch("utils.observer_manager.PID_FILE", pid_file), \
              patch("utils.observer_manager.COOLDOWN_FILE", cooldown_file), \
              patch("utils.observer_manager.OBSERVER_DIR", observer_dir), \
+             patch("utils.observer_manager._any_observer_process_exists", return_value=False), \
              patch("utils.observer_manager._spawn_daemon", return_value=False):
             result = ensure_daemon_running(force_check=True)
             assert result is False

@@ -1,7 +1,9 @@
-"""Observer Daemon — watches sessions and produces observations.
+"""Observer Daemon — multi-tool session learning engine.
 
-Polls active Claude Code session files and sends new content to
-the CEMS /api/session/observe endpoint for observation extraction.
+Polls active sessions from Claude Code, Codex CLI, and Cursor IDE
+using the adapter pattern. Handles signal-based lifecycle (compact/stop)
+from hooks, incremental observations from file growth, and staleness
+detection for sessions without hooks.
 
 Usage:
     python -m cems.observer          # Run continuously (30s interval)
@@ -17,23 +19,21 @@ import time
 import urllib.error
 import urllib.request
 
-from cems.observer.session import (
-    SessionInfo,
-    discover_active_sessions,
-    enrich_session_metadata,
-    read_content_delta,
-)
+from cems.observer.adapters import SessionInfo, get_adapters
+from cems.observer.signals import Signal, clear_signal, read_signal
 from cems.observer.state import (
     ObservationState,
     cleanup_old_states,
     load_state,
     save_state,
+    session_tag,
 )
 
 logger = logging.getLogger(__name__)
 
-# Minimum new content (bytes) before triggering observation
-OBSERVATION_THRESHOLD = 50_000  # ~12-15k tokens
+# Two-phase threshold: cheap raw-byte pre-filter + real extracted-text gate
+MIN_RAW_DELTA_BYTES = 10_000   # Cheap pre-filter: skip tiny file changes
+MIN_EXTRACTED_CHARS = 3_000    # Real gate: ~750 tokens, enough for meaningful summary
 
 # Polling interval
 POLL_INTERVAL = 30  # seconds
@@ -42,9 +42,11 @@ POLL_INTERVAL = 30  # seconds
 CLEANUP_EVERY_N_CYCLES = 100  # ~50 minutes
 
 # Consecutive API failure backoff
-MAX_CONSECUTIVE_FAILURES = 10  # After this many, increase sleep interval
+MAX_CONSECUTIVE_FAILURES = 10
 BACKOFF_INTERVAL = 300  # 5 minutes between cycles when backed off
 
+# Staleness: no file growth for 5 minutes → auto-finalize
+STALE_THRESHOLD = 300  # seconds
 
 
 def send_summary(
@@ -52,18 +54,23 @@ def send_summary(
     session_id: str,
     source_ref: str | None,
     project_context: str | None,
-    segment_number: int,
+    mode: str,
+    epoch: int,
     api_url: str,
     api_key: str,
 ) -> bool:
     """Send content to CEMS for session summary extraction.
 
+    The server maintains one document per session epoch. Incremental calls
+    update it, finalize calls replace it with a comprehensive final version.
+
     Args:
         content: Transcript text to summarize.
         session_id: Session identifier.
         source_ref: Project reference (e.g., "project:org/repo").
-        project_context: Human-readable project context (None if unknown).
-        segment_number: Daemon cycle count for this session.
+        project_context: Human-readable project context.
+        mode: "incremental" or "finalize".
+        epoch: Epoch number for document tagging.
         api_url: CEMS server URL.
         api_key: CEMS API key.
 
@@ -73,7 +80,9 @@ def send_summary(
     payload = {
         "content": content,
         "session_id": session_id,
-        "segment_number": segment_number,
+        "mode": mode,
+        "epoch": epoch,
+        "session_tag": session_tag(session_id, epoch),
     }
     if project_context:
         payload["project_context"] = project_context
@@ -96,7 +105,9 @@ def send_summary(
             if response.status == 200:
                 result = json.loads(response.read())
                 title = result.get("title", "unknown")
-                logger.info(f"Stored session summary for {session_id[:8]}: {title}")
+                action = result.get("action", "unknown")
+                tag = session_tag(session_id, epoch)
+                logger.info(f"Session summary {action} [{tag}]: {title}")
                 return True
             return False
 
@@ -104,9 +115,7 @@ def send_summary(
         if e.code in (401, 403):
             raise RuntimeError(f"Auth failed ({e.code}): check CEMS_API_KEY") from e
         if e.code == 404:
-            # Fallback: server hasn't been updated yet, try old observe endpoint
-            logger.warning("Summarize endpoint not found (404), falling back to observe")
-            return _send_observation_legacy(content, session_id, source_ref, project_context, api_url, api_key)
+            raise RuntimeError("Summarize endpoint not found (404): deploy CEMS update") from e
         logger.warning(f"Summary API call failed for {session_id[:8]}: {e}")
         return False
     except (urllib.error.URLError, TimeoutError) as e:
@@ -117,69 +126,8 @@ def send_summary(
         return False
 
 
-def _send_observation_legacy(
-    content: str,
-    session_id: str,
-    source_ref: str | None,
-    project_context: str | None,
-    api_url: str,
-    api_key: str,
-) -> bool:
-    """Legacy fallback: send to /api/session/observe if summarize endpoint is unavailable."""
-    payload = {
-        "content": content,
-        "session_id": session_id,
-    }
-    if project_context:
-        payload["project_context"] = project_context
-    if source_ref:
-        payload["source_ref"] = source_ref
-
-    try:
-        data = json.dumps(payload).encode("utf-8")
-        req = urllib.request.Request(
-            f"{api_url}/api/session/observe",
-            data=data,
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-            },
-            method="POST",
-        )
-        with urllib.request.urlopen(req, timeout=30) as response:
-            return response.status == 200
-    except Exception as e:
-        logger.warning(f"Legacy observe fallback also failed: {e}")
-        return False
-
-
-def process_session(session: SessionInfo, api_url: str, api_key: str) -> bool:
-    """Process a single session: check for new content, send observation if threshold met.
-
-    Args:
-        session: Session to process.
-        api_url: CEMS server URL.
-        api_key: CEMS API key.
-
-    Returns:
-        True if an observation was triggered.
-    """
-    state = load_state(session.session_id)
-
-    # Check if enough new content has accumulated
-    delta_bytes = session.file_size - state.last_observed_bytes
-    if delta_bytes < OBSERVATION_THRESHOLD:
-        return False
-
-    # Enrich session with project metadata
-    enrich_session_metadata(session)
-
-    # Read the new content
-    content = read_content_delta(session, state.last_observed_bytes)
-    if not content or len(content) < 200:
-        return False
-
-    # Build project context string (never use "unknown project")
+def _build_project_context(session: SessionInfo) -> str | None:
+    """Build human-readable project context string from session metadata."""
     project_context = session.project_id
     if not project_context and session.cwd:
         project_context = os.path.basename(session.cwd.rstrip("/"))
@@ -188,20 +136,156 @@ def process_session(session: SessionInfo, api_url: str, api_key: str) -> bool:
             project_context += f" ({session.git_branch})"
         if session.cwd:
             project_context += f" — {session.cwd}"
+    return project_context
 
-    # Send to CEMS for session summary extraction
+
+def check_staleness(state: ObservationState) -> bool:
+    """Check if a session is stale (no file growth for STALE_THRESHOLD seconds).
+
+    Only triggers if the session has been observed at least once (to avoid
+    finalizing empty sessions).
+    """
+    if state.observation_count == 0:
+        return False  # never observed, don't finalize empty
+    if state.last_growth_seen_at == 0:
+        return False  # first cycle for this state
+    idle = time.time() - state.last_growth_seen_at
+    return idle > STALE_THRESHOLD
+
+
+def handle_signal(
+    sig: Signal,
+    session: SessionInfo,
+    state: ObservationState,
+    adapter,
+    api_url: str,
+    api_key: str,
+) -> None:
+    """Handle a lifecycle signal (compact or stop).
+
+    - compact: finalize current epoch doc, bump epoch, continue watching
+    - stop: finalize current epoch doc, mark session done
+    """
+    logger.info(
+        f"Signal '{sig.type}' for {session.session_id[:8]} "
+        f"(tool={sig.tool}, epoch={state.epoch})"
+    )
+
+    # Finalize current epoch if there's content to finalize
+    if state.observation_count > 0:
+        adapter.enrich_metadata(session)
+        content = adapter.extract_text(session, state.last_observed_bytes)
+        project_context = _build_project_context(session)
+
+        # Even if no new content, send a finalize to polish the existing summary
+        send_summary(
+            content=content or "(session ended)",
+            session_id=session.session_id,
+            source_ref=state.source_ref or session.source_ref,
+            project_context=project_context,
+            mode="finalize",
+            epoch=state.epoch,
+            api_url=api_url,
+            api_key=api_key,
+        )
+        state.last_finalized_at = time.time()
+
+        # Update bytes pointer if we read new content
+        if content:
+            state.last_observed_bytes = session.file_size
+
+    if sig.type == "compact":
+        state.epoch += 1
+        logger.info(f"Epoch bumped to {state.epoch} for {session.session_id[:8]}")
+    elif sig.type == "stop":
+        state.is_done = True
+        logger.info(f"Session {session.session_id[:8]} marked done")
+
+    save_state(state)
+    clear_signal(session.session_id)
+
+
+def handle_finalize(
+    session: SessionInfo,
+    state: ObservationState,
+    adapter,
+    api_url: str,
+    api_key: str,
+    reason: str = "staleness",
+) -> None:
+    """Finalize a session (from staleness or other non-signal trigger)."""
+    logger.info(
+        f"Auto-finalize ({reason}) for {session.session_id[:8]} "
+        f"(epoch={state.epoch})"
+    )
+
+    adapter.enrich_metadata(session)
+    project_context = _build_project_context(session)
+
+    send_summary(
+        content="(session ended — auto-finalized)",
+        session_id=session.session_id,
+        source_ref=state.source_ref or session.source_ref,
+        project_context=project_context,
+        mode="finalize",
+        epoch=state.epoch,
+        api_url=api_url,
+        api_key=api_key,
+    )
+
+    state.is_done = True
+    state.last_finalized_at = time.time()
+    save_state(state)
+
+
+def process_session_growth(
+    session: SessionInfo,
+    state: ObservationState,
+    adapter,
+    api_url: str,
+    api_key: str,
+) -> bool:
+    """Check for file growth and send incremental observation if threshold met.
+
+    Returns True if an observation was actually sent to the API.
+    Updates state.last_growth_seen_at internally for staleness tracking.
+    """
+    delta_bytes = session.file_size - state.last_observed_bytes
+    grew = delta_bytes > 0
+
+    if grew:
+        state.last_growth_seen_at = time.time()
+
+    # Phase 1: Cheap pre-filter on raw bytes
+    if delta_bytes < MIN_RAW_DELTA_BYTES:
+        if grew:
+            save_state(state)  # persist last_growth_seen_at
+        return False
+
+    # Enrich session with project metadata
+    adapter.enrich_metadata(session)
+
+    # Phase 2: Extract text and gate on extracted length
+    content = adapter.extract_text(session, state.last_observed_bytes)
+    if not content or len(content) < MIN_EXTRACTED_CHARS:
+        if grew:
+            save_state(state)
+        return False
+
+    project_context = _build_project_context(session)
+
     success = send_summary(
         content=content,
         session_id=session.session_id,
         source_ref=session.source_ref,
         project_context=project_context,
-        segment_number=state.observation_count + 1,
+        mode="incremental",
+        epoch=state.epoch,
         api_url=api_url,
         api_key=api_key,
     )
 
     if success:
-        # Update state
         state.project_id = session.project_id
         state.source_ref = session.source_ref
         state.last_observed_bytes = session.file_size
@@ -213,41 +297,76 @@ def process_session(session: SessionInfo, api_url: str, api_key: str) -> bool:
 
 
 def run_cycle(api_url: str, api_key: str) -> int:
-    """Run one observation cycle: discover sessions, process new content.
+    """Run one observation cycle across all adapters.
 
-    Args:
-        api_url: CEMS server URL.
-        api_key: CEMS API key.
+    For each adapter, discovers sessions and processes them:
+    1. Check signals (compact/stop) — handle lifecycle events
+    2. Check file growth — send incremental observations
+    3. Check staleness — auto-finalize idle sessions
 
     Returns:
         Number of observations triggered.
     """
-    sessions = discover_active_sessions(max_age_hours=2)
-    if not sessions:
-        return 0
-
+    adapters = get_adapters()
     observations_triggered = 0
-    for session in sessions:
-        try:
-            if process_session(session, api_url, api_key):
-                observations_triggered += 1
-        except RuntimeError as e:
-            # Auth/404 errors — propagate so daemon backs off
-            logger.error(f"Error processing session {session.session_id[:8]}: {e}")
-            raise
-        except Exception as e:
-            logger.error(f"Error processing session {session.session_id[:8]}: {e}")
-            continue
+
+    for adapter in adapters:
+        sessions = adapter.discover_sessions(max_age_hours=2)
+        if sessions:
+            logger.debug(
+                f"{adapter.tool_name}: {len(sessions)} sessions "
+                f"({', '.join(s.session_id[:8] for s in sessions)})"
+            )
+
+        for session in sessions:
+            try:
+                state = load_state(session.session_id)
+
+                # Skip completed sessions
+                if state.is_done:
+                    logger.debug(
+                        f"Skipping done session {session.session_id[:8]} "
+                        f"(tool={adapter.tool_name})"
+                    )
+                    continue
+
+                # 1. Check signals (cheap file stat)
+                sig = read_signal(session.session_id)
+                if sig:
+                    handle_signal(sig, session, state, adapter, api_url, api_key)
+                    observations_triggered += 1
+                    continue
+
+                # 2. Check file growth → incremental observation
+                grew = process_session_growth(
+                    session, state, adapter, api_url, api_key,
+                )
+                if grew:
+                    observations_triggered += 1
+
+                # 3. Check staleness → auto-finalize
+                # Reload state since process_session_growth may have saved
+                state = load_state(session.session_id)
+                if not state.is_done and check_staleness(state):
+                    handle_finalize(
+                        session, state, adapter, api_url, api_key,
+                        reason="staleness",
+                    )
+
+            except RuntimeError:
+                raise  # Auth/404 — propagate
+            except Exception as e:
+                logger.error(
+                    f"Error processing {adapter.tool_name} session "
+                    f"{session.session_id[:8]}: {e}"
+                )
+                continue
 
     return observations_triggered
 
 
 def _handle_sigterm(signum, frame):
-    """Handle SIGTERM for graceful shutdown.
-
-    Raises SystemExit to interrupt time.sleep() and exit immediately
-    rather than waiting for the next cycle.
-    """
+    """Handle SIGTERM for graceful shutdown."""
     logger.info("SIGTERM received, shutting down...")
     raise SystemExit(0)
 
@@ -255,20 +374,19 @@ def _handle_sigterm(signum, frame):
 def run_daemon(api_url: str, api_key: str) -> None:
     """Run the observer daemon continuously.
 
-    Polls every POLL_INTERVAL seconds, processes active sessions,
-    and periodically cleans up old state files. Backs off on
-    consecutive API failures to avoid hammering a broken server.
-
-    Args:
-        api_url: CEMS server URL.
-        api_key: CEMS API key.
+    Polls every POLL_INTERVAL seconds, processes active sessions
+    across all tool adapters, and periodically cleans up old state files.
     """
-    # Register SIGTERM handler for clean shutdown (e.g., kill <pid>)
     signal.signal(signal.SIGTERM, _handle_sigterm)
 
+    adapters = get_adapters()
+    adapter_names = [a.tool_name for a in adapters]
+
     logger.info(f"Observer daemon started (PID {os.getpid()}, polling every {POLL_INTERVAL}s)")
+    logger.info(f"Adapters: {', '.join(adapter_names)}")
     logger.info(f"CEMS API: {api_url}")
-    logger.info(f"Observation threshold: {OBSERVATION_THRESHOLD} bytes")
+    logger.info(f"Thresholds: raw={MIN_RAW_DELTA_BYTES}B, extracted={MIN_EXTRACTED_CHARS}chars")
+    logger.info(f"Staleness threshold: {STALE_THRESHOLD}s")
 
     cycle = 0
     consecutive_failures = 0
@@ -279,12 +397,8 @@ def run_daemon(api_url: str, api_key: str) -> None:
 
             if triggered > 0:
                 logger.info(f"Cycle {cycle}: {triggered} observation(s) triggered")
-                consecutive_failures = 0  # Reset on success
-            elif triggered == 0:
-                # No observations triggered but no errors — reset failures
-                consecutive_failures = 0
+            consecutive_failures = 0
 
-            # Periodic cleanup
             cycle += 1
             if cycle % CLEANUP_EVERY_N_CYCLES == 0:
                 cleanup_old_states(max_age_days=7)
@@ -296,7 +410,6 @@ def run_daemon(api_url: str, api_key: str) -> None:
             logger.error(f"Error in observer cycle: {e}")
             consecutive_failures += 1
 
-        # Back off if too many consecutive failures
         if consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
             if consecutive_failures == MAX_CONSECUTIVE_FAILURES:
                 logger.warning(

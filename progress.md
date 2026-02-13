@@ -1,50 +1,18 @@
-# Progress: One-Command CEMS Install
+# Fix Observer Daemon Document Duplication — Progress
 
-## Session: 2026-02-13 (continued)
+## Session: 2026-02-13 (Investigation)
+- [x] codex-investigator deep audit of observer code (all phases compliant with plan)
+- [x] Confirmed 6 duplicate session-summary docs for `session:b40eb706` in production
+- [x] Confirmed 9+ duplicate learnings ("Mastra LongMemEval", "haystack_sessions")
+- [x] Identified root cause: TOCTOU race in `api_session_summarize()` upsert
+- [x] Identified secondary: `save_state()` not atomic
+- [x] Verified daemon singleton working (only 1 PID: 94206, flock operational)
+- [x] Verified all 11 phases of Observer V2 plan are compliant
 
-### Bug Fixes from Code Review — COMPLETE
-- Fixed `_migrate_old_hook_names()` — uses full path pattern matching instead of suffix
-- Fixed Cursor hooks — added `_read_credentials()` for `~/.cems/credentials` fallback
-- Fixed Cursor hooks — added `chmod +x` after copying hook files
-- README — removed all Mem0/Kuzu/Qdrant references
-
-### Deep Architecture Investigation — COMPLETE
-- Ran 3 parallel agents (codex-investigator, deploy research, logo research)
-- Ground truth captured in `findings.md`
-- Key findings: NO Mem0, NO Kuzu, NO Qdrant — just PostgreSQL+pgvector+OpenRouter
-- No uninstall command existed
-
-### README Rewrite — COMPLETE
-- Completely rewrote README from scratch based on ground truth
-- Added shields.io badges (license, python, MCP, Claude Code, Recall@5)
-- Correct services: postgres, cems-server, cems-mcp (no Qdrant)
-- Correct architecture: pgvector+tsvector, OpenRouter embeddings, 9-stage pipeline
-- Correct features: observer daemon, maintenance jobs, MCP integration
-- Full API reference in collapsible section
-- Documented uninstall command
-
-### Uninstall Command — COMPLETE
-- Created `src/cems/commands/uninstall.py`
-- Removes: Claude hooks, Cursor hooks, skills, settings.json entries
-- Options: `--all` (also remove credentials), `--yes` (skip confirmation)
-- Registered in `cli.py`
-- All 417 tests pass
-
-### Deploy Research Findings
-- Platforms with deploy buttons (Railway, Render, DO) DON'T support docker-compose
-- Platforms with docker-compose (Coolify, Portainer) are self-hosted — no buttons
-- Best option: keep using Coolify (already have it)
-- Railway template possible but high effort
-
-### Logo/Banner Research
-- Can generate with Gemini via OpenRouter (already have key)
-- SVG banner recommended for dark/light mode support
-- `<picture>` element for automatic theme switching
-
-## Session: 2026-02-12
-
-### Pre-planning: Observer + Install Fixes — COMPLETE
-- Fixed `observer_manager.py` to use `shutil.which("cems-observer")`
-- Added `cems-observer` entry point to `pyproject.toml`
-- Rewrote root `install.sh` to use `~/.cems/credentials`
-- Updated tests — 417 pass
+## Session: 2026-02-13 (Fixes)
+- [x] Phase 1: Atomic upsert in session handler — `upsert_document_by_tag()` with SELECT FOR UPDATE
+- [x] Phase 2: Atomic save_state — tmp+rename pattern
+- [x] Phase 3: Spawn lock — fcntl.flock around _spawn_daemon()
+- [x] Phase 4: Production data cleanup — deleted 5 dup session summaries + 5 dup learnings
+- [x] Phase 5: Tests — 485 passed, 0 failed; 20/20 integration tests pass
+- [ ] Commit + push (triggers production redeploy)

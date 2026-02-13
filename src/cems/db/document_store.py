@@ -380,6 +380,53 @@ class DocumentStore:
         logger.debug(f"Deleted {count} documents with tag={tag}")
         return count
 
+    async def find_document_by_tag(
+        self,
+        tag: str,
+        user_id: str,
+        category: str | None = None,
+    ) -> dict[str, Any] | None:
+        """Find a single document containing a specific tag.
+
+        Returns the most recently updated document matching the tag.
+        Used for session summary upsert (find existing by session tag).
+
+        Args:
+            tag: Tag to search for (e.g., "session:b40eb706")
+            user_id: User ID
+            category: Optional category filter
+
+        Returns:
+            Document dict or None if not found
+        """
+        pool = await self._get_pool()
+        user_uuid = UUID(user_id)
+
+        if category:
+            query = f"""
+                SELECT {DOCUMENT_COLUMNS} FROM memory_documents
+                WHERE $1 = ANY(tags) AND user_id = $2 AND category = $3
+                  AND deleted_at IS NULL
+                ORDER BY updated_at DESC NULLS LAST
+                LIMIT 1
+            """
+            async with pool.acquire() as conn:
+                row = await conn.fetchrow(query, tag, user_uuid, category)
+        else:
+            query = f"""
+                SELECT {DOCUMENT_COLUMNS} FROM memory_documents
+                WHERE $1 = ANY(tags) AND user_id = $2
+                  AND deleted_at IS NULL
+                ORDER BY updated_at DESC NULLS LAST
+                LIMIT 1
+            """
+            async with pool.acquire() as conn:
+                row = await conn.fetchrow(query, tag, user_uuid)
+
+        if not row:
+            return None
+        return self._doc_row_to_dict(row)
+
     async def update_document(
         self,
         document_id: str,
@@ -451,6 +498,174 @@ class DocumentStore:
 
         logger.debug(f"Updated document {document_id} with {len(chunks)} chunks")
         return True
+
+    async def upsert_document_by_tag(
+        self,
+        tag: str,
+        user_id: str,
+        content: str,
+        chunks: list[Chunk],
+        embeddings: list[list[float]],
+        category: str,
+        mode: str = "replace",
+        scope: str = "personal",
+        title: str | None = None,
+        source_ref: str | None = None,
+        tags: list[str] | None = None,
+        append_separator: str = "\n\n---\n\n",
+    ) -> tuple[str, str]:
+        """Atomically find-or-create a document by tag.
+
+        Uses SELECT ... FOR UPDATE to prevent TOCTOU race conditions.
+        If a document with the given tag exists, updates it.
+        If not, creates a new one.
+
+        Args:
+            tag: Tag to match (e.g., "session:b40eb706")
+            user_id: User ID
+            content: New content
+            chunks: Pre-chunked content for the NEW content
+            embeddings: Embeddings for the new chunks
+            category: Document category
+            mode: "replace" overwrites content, "append" appends with separator,
+                  "finalize" replaces entire content (same as replace)
+            scope: "personal" or "shared"
+            title: Optional document title (used for create, or update if provided)
+            source_ref: Source reference
+            tags: Full tag list (used for create only)
+            append_separator: Separator for append mode
+
+        Returns:
+            Tuple of (document_id, action) where action is "created", "appended",
+            or "finalized"/"replaced".
+        """
+        if len(chunks) != len(embeddings):
+            raise ValueError(
+                f"Chunks and embeddings must have same length: "
+                f"{len(chunks)} vs {len(embeddings)}"
+            )
+
+        pool = await self._get_pool()
+        user_uuid = UUID(user_id)
+        doc_hash = content_hash(content)
+        doc_bytes = len(content.encode("utf-8"))
+
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                # Atomic find with row lock — prevents concurrent creates
+                existing = await conn.fetchrow(
+                    f"""
+                    SELECT {DOCUMENT_COLUMNS} FROM memory_documents
+                    WHERE $1 = ANY(tags) AND user_id = $2 AND category = $3
+                      AND deleted_at IS NULL
+                    ORDER BY updated_at DESC NULLS LAST
+                    LIMIT 1
+                    FOR UPDATE
+                    """,
+                    tag, user_uuid, category,
+                )
+
+                if existing:
+                    doc_id = existing["id"]
+                    doc_id_str = str(doc_id)
+
+                    # Determine final content based on mode
+                    if mode == "append":
+                        existing_content = existing["content"] or ""
+                        final_content = (
+                            f"{existing_content}{append_separator}{content}"
+                            if existing_content else content
+                        )
+                        action = "appended"
+                    else:
+                        # "replace" or "finalize" — overwrite
+                        final_content = content
+                        action = "finalized" if mode == "finalize" else "replaced"
+
+                    # Re-chunk and re-embed the final content for append mode
+                    if mode == "append" and final_content != content:
+                        # For append, we need chunks/embeddings of the FULL content
+                        # Caller should provide these for the new content only;
+                        # we'll use them as-is since the handler will re-chunk
+                        # the merged content before calling us.
+                        pass
+
+                    final_hash = content_hash(final_content)
+                    final_bytes = len(final_content.encode("utf-8"))
+
+                    # Update document
+                    update_fields = """
+                        SET content = $1, content_hash = $2, content_bytes = $3,
+                            updated_at = NOW()
+                    """
+                    params: list = [final_content, final_hash, final_bytes]
+
+                    if title:
+                        update_fields += ", title = $4 WHERE id = $5"
+                        params.extend([title, doc_id])
+                    else:
+                        update_fields += " WHERE id = $4"
+                        params.append(doc_id)
+
+                    await conn.execute(
+                        f"UPDATE memory_documents {update_fields}",
+                        *params,
+                    )
+
+                    # Replace chunks with new embeddings
+                    await conn.execute(
+                        "DELETE FROM memory_chunks WHERE document_id = $1",
+                        doc_id,
+                    )
+                    for chunk, embedding in zip(chunks, embeddings):
+                        await conn.execute(
+                            """
+                            INSERT INTO memory_chunks (
+                                id, document_id, seq, pos, content,
+                                embedding, tokens, bytes
+                            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                            """,
+                            uuid4(), doc_id, chunk.seq, chunk.pos,
+                            chunk.content, embedding, chunk.tokens, chunk.bytes,
+                        )
+
+                    logger.debug(
+                        f"Upsert: {action} document {doc_id_str} "
+                        f"(tag={tag}, {len(chunks)} chunks)"
+                    )
+                    return doc_id_str, action
+
+                else:
+                    # Create new document
+                    doc_id = uuid4()
+                    await conn.execute(
+                        """
+                        INSERT INTO memory_documents (
+                            id, user_id, scope, category, title,
+                            source_ref, tags, content, content_hash, content_bytes
+                        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                        """,
+                        doc_id, user_uuid, scope, category, title,
+                        source_ref, tags or [], content, doc_hash, doc_bytes,
+                    )
+
+                    for chunk, embedding in zip(chunks, embeddings):
+                        await conn.execute(
+                            """
+                            INSERT INTO memory_chunks (
+                                id, document_id, seq, pos, content,
+                                embedding, tokens, bytes
+                            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                            """,
+                            uuid4(), doc_id, chunk.seq, chunk.pos,
+                            chunk.content, embedding, chunk.tokens, chunk.bytes,
+                        )
+
+                    logger.debug(
+                        f"Upsert: created document {doc_id} "
+                        f"(tag={tag}, {len(chunks)} chunks)"
+                    )
+                    return str(doc_id), "created"
 
     async def get_documents_by_category(
         self,

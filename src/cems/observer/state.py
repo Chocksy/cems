@@ -25,6 +25,31 @@ class ObservationState:
     last_observed_at: float = 0.0
     observation_count: int = 0
     session_started: float = field(default_factory=time.time)
+    # Epoch model: bumped on compact signal, each epoch gets its own document
+    epoch: int = 0
+    last_finalized_at: float = 0.0
+    # Staleness detection: tracks when the file last grew
+    last_growth_seen_at: float = 0.0
+    is_done: bool = False
+
+
+def session_tag(session_id: str, epoch: int = 0) -> str:
+    """Build the session tag used to identify documents per epoch.
+
+    Epoch 0 uses backwards-compatible format: session:{id[:8]}
+    Epoch N>0 appends epoch suffix: session:{id[:8]}:e{N}
+
+    Args:
+        session_id: Session UUID.
+        epoch: Epoch number.
+
+    Returns:
+        Session tag string.
+    """
+    tag = f"session:{session_id[:8]}"
+    if epoch > 0:
+        tag += f":e{epoch}"
+    return tag
 
 
 def load_state(session_id: str) -> ObservationState:
@@ -55,6 +80,9 @@ def load_state(session_id: str) -> ObservationState:
 def save_state(state: ObservationState) -> None:
     """Persist observation state to disk.
 
+    Uses atomic tmp+rename to prevent corruption if the process
+    crashes mid-write (corrupted state → fresh state → re-send from byte 0).
+
     Args:
         state: ObservationState to save.
     """
@@ -62,8 +90,10 @@ def save_state(state: ObservationState) -> None:
     state_file = OBSERVER_STATE_DIR / f"{state.session_id}.json"
 
     try:
-        with open(state_file, "w") as f:
+        tmp = state_file.with_suffix(".tmp")
+        with open(tmp, "w") as f:
             json.dump(asdict(state), f, indent=2)
+        tmp.rename(state_file)
     except OSError as e:
         logger.error(f"Could not save state for {state.session_id}: {e}")
 

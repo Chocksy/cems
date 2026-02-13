@@ -262,6 +262,7 @@ class TestDaemon:
     def test_run_cycle_processes_sessions(self, tmp_path):
         """run_cycle should discover sessions and process them."""
         from cems.observer.daemon import run_cycle
+        from cems.observer.adapters.claude import ClaudeAdapter
 
         # Create a session with enough content
         project_dir = tmp_path / "-Users-test-Development-proj"
@@ -280,11 +281,14 @@ class TestDaemon:
         session_file.write_text("\n".join(lines) + "\n")
 
         state_dir = tmp_path / "observer_state"
+        signals_dir = tmp_path / "signals"
 
-        with patch("cems.observer.session.CLAUDE_PROJECTS_DIR", tmp_path), \
+        with patch("cems.observer.adapters.claude.CLAUDE_PROJECTS_DIR", tmp_path), \
              patch("cems.observer.state.OBSERVER_STATE_DIR", state_dir), \
+             patch("cems.observer.signals.SIGNALS_DIR", signals_dir), \
+             patch("cems.observer.daemon.get_adapters", return_value=[ClaudeAdapter()]), \
              patch("cems.observer.daemon.send_summary", return_value=True) as mock_send, \
-             patch("cems.observer.session._get_project_id", return_value="test/proj"):
+             patch("cems.observer.adapters.claude._get_project_id", return_value="test/proj"):
 
             triggered = run_cycle("http://localhost:8765", "test-key")
 
@@ -298,6 +302,7 @@ class TestDaemon:
     def test_run_cycle_skips_small_sessions(self, tmp_path):
         """run_cycle should skip sessions with too little new content."""
         from cems.observer.daemon import run_cycle
+        from cems.observer.adapters.claude import ClaudeAdapter
 
         project_dir = tmp_path / "-Users-test-Development-small"
         project_dir.mkdir()
@@ -305,8 +310,10 @@ class TestDaemon:
         session_file = project_dir / "small-session.jsonl"
         session_file.write_text('{"type":"user","message":{"content":"hi"}}\n')
 
-        with patch("cems.observer.session.CLAUDE_PROJECTS_DIR", tmp_path), \
+        with patch("cems.observer.adapters.claude.CLAUDE_PROJECTS_DIR", tmp_path), \
              patch("cems.observer.state.OBSERVER_STATE_DIR", tmp_path / "states"), \
+             patch("cems.observer.signals.SIGNALS_DIR", tmp_path / "signals"), \
+             patch("cems.observer.daemon.get_adapters", return_value=[ClaudeAdapter()]), \
              patch("cems.observer.daemon.send_summary") as mock_send:
 
             triggered = run_cycle("http://localhost:8765", "test-key")

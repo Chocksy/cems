@@ -1,105 +1,83 @@
-# Task: CEMS Polish — CLAUDE.md Memory Instructions, Banner/Logo, Deploy Guides
+# Fix Observer Daemon Document Duplication
 
 ## Goal
-1. Add CLAUDE.md instructions so Claude Code proactively stores memories
-2. Generate a creative banner/logo with mascot for the README
-3. Create deployment guides (AWS, local, self-hosted)
-4. Update README with banner and deploy sections
+Fix the document duplication bugs identified by codex-investigator audit. Production DB shows 6 duplicate session-summary docs for session `b40eb706` and 9+ duplicate learnings.
 
-## Context
-- README already rewritten with correct architecture (no Mem0/Kuzu/Qdrant)
-- `cems setup` and `cems uninstall` work
-- Observer handles passive memory extraction from session transcripts
-- Skills (/remember, /recall, etc.) handle manual memory operations
-- Gap: Claude Code doesn't proactively add memories during sessions
+## Status: IN PROGRESS
 
-## Image Generation Models (OpenRouter, Feb 2026)
-
-| Model ID | Name | Best For | Price |
-|----------|------|----------|-------|
-| `google/gemini-3-pro-image-preview` | Nano Banana Pro | Best text rendering, complex compositions | $0.12/1K img tokens |
-| `openai/gpt-5-image` | GPT-5 Image | Superior instruction following, editing | $40/M img tokens |
-
-**Decision**: Use Nano Banana Pro (`google/gemini-3-pro-image-preview`) — best text rendering for logo text, cheaper.
-
-## Mascot/Brand Ideas
-
-CEMS = Continuous Evolving Memory System
-
-Creative angles:
-- **CEMS the Cephalopod** — A cuttlefish (not octopus — GitHub has that). Cuttlefish have the best memory of all invertebrates, can camouflage (adapt/evolve), and have 3 hearts (personal + shared + system memory). Tentacles reaching out to grab data from different sources.
-- **CEMS the Elephant** — Elephants never forget. Classic but effective. Trunk could wrap around code symbols.
-- **Brain with circuits** — Neural network meets code. More abstract, less fun.
-- **Memory palace / library** — Architectural metaphor. Filing cabinet with tentacles.
-
-**Winner: Cuttlefish** — Unique (not octopus), scientifically accurate (great memory), visually distinctive, fits "evolving" theme (camouflage = adaptation).
+## Root Causes Identified
+1. **CRITICAL**: `api_session_summarize()` upsert is TOCTOU race (check-then-act without transaction)
+2. **MODERATE**: `save_state()` not atomic (crash mid-write → state reset → re-send)
+3. **LOW**: `_spawn_daemon()` PID file race between concurrent hooks
+4. **CLEANUP**: Existing duplicates need deduplication in production
 
 ---
 
-## Phase 1: CLAUDE.md Memory Instructions — `status: pending`
+## Phase 1: Atomic Upsert in `api_session_summarize()` `pending`
+**Files**: `src/cems/api/handlers/session.py`, `src/cems/db/document_store.py`
 
-Add a section to the CEMS skills or CLAUDE.md that instructs Claude Code to:
-- Proactively use /remember when it discovers project conventions
-- Store architectural decisions, preferences, and workflow patterns
-- NOT store session-specific details (that's the observer's job)
-- Use appropriate categories (preferences, conventions, architecture, workflow)
+### Problem
+`find_document_by_tag()` → check → `add_async()` is not transactional. Two concurrent requests both see "no existing doc" and both create.
 
-Options:
-a) Add to `~/.claude/CLAUDE.md` (global, user's file — we shouldn't touch)
-b) Add a `.claude/CLAUDE.md` per-project file (project-level instructions)
-c) Bundle instructions in a CEMS skill file that gets injected via SessionStart hook
-d) Add to the SessionStart profile context that already gets injected
+### Solution
+Add `find_or_create_by_tag()` method to DocumentStore that uses `SELECT ... FOR UPDATE` within a transaction. The handler calls this single atomic method instead of separate find+create.
 
-**Best approach**: Option (c) or (d) — add memory-proactive instructions to the profile context that SessionStart hook injects. This way it's automatic and doesn't require modifying user's CLAUDE.md.
-
-### Files to modify
-- `src/cems/data/claude/skills/cems/memory-guide.md` — NEW skill with guidelines
-- OR modify the server's profile endpoint response to include instructions
-
-## Phase 2: Banner & Logo Generation — `status: pending`
-
-### Step 1: Generate banner with cuttlefish mascot
-- Model: `google/gemini-3-pro-image-preview` (Nano Banana Pro)
-- Prompt: Dark background, cuttlefish with data/memory tentacles, "CEMS" text, developer aesthetic
-- Size: 1280x320 (4:1 aspect ratio for GitHub README)
-- Generate dark and light variants
-
-### Step 2: Create assets directory
-- `assets/banner-dark.png`
-- `assets/banner-light.png`
-
-### Step 3: Update README header
-- Use `<picture>` element for dark/light mode switching
-
-## Phase 3: Deploy Guides — `status: pending`
-
-### Local Development
-- Simple `docker compose up -d` guide (already in README)
-- Add: how to run without Docker (direct Python + PostgreSQL)
-
-### Self-Hosted (VPS)
-- Hetzner/DigitalOcean VPS + Docker Compose
-- Add Coolify deployment guide (we already use it)
-- Nginx reverse proxy + SSL via Certbot or Coolify
-
-### AWS
-- ECS/Fargate option (most common)
-- Or simple EC2 + docker-compose (cheapest)
-- Include a basic CloudFormation template or step-by-step
-
-### What to add to README
-- Collapsible `<details>` sections for each deploy target
-- Keep the Server Deployment section clean, link to detailed guides
-
-## Phase 4: Final README Update — `status: pending`
-
-- Add banner with `<picture>` dark/light
-- Add deploy guide sections
-- Verify all links work
+### Changes
+- `document_store.py`: Add `upsert_document_by_tag()` — SELECT FOR UPDATE in transaction
+- `session.py`: Replace find+create/update with atomic upsert call
 
 ---
 
-## Errors Encountered
-| Error | Attempt | Resolution |
-|-------|---------|------------|
-| (none yet) | | |
+## Phase 2: Atomic `save_state()` `pending`
+**Files**: `src/cems/observer/state.py`
+
+### Problem
+`save_state()` writes directly to file. Crash mid-write → corrupted JSON → fresh state → re-send from byte 0.
+
+### Solution
+Use tmp+rename pattern (same as `write_signal()`).
+
+### Changes
+- `state.py`: Write to `.tmp` then `os.rename()`
+
+---
+
+## Phase 3: Spawn Lock in `_spawn_daemon()` `pending`
+**Files**: `hooks/utils/observer_manager.py`, `src/cems/data/claude/hooks/utils/observer_manager.py`
+
+### Problem
+Two hooks calling `ensure_daemon_running()` simultaneously can both spawn daemons. The flock in `__main__.py` makes only one survive, but PID file points to wrong one temporarily.
+
+### Solution
+Add `fcntl.flock` around spawn operation in `_spawn_daemon()`.
+
+### Changes
+- `observer_manager.py`: Add file lock around spawn (both canonical + bundled)
+
+---
+
+## Phase 4: Production Data Cleanup `pending`
+**Target**: Production DB via CEMS API
+
+### Problem
+6 duplicate session-summary docs for `session:b40eb706`, 9+ duplicate learnings.
+
+### Solution
+Use CEMS API to soft-delete duplicates, keeping only the most recent/comprehensive one per session tag.
+
+---
+
+## Phase 5: Tests `pending`
+**Files**: `tests/test_observer.py`, `tests/test_integration.py`
+
+### Changes
+- Test atomic upsert (concurrent calls produce single document)
+- Test atomic save_state (verify tmp+rename)
+- Run full test suite to verify no regressions
+
+---
+
+## Key Decisions
+1. Use `SELECT ... FOR UPDATE` (PostgreSQL row-level lock) rather than application-level lock
+2. Keep the upsert logic in DocumentStore (not handler) for reusability
+3. Spawn lock uses same `fcntl.flock` pattern as daemon singleton
