@@ -58,8 +58,6 @@ def get_memory() -> CEMSMemory:
                 # Inherit all other settings from base config
                 database_url=base.database_url,
                 storage_dir=base.storage_dir,
-                memory_backend=base.memory_backend,
-                mem0_model=base.mem0_model,
                 embedding_model=base.embedding_model,
                 llm_model=base.llm_model,
                 enable_graph=base.enable_graph,
@@ -113,8 +111,6 @@ def create_user_memory(user_id: str) -> CEMSMemory:
         user_id=user_id,
         database_url=base.database_url,
         storage_dir=base.storage_dir,
-        memory_backend=base.memory_backend,
-        mem0_model=base.mem0_model,
         embedding_model=base.embedding_model,
         llm_model=base.llm_model,
         enable_graph=base.enable_graph,

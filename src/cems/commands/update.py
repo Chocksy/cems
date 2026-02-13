@@ -146,6 +146,7 @@ def update_cmd(hooks_only: bool) -> None:
     console.print()
 
     old_version = _get_current_version()
+    version_changed = False
 
     if not hooks_only:
         console.print(f"Current version: [cyan]{old_version}[/cyan]")
@@ -157,6 +158,7 @@ def update_cmd(hooks_only: bool) -> None:
         # Get version from fresh process (importlib cache won't see the new version)
         new_version = _get_installed_version_fresh()
         if new_version != old_version:
+            version_changed = True
             console.print(f"[green]Updated: {old_version} -> {new_version}[/green]")
             _log_update(f"Updated {old_version} -> {new_version}")
         else:
@@ -164,9 +166,12 @@ def update_cmd(hooks_only: bool) -> None:
             _log_update(f"Already on latest ({new_version})")
         console.print()
 
-    # Re-deploy hooks/skills
-    console.print("Re-deploying hooks and skills...")
-    _redeploy_hooks()
+    # Re-deploy hooks/skills only if version changed or --hooks flag used
+    if hooks_only or version_changed:
+        console.print("Re-deploying hooks and skills...")
+        _redeploy_hooks()
+    else:
+        console.print("[dim]Hooks up to date, skipping re-deploy[/dim]")
 
     console.print()
     console.print("[bold green]Update complete![/bold green] Restart your IDE to pick up changes.")

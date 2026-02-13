@@ -31,8 +31,8 @@ def _run_async(coro):
         return asyncio.run(coro)
 
 
-def _doc_to_mem0_format(doc: dict[str, Any]) -> dict[str, Any]:
-    """Convert a DocumentStore document dict to Mem0-compatible format."""
+def _doc_to_api_format(doc: dict[str, Any]) -> dict[str, Any]:
+    """Convert a DocumentStore document dict to API response format."""
     return {
         "id": doc["id"],
         "memory": doc["content"],
@@ -68,7 +68,7 @@ class CRUDMixin:
         doc_store = await self._ensure_document_store()
         result = await doc_store.get_document(memory_id)
         if result:
-            return _doc_to_mem0_format(result)
+            return _doc_to_api_format(result)
         return None
 
     def get_all(
@@ -103,7 +103,7 @@ class CRUDMixin:
             limit=1000,
         )
 
-        return [_doc_to_mem0_format(doc) for doc in docs]
+        return [_doc_to_api_format(doc) for doc in docs]
 
     def update(self: "CEMSMemory", memory_id: str, content: str) -> dict[str, Any]:
         """Update a memory's content.

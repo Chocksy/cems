@@ -22,7 +22,6 @@ def mock_memory():
     mock.config.user_id = "test-user-uuid"
     mock.config.team_id = "test-team"
     mock.config.storage_dir = "/tmp/cems"
-    mock.config.memory_backend = "pgvector"
     mock.config.enable_graph = True
     mock.config.enable_scheduler = True
     mock.config.enable_query_synthesis = True

@@ -221,7 +221,7 @@ def update(ctx: click.Context, memory_id: str, content: str) -> None:
     """Update a memory's content.
 
     Example:
-        cems update abc123 "Updated content here"
+        cems edit abc123 "Updated content here"
     """
     try:
         client = get_client(ctx)

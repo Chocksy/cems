@@ -18,7 +18,6 @@ class TestCEMSConfig:
 
         assert config.user_id == "default"
         assert config.team_id is None
-        assert config.memory_backend == "mem0"
         assert config.enable_scheduler is True
         assert config.stale_days == 90
         assert config.archive_days == 180
@@ -74,12 +73,10 @@ class TestCEMSConfig:
         """Test LLM configuration."""
         config = CEMSConfig(
             llm_model="anthropic/claude-3-haiku",
-            mem0_model="openai/gpt-4o",
             embedding_model="openai/text-embedding-3-large",
         )
 
         assert config.llm_model == "anthropic/claude-3-haiku"
-        assert config.mem0_model == "openai/gpt-4o"
         assert config.embedding_model == "openai/text-embedding-3-large"
 
     def test_relevance_threshold(self):

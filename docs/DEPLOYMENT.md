@@ -61,7 +61,6 @@ CEMS uses **OpenRouter** for all LLM and embedding operations:
 OPENROUTER_API_KEY=sk-or-your-openrouter-key
 
 # Optional: Model configuration (defaults shown)
-CEMS_MEM0_MODEL=openai/gpt-4o-mini           # Fact extraction
 CEMS_EMBEDDING_MODEL=openai/text-embedding-3-small  # Embeddings
 CEMS_LLM_MODEL=anthropic/claude-3-haiku      # Maintenance
 

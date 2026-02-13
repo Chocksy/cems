@@ -10,7 +10,6 @@ Environment Variables for Server:
     - CEMS_DATABASE_URL: PostgreSQL connection URL for user management
 
     Optional model configuration:
-    - CEMS_MEM0_MODEL: Model for Mem0 (default: x-ai/grok-4.1-fast)
     - CEMS_EMBEDDING_MODEL: Embedding model (default: openai/text-embedding-3-small)
     - CEMS_LLM_MODEL: Model for maintenance (default: x-ai/grok-4.1-fast)
 
@@ -67,12 +66,6 @@ class CEMSConfig(BaseSettings):
         description="Base directory for CEMS storage",
     )
 
-    # Memory engine settings
-    memory_backend: Literal["mem0", "local"] = Field(
-        default="mem0",
-        description="Memory backend to use",
-    )
-
     # =========================================================================
     # LLM Settings - Single API Key via OpenRouter
     # =========================================================================
@@ -83,10 +76,6 @@ class CEMSConfig(BaseSettings):
     #   - OPENROUTER_API_KEY: For all operations (LLM + embeddings)
     #
     # Model names use OpenRouter format: provider/model
-    mem0_model: str = Field(
-        default="openai/gpt-4o-mini",
-        description="Model for Mem0 fact extraction (OpenRouter format)",
-    )
     embedding_model: str = Field(
         default="openai/text-embedding-3-small",
         description="Embedding model (via OpenRouter)",

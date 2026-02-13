@@ -749,7 +749,7 @@ async def api_memory_status(request: Request):
             "user_id": config.user_id,
             "team_id": config.team_id,
             "storage_dir": str(config.storage_dir),  # Convert Path to string for JSON
-            "backend": config.memory_backend,
+            "backend": "documentstore",
             "vector_store": "pgvector",  # Using native pgvector
             "graph_store": "postgresql" if config.enable_graph else None,
             "scheduler": scheduler_running,

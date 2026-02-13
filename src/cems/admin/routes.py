@@ -550,9 +550,8 @@ async def debug_config(request: Request) -> JSONResponse:
     # Note: Only OPENROUTER_API_KEY is required - it handles both LLM and embeddings
     env_check = {
         "OPENROUTER_API_KEY": "set" if os.environ.get("OPENROUTER_API_KEY") else "NOT SET (required)",
-        "CEMS_MEM0_MODEL": os.environ.get("CEMS_MEM0_MODEL", "openai/gpt-4o-mini (default)"),
         "CEMS_EMBEDDING_MODEL": os.environ.get("CEMS_EMBEDDING_MODEL", "openai/text-embedding-3-small (default)"),
-        "CEMS_LLM_MODEL": os.environ.get("CEMS_LLM_MODEL", "anthropic/claude-3-haiku (default)"),
+        "CEMS_LLM_MODEL": os.environ.get("CEMS_LLM_MODEL", "openai/gpt-4o-mini (default)"),
         "VECTOR_STORE": "pgvector (unified PostgreSQL)",
         # Legacy env vars (no longer required)
         "OPENAI_API_KEY": "set (legacy)" if os.environ.get("OPENAI_API_KEY") else "not set (not required)",
