@@ -11,6 +11,7 @@ from unittest.mock import MagicMock, patch, AsyncMock
 import cems.api.deps as deps_module
 import cems.api.handlers.memory as memory_handlers
 import cems.api.handlers.tool as tool_handlers
+from cems.config import CEMSConfig
 
 
 @pytest.fixture
@@ -296,12 +297,15 @@ class TestMaintenanceEndpoint:
 
     @patch("cems.db.database.is_database_initialized", return_value=True)
     @patch("cems.db.database.get_database")
-    @patch.object(memory_handlers, "get_scheduler")
-    def test_maintenance_consolidation(self, mock_get_scheduler, mock_db, mock_is_db, mock_user):
+    @patch.object(memory_handlers, "get_memory")
+    def test_maintenance_consolidation(self, mock_get_memory, mock_db, mock_is_db, mock_user):
         """Test POST /api/memory/maintenance endpoint."""
-        mock_scheduler = MagicMock()
-        mock_scheduler.run_now.return_value = {"duplicates_merged": 2}
-        mock_get_scheduler.return_value = mock_scheduler
+        # Mock memory instance with all methods needed by ConsolidationJob
+        mock_memory = MagicMock()
+        mock_memory.config = CEMSConfig(user_id="a6e153f9-41c5-4cbc-9a50-74160af381dd")
+        mock_memory.get_recent_memories.return_value = []
+        mock_memory.get_hot_memories.return_value = []
+        mock_get_memory.return_value = mock_memory
 
         mock_session = MagicMock()
         mock_user_service = MagicMock()

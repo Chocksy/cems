@@ -56,6 +56,7 @@ def get_memory() -> CEMSMemory:
                 user_id=user_id,
                 team_id=team_id,
                 # Inherit all other settings from base config
+                database_url=base.database_url,
                 storage_dir=base.storage_dir,
                 memory_backend=base.memory_backend,
                 mem0_model=base.mem0_model,
@@ -80,12 +81,55 @@ def get_memory() -> CEMSMemory:
         return _memory_cache[cache_key]
 
 
+def get_active_user_ids() -> list[str]:
+    """Get all active user IDs that have memory data.
+
+    Queries memory_documents for distinct user_ids (excludes soft-deleted).
+    Used by the scheduler to run maintenance per-user.
+    """
+    from sqlalchemy import text
+
+    from cems.db.database import get_database
+
+    db = get_database()
+    with db.session() as session:
+        rows = session.execute(
+            text(
+                "SELECT DISTINCT user_id::text FROM memory_documents "
+                "WHERE deleted_at IS NULL"
+            )
+        ).scalars().all()
+        return [r for r in rows if r]
+
+
+def create_user_memory(user_id: str) -> CEMSMemory:
+    """Create a CEMSMemory instance for a specific user.
+
+    Uses the base config (API keys, DB URL, etc.) with the given user_id.
+    Used by the scheduler to create per-user memory instances.
+    """
+    base = get_base_config()
+    config = CEMSConfig(
+        user_id=user_id,
+        database_url=base.database_url,
+        storage_dir=base.storage_dir,
+        memory_backend=base.memory_backend,
+        mem0_model=base.mem0_model,
+        embedding_model=base.embedding_model,
+        llm_model=base.llm_model,
+        enable_graph=base.enable_graph,
+        enable_scheduler=False,
+        enable_query_synthesis=base.enable_query_synthesis,
+        relevance_threshold=base.relevance_threshold,
+        default_max_tokens=base.default_max_tokens,
+    )
+    return CEMSMemory(config)
+
+
 def get_scheduler() -> CEMSScheduler:
     """Get or create the scheduler instance."""
     cache_key = "default"  # Scheduler is shared
     if cache_key not in _scheduler_cache:
-        # Use base config for scheduler
         config = get_base_config()
-        memory = CEMSMemory(config)
-        _scheduler_cache[cache_key] = CEMSScheduler(memory)
+        _scheduler_cache[cache_key] = CEMSScheduler(config)
     return _scheduler_cache[cache_key]

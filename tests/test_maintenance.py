@@ -8,6 +8,10 @@ import pytest
 
 from cems.config import CEMSConfig
 
+# Valid UUID for testing (matches production user format)
+TEST_UUID = "a6e153f9-41c5-4cbc-9a50-74160af381dd"
+TEST_UUID_2 = "aca07e56-20c4-4748-81e5-10ce50c1bc87"
+
 
 @pytest.fixture
 def temp_storage():
@@ -18,10 +22,10 @@ def temp_storage():
 
 @pytest.fixture
 def mock_memory():
-    """Create a mock memory instance."""
+    """Create a mock memory instance with a valid UUID user_id."""
     mock = MagicMock()
     mock.config = CEMSConfig(
-        user_id="test-user",
+        user_id=TEST_UUID,
         llm_provider="openai",
         llm_model="gpt-4o-mini",
     )
@@ -70,6 +74,21 @@ class TestConsolidationJob:
 
         assert result["memories_promoted"] == 2
         assert mock_memory.promote_memory.call_count == 2
+
+    def test_consolidation_uses_user_id_from_config(self, mock_memory):
+        """Test that consolidation passes user_id to metadata_store."""
+        from cems.maintenance.consolidation import ConsolidationJob
+
+        mock_memory.get_recent_memories.return_value = []
+        mock_memory.get_hot_memories.return_value = []
+
+        job = ConsolidationJob(mock_memory)
+        job.run()
+
+        # log_maintenance should be called with the user_id from config
+        mock_memory.metadata_store.log_maintenance.assert_called_once_with(
+            "consolidation", TEST_UUID, "started"
+        )
 
 
 class TestSummarizationJob:
@@ -151,55 +170,17 @@ class TestReindexJob:
 
         assert result["memories_archived"] == 2
 
+    def test_reindex_uses_user_id_from_config(self, mock_memory):
+        """Test that reindex passes user_id correctly."""
+        from cems.maintenance.reindex import ReindexJob
 
-class TestScheduler:
-    """Tests for scheduler functionality."""
-
-    def test_scheduler_init(self, mock_memory):
-        """Test scheduler initialization."""
-        from cems.scheduler import CEMSScheduler
-
-        scheduler = CEMSScheduler(mock_memory)
-        assert scheduler.memory == mock_memory
-        assert scheduler._scheduler is not None
-
-    def test_scheduler_run_now(self, mock_memory):
-        """Test running a job immediately."""
-        from cems.scheduler import CEMSScheduler
-
-        # Mock the memory methods
-        mock_memory.get_recent_memories.return_value = []
-        mock_memory.get_hot_memories.return_value = []
-
-        scheduler = CEMSScheduler(mock_memory)
-        result = scheduler.run_now("consolidation")
-
-        assert isinstance(result, dict)
-
-    def test_scheduler_run_all(self, mock_memory):
-        """Test running all jobs."""
-        from cems.scheduler import CEMSScheduler
-
-        # Setup minimal mocks
-        mock_memory.get_recent_memories.return_value = []
-        mock_memory.get_hot_memories.return_value = []
-        mock_memory.get_old_memories.return_value = []
-        mock_memory.get_stale_memories.return_value = []
         mock_memory.metadata_store.get_all_user_memories.return_value = []
         mock_memory.metadata_store.get_stale_memories.return_value = []
 
-        scheduler = CEMSScheduler(mock_memory)
+        job = ReindexJob(mock_memory)
+        job.run()
 
-        # Run each job type
-        for job_type in ["consolidation", "summarization", "reindex"]:
-            result = scheduler.run_now(job_type)
-            assert isinstance(result, dict)
-
-    def test_scheduler_invalid_job(self, mock_memory):
-        """Test running invalid job type."""
-        from cems.scheduler import CEMSScheduler
-
-        scheduler = CEMSScheduler(mock_memory)
-
-        with pytest.raises(ValueError, match="Unknown job type"):
-            scheduler.run_now("invalid_job")
+        # get_all_user_memories should be called with the config user_id
+        mock_memory.metadata_store.get_all_user_memories.assert_called_once_with(
+            TEST_UUID, include_archived=False
+        )

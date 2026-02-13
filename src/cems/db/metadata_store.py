@@ -31,10 +31,21 @@ class PostgresMetadataStore:
 
     def save_metadata(self, metadata: MemoryMetadata) -> None:
         """Save or update memory metadata."""
+        from uuid import UUID as _UUID
+
+        # Convert user_id to UUID for the DB column
+        user_uuid = None
+        if metadata.user_id and metadata.user_id != "unknown":
+            try:
+                user_uuid = _UUID(metadata.user_id)
+            except ValueError:
+                pass
+
         with self._db.session() as session:
             # Use upsert (INSERT ... ON CONFLICT UPDATE)
             stmt = insert(PgMemoryMetadata).values(
                 memory_id=metadata.memory_id,
+                user_id=user_uuid,
                 scope=metadata.scope,
                 category=metadata.category,
                 created_at=metadata.created_at,
@@ -54,6 +65,7 @@ class PostgresMetadataStore:
             stmt = stmt.on_conflict_do_update(
                 index_elements=["memory_id"],
                 set_={
+                    "user_id": stmt.excluded.user_id,
                     "category": stmt.excluded.category,
                     "updated_at": stmt.excluded.updated_at,
                     "last_accessed": stmt.excluded.last_accessed,
@@ -74,11 +86,13 @@ class PostgresMetadataStore:
     def get_stale_memories(self, user_id: str, days: int) -> list[str]:
         """Get memory IDs not accessed in N days (excludes pinned memories)."""
         from datetime import timedelta
+        from uuid import UUID
 
         cutoff = datetime.now(UTC) - timedelta(days=days)
         with self._db.session() as session:
             rows = session.execute(
                 select(PgMemoryMetadata.memory_id).where(
+                    PgMemoryMetadata.user_id == UUID(user_id),
                     PgMemoryMetadata.archived == False,  # noqa: E712
                     PgMemoryMetadata.pinned == False,  # noqa: E712
                     PgMemoryMetadata.last_accessed < cutoff,
@@ -88,9 +102,12 @@ class PostgresMetadataStore:
 
     def get_hot_memories(self, user_id: str, threshold: int) -> list[str]:
         """Get frequently accessed memory IDs."""
+        from uuid import UUID
+
         with self._db.session() as session:
             rows = session.execute(
                 select(PgMemoryMetadata.memory_id).where(
+                    PgMemoryMetadata.user_id == UUID(user_id),
                     PgMemoryMetadata.archived == False,  # noqa: E712
                     PgMemoryMetadata.access_count >= threshold,
                 )
@@ -145,8 +162,11 @@ class PostgresMetadataStore:
         self, user_id: str, category: str, scope: MemoryScope | None = None
     ) -> list[str]:
         """Get memory IDs for a category."""
+        from uuid import UUID
+
         with self._db.session() as session:
             query = select(PgMemoryMetadata.memory_id).where(
+                PgMemoryMetadata.user_id == UUID(user_id),
                 PgMemoryMetadata.category == category,
                 PgMemoryMetadata.archived == False,  # noqa: E712
             )
@@ -159,8 +179,12 @@ class PostgresMetadataStore:
         self, user_id: str, include_archived: bool = False
     ) -> list[str]:
         """Get all memory IDs for a user."""
+        from uuid import UUID
+
         with self._db.session() as session:
-            query = select(PgMemoryMetadata.memory_id)
+            query = select(PgMemoryMetadata.memory_id).where(
+                PgMemoryMetadata.user_id == UUID(user_id),
+            )
             if not include_archived:
                 query = query.where(PgMemoryMetadata.archived == False)  # noqa: E712
             rows = session.execute(query).scalars().all()
@@ -169,11 +193,13 @@ class PostgresMetadataStore:
     def get_recent_memories(self, user_id: str, hours: int = 24) -> list[str]:
         """Get memories created in the last N hours."""
         from datetime import timedelta
+        from uuid import UUID
 
         cutoff = datetime.now(UTC) - timedelta(hours=hours)
         with self._db.session() as session:
             rows = session.execute(
                 select(PgMemoryMetadata.memory_id).where(
+                    PgMemoryMetadata.user_id == UUID(user_id),
                     PgMemoryMetadata.created_at > cutoff,
                     PgMemoryMetadata.archived == False,  # noqa: E712
                 )
@@ -183,11 +209,13 @@ class PostgresMetadataStore:
     def get_old_memories(self, user_id: str, days: int) -> list[str]:
         """Get memories older than N days."""
         from datetime import timedelta
+        from uuid import UUID
 
         cutoff = datetime.now(UTC) - timedelta(days=days)
         with self._db.session() as session:
             rows = session.execute(
                 select(PgMemoryMetadata.memory_id).where(
+                    PgMemoryMetadata.user_id == UUID(user_id),
                     PgMemoryMetadata.created_at < cutoff,
                     PgMemoryMetadata.archived == False,  # noqa: E712
                 )
@@ -198,8 +226,12 @@ class PostgresMetadataStore:
         self, user_id: str, scope: MemoryScope | None = None
     ) -> list[str]:
         """Get all unique categories for a user."""
+        from uuid import UUID
+
         with self._db.session() as session:
-            query = select(PgMemoryMetadata.category).distinct()
+            query = select(PgMemoryMetadata.category).distinct().where(
+                PgMemoryMetadata.user_id == UUID(user_id),
+            )
             if scope:
                 query = query.where(PgMemoryMetadata.scope == scope.value)
             rows = session.execute(query).scalars().all()
@@ -209,10 +241,15 @@ class PostgresMetadataStore:
         self, user_id: str, limit: int = 10, scope: MemoryScope | None = None
     ) -> list[MemoryMetadata]:
         """Get the most recently accessed memories."""
+        from uuid import UUID
+
         with self._db.session() as session:
             query = (
                 select(PgMemoryMetadata)
-                .where(PgMemoryMetadata.archived == False)  # noqa: E712
+                .where(
+                    PgMemoryMetadata.user_id == UUID(user_id),
+                    PgMemoryMetadata.archived == False,  # noqa: E712
+                )
                 .order_by(PgMemoryMetadata.last_accessed.desc())
                 .limit(limit)
             )
@@ -253,11 +290,14 @@ class PostgresMetadataStore:
         self, user_id: str, category: str, scope: MemoryScope
     ) -> CategorySummary | None:
         """Get a category summary."""
+        from uuid import UUID
+
         with self._db.session() as session:
             row = session.execute(
                 select(PgCategorySummary).where(
                     PgCategorySummary.category == category,
                     PgCategorySummary.scope == scope.value,
+                    PgCategorySummary.scope_id == UUID(user_id),
                 )
             ).scalar_one_or_none()
             if row:
@@ -274,9 +314,19 @@ class PostgresMetadataStore:
 
     def save_category_summary(self, summary: CategorySummary) -> None:
         """Save or update a category summary."""
+        from uuid import UUID
+
+        scope_uuid = None
+        if summary.user_id and summary.user_id != "unknown":
+            try:
+                scope_uuid = UUID(summary.user_id)
+            except ValueError:
+                pass
+
         with self._db.session() as session:
             stmt = insert(PgCategorySummary).values(
                 scope=summary.scope.value,
+                scope_id=scope_uuid,
                 category=summary.category,
                 summary=summary.summary,
                 item_count=summary.item_count,
@@ -298,8 +348,12 @@ class PostgresMetadataStore:
         self, user_id: str, scope: MemoryScope | None = None
     ) -> list[CategorySummary]:
         """Get all category summaries for a user."""
+        from uuid import UUID
+
         with self._db.session() as session:
-            query = select(PgCategorySummary)
+            query = select(PgCategorySummary).where(
+                PgCategorySummary.scope_id == UUID(user_id),
+            )
             if scope:
                 query = query.where(PgCategorySummary.scope == scope.value)
             rows = session.execute(query).scalars().all()

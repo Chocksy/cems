@@ -655,16 +655,17 @@ async def api_memory_maintenance(request: Request):
 
     POST /api/memory/maintenance
     Body: {"job_type": "consolidation|summarization|reindex|reflect|all"}
+
+    All jobs run with the requesting user's memory context (from API key).
     """
     try:
         body = await request.json()
         job_type = body.get("job_type", "consolidation")
+        memory = get_memory()
 
-        # Handle observation reflection separately (async-native)
         if job_type == "reflect":
             from cems.maintenance.observation_reflector import ObservationReflector
 
-            memory = get_memory()
             reflector = ObservationReflector(memory)
             result = await reflector.run_async()
             return JSONResponse({
@@ -673,17 +674,17 @@ async def api_memory_maintenance(request: Request):
                 "results": result,
             })
 
-        scheduler = get_scheduler()
-
         if job_type == "all":
-            results = {}
-            for jt in ["consolidation", "summarization", "reindex"]:
-                results[jt] = scheduler.run_now(jt)
-
-            # Also run reflection (async)
+            from cems.maintenance.consolidation import ConsolidationJob
             from cems.maintenance.observation_reflector import ObservationReflector
+            from cems.maintenance.reindex import ReindexJob
+            from cems.maintenance.summarization import SummarizationJob
 
-            memory = get_memory()
+            results = {}
+            results["consolidation"] = ConsolidationJob(memory).run()
+            results["summarization"] = SummarizationJob(memory).run()
+            results["reindex"] = ReindexJob(memory).run()
+
             reflector = ObservationReflector(memory)
             results["reflect"] = await reflector.run_async()
 
@@ -692,18 +693,35 @@ async def api_memory_maintenance(request: Request):
                 "job_type": "all",
                 "results": results,
             })
-        else:
-            result = scheduler.run_now(job_type)
+
+        # Single job type — run directly with user's memory
+        from cems.maintenance.consolidation import ConsolidationJob
+        from cems.maintenance.reindex import ReindexJob
+        from cems.maintenance.summarization import SummarizationJob
+
+        jobs = {
+            "consolidation": lambda: ConsolidationJob(memory).run(),
+            "summarization": lambda: SummarizationJob(memory).run(),
+            "reindex": lambda: ReindexJob(memory).run(),
+        }
+
+        if job_type not in jobs:
             return JSONResponse({
-                "success": True,
-                "job_type": job_type,
-                "results": result,
-            })
+                "success": False,
+                "error": f"Unknown job type: {job_type}. Use: consolidation, summarization, reindex, reflect, all",
+            }, status_code=400)
+
+        result = jobs[job_type]()
+        return JSONResponse({
+            "success": True,
+            "job_type": job_type,
+            "results": result,
+        })
     except Exception as e:
         logger.error(f"API memory_maintenance error: {e}")
         return JSONResponse({
             "success": False,
-            "job_type": body.get("job_type", "unknown"),
+            "job_type": body.get("job_type", "unknown") if "body" in dir() else "unknown",
             "error": str(e),
         }, status_code=500)
 

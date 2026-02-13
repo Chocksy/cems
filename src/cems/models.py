@@ -78,6 +78,7 @@ class SearchResult(BaseModel):
 class CategorySummary(BaseModel):
     """Summary for a memory category."""
 
+    user_id: str | None = None
     category: str
     scope: MemoryScope
     summary: str
