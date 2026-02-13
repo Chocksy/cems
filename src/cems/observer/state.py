@@ -1,6 +1,6 @@
 """Per-session observation state tracking.
 
-Stores state in ~/.claude/observer/{session-uuid}.json so the daemon
+Stores state in ~/.cems/observer/{session-uuid}.json so the daemon
 knows what has already been observed per session.
 """
 
@@ -12,7 +12,7 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-OBSERVER_STATE_DIR = Path.home() / ".claude" / "observer"
+OBSERVER_STATE_DIR = Path.home() / ".cems" / "observer"
 
 
 @dataclass

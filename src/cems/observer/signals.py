@@ -4,7 +4,7 @@ Hooks write tiny signal files to tell the daemon about lifecycle events
 (compact, stop). The daemon reads and clears them each cycle.
 
 Signal files are single JSON objects (overwrite, not append) stored at:
-    ~/.claude/observer/signals/{session_id}.json
+    ~/.cems/observer/signals/{session_id}.json
 """
 
 import json
@@ -15,7 +15,7 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-SIGNALS_DIR = Path.home() / ".claude" / "observer" / "signals"
+SIGNALS_DIR = Path.home() / ".cems" / "observer" / "signals"
 
 
 @dataclass

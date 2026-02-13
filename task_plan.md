@@ -1,83 +1,70 @@
-# Fix Observer Daemon Document Duplication
+# Move Observer Runtime from ~/.claude/observer → ~/.cems/observer
 
 ## Goal
-Fix the document duplication bugs identified by codex-investigator audit. Production DB shows 6 duplicate session-summary docs for session `b40eb706` and 9+ duplicate learnings.
+Move all observer runtime files (PID, lock, state, signals, logs) from `~/.claude/observer/` to `~/.cems/observer/`. The observer watches Claude, Codex, and Cursor — it's a CEMS subsystem, not Claude-specific.
 
-## Status: IN PROGRESS
-
-## Root Causes Identified
-1. **CRITICAL**: `api_session_summarize()` upsert is TOCTOU race (check-then-act without transaction)
-2. **MODERATE**: `save_state()` not atomic (crash mid-write → state reset → re-send)
-3. **LOW**: `_spawn_daemon()` PID file race between concurrent hooks
-4. **CLEANUP**: Existing duplicates need deduplication in production
+## Change Summary
+All references to `Path.home() / ".claude" / "observer"` become `Path.home() / ".cems" / "observer"`.
 
 ---
 
-## Phase 1: Atomic Upsert in `api_session_summarize()` `pending`
-**Files**: `src/cems/api/handlers/session.py`, `src/cems/db/document_store.py`
+## Phase 1: Core daemon code `status: pending`
+**Files:**
+- `src/cems/observer/__main__.py` — lines 18-20: OBSERVER_DIR, PID_FILE, LOCK_FILE
+- `src/cems/observer/state.py` — line 15: OBSERVER_STATE_DIR
+- `src/cems/observer/signals.py` — line 18: SIGNALS_DIR
 
-### Problem
-`find_document_by_tag()` → check → `add_async()` is not transactional. Two concurrent requests both see "no existing doc" and both create.
+**Change:** `.claude` → `.cems` in the Path constants
 
-### Solution
-Add `find_or_create_by_tag()` method to DocumentStore that uses `SELECT ... FOR UPDATE` within a transaction. The handler calls this single atomic method instead of separate find+create.
+## Phase 2: Hook code (dev copies) `status: pending`
+**Files:**
+- `hooks/utils/observer_manager.py` — line 21: OBSERVER_DIR + derived paths
+- `hooks/cems_stop.py` — line 132: signals_dir
+- `hooks/cems_pre_compact.py` — line 126: signals_dir
 
-### Changes
-- `document_store.py`: Add `upsert_document_by_tag()` — SELECT FOR UPDATE in transaction
-- `session.py`: Replace find+create/update with atomic upsert call
+**Change:** `.claude` → `.cems` in signal/observer paths
 
----
+## Phase 3: Bundled hook copies `status: pending`
+**Files:**
+- `src/cems/data/claude/hooks/utils/observer_manager.py` — line 21
+- `src/cems/data/claude/hooks/cems_stop.py` — line 132
+- `src/cems/data/claude/hooks/cems_pre_compact.py` — line 126
 
-## Phase 2: Atomic `save_state()` `pending`
-**Files**: `src/cems/observer/state.py`
+**Change:** Sync from dev copies after Phase 2
 
-### Problem
-`save_state()` writes directly to file. Crash mid-write → corrupted JSON → fresh state → re-send from byte 0.
+## Phase 4: Migration helper in daemon startup `status: pending`
+**What:** Add auto-migration in `__main__.py` that moves existing files from `~/.claude/observer/` to `~/.cems/observer/` on first run. This handles existing installs gracefully.
+- Move state .json files, signals/, daemon.log
+- Don't move .pid or .lock (daemon restarts fresh)
 
-### Solution
-Use tmp+rename pattern (same as `write_signal()`).
+## Phase 5: Tests `status: pending`
+**Files:**
+- `tests/test_observer_manager.py` — no path changes needed (uses tmp_path + patches)
+- `tests/test_observer.py` — no path changes needed (patches OBSERVER_STATE_DIR/SIGNALS_DIR)
+- `tests/test_adapters.py` — no path changes needed (patches constants)
+- `tests/test_signals.py` — no path changes needed (patches SIGNALS_DIR)
 
-### Changes
-- `state.py`: Write to `.tmp` then `os.rename()`
+**Action:** Run full test suite to verify. Tests mock the dir constants so they should pass without changes.
 
----
+## Phase 6: Install to runtime + version bump `status: pending`
+- Copy updated hooks to `~/.claude/hooks/` (via `cems setup` or manual cp)
+- Bump version 0.4.4 → 0.4.5
+- Run integration tests
+- Commit & push (triggers production deploy + auto-update)
 
-## Phase 3: Spawn Lock in `_spawn_daemon()` `pending`
-**Files**: `hooks/utils/observer_manager.py`, `src/cems/data/claude/hooks/utils/observer_manager.py`
-
-### Problem
-Two hooks calling `ensure_daemon_running()` simultaneously can both spawn daemons. The flock in `__main__.py` makes only one survive, but PID file points to wrong one temporarily.
-
-### Solution
-Add `fcntl.flock` around spawn operation in `_spawn_daemon()`.
-
-### Changes
-- `observer_manager.py`: Add file lock around spawn (both canonical + bundled)
-
----
-
-## Phase 4: Production Data Cleanup `pending`
-**Target**: Production DB via CEMS API
-
-### Problem
-6 duplicate session-summary docs for `session:b40eb706`, 9+ duplicate learnings.
-
-### Solution
-Use CEMS API to soft-delete duplicates, keeping only the most recent/comprehensive one per session tag.
+## Phase 7: Docs update `status: pending`
+- `research/observer-v2-multi-tool.md` — update path references
+- `research/option-d-observer-plan.md` — update path references
+- MEMORY.md — update observer paths
 
 ---
 
-## Phase 5: Tests `pending`
-**Files**: `tests/test_observer.py`, `tests/test_integration.py`
+## Decisions
+- **Migration**: Auto-migrate on daemon startup (Phase 4). Existing state files are valuable, don't want users to lose observation history.
+- **No symlink**: Clean move, not symlink. Simpler.
+- **PID/lock files**: Don't migrate — daemon writes fresh ones on start.
 
-### Changes
-- Test atomic upsert (concurrent calls produce single document)
-- Test atomic save_state (verify tmp+rename)
-- Run full test suite to verify no regressions
-
----
-
-## Key Decisions
-1. Use `SELECT ... FOR UPDATE` (PostgreSQL row-level lock) rather than application-level lock
-2. Keep the upsert logic in DocumentStore (not handler) for reusability
-3. Spawn lock uses same `fcntl.flock` pattern as daemon singleton
+## Errors Encountered
+| Error | Attempt | Resolution |
+|-------|---------|------------|
+| (none yet) | | |

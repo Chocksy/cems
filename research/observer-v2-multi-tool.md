@@ -151,7 +151,7 @@ assistant:
 Hooks write tiny signal files instead of processing transcripts:
 
 ```
-~/.claude/observer/signals/{session_id}.json
+~/.cems/observer/signals/{session_id}.json
 ```
 
 Signal format:

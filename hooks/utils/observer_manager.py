@@ -5,8 +5,8 @@ Provides ensure_daemon_running() which hooks call to auto-start the
 observer daemon if it's not running. Uses a PID file for process tracking
 and a cooldown mechanism to avoid spam-spawning on repeated failures.
 
-PID file:      ~/.claude/observer/daemon.pid
-Cooldown file:  ~/.claude/observer/.spawn_cooldown
+PID file:      ~/.cems/observer/daemon.pid
+Cooldown file:  ~/.cems/observer/.spawn_cooldown
 """
 
 import fcntl
@@ -18,7 +18,7 @@ from pathlib import Path
 
 from utils.credentials import get_cems_key, get_credentials_env
 
-OBSERVER_DIR = Path.home() / ".claude" / "observer"
+OBSERVER_DIR = Path.home() / ".cems" / "observer"
 PID_FILE = OBSERVER_DIR / "daemon.pid"
 COOLDOWN_FILE = OBSERVER_DIR / ".spawn_cooldown"
 SPAWN_LOCK_FILE = OBSERVER_DIR / ".spawn.lock"

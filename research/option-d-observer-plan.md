@@ -129,7 +129,7 @@ def get_session_metadata(session_path: Path) -> dict:
 
 ### Observation State Tracking
 
-Per-session state file at `~/.claude/observer/{session-uuid}.json`:
+Per-session state file at `~/.cems/observer/{session-uuid}.json`:
 
 ```json
 {

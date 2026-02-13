@@ -1,18 +1,17 @@
-# Fix Observer Daemon Document Duplication — Progress
+# Move Observer to ~/.cems — Progress
 
-## Session: 2026-02-13 (Investigation)
-- [x] codex-investigator deep audit of observer code (all phases compliant with plan)
-- [x] Confirmed 6 duplicate session-summary docs for `session:b40eb706` in production
-- [x] Confirmed 9+ duplicate learnings ("Mastra LongMemEval", "haystack_sessions")
-- [x] Identified root cause: TOCTOU race in `api_session_summarize()` upsert
-- [x] Identified secondary: `save_state()` not atomic
-- [x] Verified daemon singleton working (only 1 PID: 94206, flock operational)
-- [x] Verified all 11 phases of Observer V2 plan are compliant
-
-## Session: 2026-02-13 (Fixes)
-- [x] Phase 1: Atomic upsert in session handler — `upsert_document_by_tag()` with SELECT FOR UPDATE
-- [x] Phase 2: Atomic save_state — tmp+rename pattern
-- [x] Phase 3: Spawn lock — fcntl.flock around _spawn_daemon()
-- [x] Phase 4: Production data cleanup — deleted 5 dup session summaries + 5 dup learnings
-- [x] Phase 5: Tests — 485 passed, 0 failed; 20/20 integration tests pass
-- [ ] Commit + push (triggers production redeploy)
+## Session: 2026-02-13 (Planning + Implementation)
+- [x] Research all files with `~/.claude/observer` references
+- [x] Identified 6 source files + 3 bundled copies + 3 installed copies
+- [x] Confirmed all 4 test files use patches (no hardcoded paths)
+- [x] Created task_plan.md with 7 phases
+- [x] Phase 1: Core daemon code — 3 files updated
+- [x] Phase 2: Hook code (dev copies) — 3 files updated
+- [x] Phase 3: Bundled hook copies — synced from dev
+- [x] Phase 4: Migration helper — `_migrate_from_claude_dir()` in __main__.py
+- [x] Phase 5: Tests — 485 passed, 7 skipped, 0 failed
+- [x] Phase 6: Version bump 0.4.4 → 0.4.5, uv tool install, daemon restarted
+- [x] Phase 7: Docs — research/*.md + MEMORY.md updated
+- [x] Live migration: 30 state files + 6 signals + daemon.log → ~/.cems/observer/
+- [x] Daemon verified running at new location (PID 15386)
+- [ ] Commit & push

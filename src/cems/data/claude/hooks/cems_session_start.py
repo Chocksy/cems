@@ -105,13 +105,13 @@ def fetch_profile(project: str | None = None, token_budget: int = 2500) -> dict:
         return {}
 
 
-AUTO_UPDATE_INTERVAL = 86400  # 24 hours in seconds
+AUTO_UPDATE_INTERVAL = 300  # 5 minutes — background no-op if already latest
 
 
 def _maybe_auto_update() -> None:
-    """Check if CEMS should auto-update (once per 24h, background, non-blocking).
+    """Check if CEMS should auto-update (every 5min, background, non-blocking).
 
-    Checks ~/.cems/.last_update_check timestamp. If older than 24h,
+    Checks ~/.cems/.last_update_check timestamp. If older than 5min,
     spawns `cems update` in the background. Respects CEMS_AUTO_UPDATE=0.
     """
     import shutil

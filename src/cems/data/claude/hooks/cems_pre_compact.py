@@ -123,7 +123,7 @@ def write_signal(session_id: str, signal_type: str, tool: str = "claude") -> Non
     Inlined from cems.observer.signals — hooks run standalone via uv and
     cannot import from the cems package.
     """
-    signals_dir = Path.home() / ".claude" / "observer" / "signals"
+    signals_dir = Path.home() / ".cems" / "observer" / "signals"
     signals_dir.mkdir(parents=True, exist_ok=True)
     signal_file = signals_dir / f"{session_id}.json"
 

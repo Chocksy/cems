@@ -15,7 +15,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-OBSERVER_DIR = Path.home() / ".claude" / "observer"
+OBSERVER_DIR = Path.home() / ".cems" / "observer"
 PID_FILE = OBSERVER_DIR / "daemon.pid"
 LOCK_FILE = OBSERVER_DIR / "daemon.lock"
 
@@ -84,6 +84,45 @@ def _cleanup_pid_file() -> None:
         pass
 
 
+def _migrate_from_claude_dir() -> None:
+    """One-time migration: move observer data from ~/.claude/observer → ~/.cems/observer.
+
+    Moves state .json files, signals/, and daemon.log. Skips PID/lock files
+    (daemon creates fresh ones). Safe to call repeatedly — no-ops if already migrated.
+    """
+    import shutil
+
+    old_dir = Path.home() / ".claude" / "observer"
+    if not old_dir.exists():
+        return
+
+    # Skip if nothing to migrate (only lock/pid files left, or empty)
+    migratable = [
+        f for f in old_dir.iterdir()
+        if f.name not in ("daemon.pid", "daemon.lock", ".spawn.lock", ".spawn_cooldown")
+    ]
+    if not migratable:
+        return
+
+    logger = logging.getLogger(__name__)
+    OBSERVER_DIR.mkdir(parents=True, exist_ok=True)
+
+    for item in migratable:
+        dest = OBSERVER_DIR / item.name
+        if dest.exists():
+            continue  # Don't overwrite newer files
+        try:
+            if item.is_dir():
+                shutil.copytree(item, dest)
+                shutil.rmtree(item)
+            else:
+                shutil.copy2(item, dest)
+                item.unlink()
+            logger.info(f"Migrated {item.name} → ~/.cems/observer/")
+        except OSError as e:
+            logger.warning(f"Could not migrate {item.name}: {e}")
+
+
 def main():
     parser = argparse.ArgumentParser(description="CEMS Observer Daemon")
     parser.add_argument("--once", action="store_true", help="Run one cycle and exit")
@@ -108,6 +147,12 @@ def main():
         if killed > 0:
             logger = logging.getLogger(__name__)
             logger.info(f"Killed {killed} stale observer daemon(s)")
+
+    # Migrate from old location (~/.claude/observer → ~/.cems/observer)
+    try:
+        _migrate_from_claude_dir()
+    except Exception:
+        pass  # Migration is best-effort
 
     # Load credentials: env vars first, then ~/.cems/credentials fallback
     _creds_file = Path.home() / ".cems" / "credentials"
