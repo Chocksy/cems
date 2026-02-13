@@ -283,7 +283,7 @@ class TestDaemon:
 
         with patch("cems.observer.session.CLAUDE_PROJECTS_DIR", tmp_path), \
              patch("cems.observer.state.OBSERVER_STATE_DIR", state_dir), \
-             patch("cems.observer.daemon.send_observation", return_value=True) as mock_send, \
+             patch("cems.observer.daemon.send_summary", return_value=True) as mock_send, \
              patch("cems.observer.session._get_project_id", return_value="test/proj"):
 
             triggered = run_cycle("http://localhost:8765", "test-key")
@@ -307,7 +307,7 @@ class TestDaemon:
 
         with patch("cems.observer.session.CLAUDE_PROJECTS_DIR", tmp_path), \
              patch("cems.observer.state.OBSERVER_STATE_DIR", tmp_path / "states"), \
-             patch("cems.observer.daemon.send_observation") as mock_send:
+             patch("cems.observer.daemon.send_summary") as mock_send:
 
             triggered = run_cycle("http://localhost:8765", "test-key")
 

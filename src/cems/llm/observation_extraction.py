@@ -109,13 +109,9 @@ For technical/numerical results, preserve specific values:
 - Routine operations (reading files, running tests, git status)
 - Temporary state (current branch, current file being edited)
 
-## IMPORTANT: INCLUDE PROJECT NAME
+## PROJECT NAME
 
-Always mention the project/repo name in each observation so it's searchable without metadata:
-- BAD: "User is adding relevance scoring to the memory system"
-- GOOD: "User is adding relevance scoring to CEMS memory system (Chocksy/cems)"
-
-The project context "{project_context}" should appear naturally in each observation.
+{project_name_instruction}
 
 ## OUTPUT FORMAT
 
@@ -130,13 +126,13 @@ Return a JSON array:
 
 Priority: "high" (decisions, preferences, goals, deadlines), "medium" (patterns, architecture), "low" (informational)
 
-Each observation: 80-250 characters, self-contained, readable without other context.
+Each observation: 1-3 sentences, self-contained, readable without other context. Be as detailed as needed to preserve all relevant information.
 Only return the JSON array. No other text."""
 
 
 def extract_observations(
     content: str,
-    project_context: str = "unknown project",
+    project_context: str | None = None,
     model: str | None = None,
 ) -> list[dict]:
     """Extract high-level observations from session content.
@@ -161,8 +157,24 @@ def extract_observations(
     client = get_client()
     use_model = model or OBSERVER_MODEL
 
+    # Build dynamic project name instruction
+    if project_context:
+        project_name_instruction = (
+            f'Always mention the project/repo name in each observation so it\'s searchable without metadata:\n'
+            f'- BAD: "User is adding relevance scoring to the memory system"\n'
+            f'- GOOD: "User is adding relevance scoring to CEMS memory system ({project_context})"\n\n'
+            f'The project context "{project_context}" should appear naturally in each observation.'
+        )
+        display_project = project_context
+    else:
+        project_name_instruction = (
+            "Do not include a project name prefix. Focus on the content of the observation."
+        )
+        display_project = "a coding project"
+
     system = OBSERVER_SYSTEM_PROMPT.format(
-        project_context=project_context,
+        project_context=display_project,
+        project_name_instruction=project_name_instruction,
         max_obs=MAX_OBSERVATIONS,
     )
 
@@ -172,7 +184,7 @@ def extract_observations(
             system=system,
             model=use_model,
             temperature=0.3,
-            max_tokens=2000,
+            max_tokens=4000,
             fast_route=False,  # Gemini not on Cerebras/Groq/SambaNova
         )
     except Exception as e:
@@ -214,10 +226,6 @@ def _parse_observations(response: str) -> list[dict]:
         if len(content) < 30:
             logger.debug(f"Observation too short ({len(content)} chars), skipping: {content}")
             continue
-
-        # Cap content at 300 chars
-        if len(content) > 300:
-            content = content[:297] + "..."
 
         priority = item.get("priority", "medium").lower()
         if priority not in ("high", "medium", "low"):

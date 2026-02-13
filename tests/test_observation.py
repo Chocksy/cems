@@ -64,8 +64,8 @@ class TestObservationExtraction:
         assert len(result) == 1
         assert "comprehensive memory system" in result[0]["content"]
 
-    def test_parse_observations_caps_long_content(self):
-        """Content longer than 300 chars is truncated."""
+    def test_parse_observations_preserves_long_content(self):
+        """Long content is preserved without truncation."""
         from cems.llm.observation_extraction import _parse_observations
 
         long_content = "A" * 400
@@ -73,7 +73,7 @@ class TestObservationExtraction:
 
         result = _parse_observations(response)
         assert len(result) == 1
-        assert len(result[0]["content"]) == 300  # 297 + "..."
+        assert len(result[0]["content"]) == 400  # No truncation
 
     def test_parse_observations_normalizes_priority(self):
         """Invalid priority values default to medium."""

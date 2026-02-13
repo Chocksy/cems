@@ -43,7 +43,7 @@ async def api_session_observe(request: Request):
 
         session_id = body.get("session_id", "unknown")
         source_ref = body.get("source_ref")
-        project_context = body.get("project_context", "unknown project")
+        project_context = body.get("project_context") or None
 
         logger.info(
             f"session_observe called: session_id={session_id}, "

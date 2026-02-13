@@ -21,7 +21,7 @@ from cems.api.handlers.memory import (
 )
 from cems.api.handlers.index import api_index_patterns, api_index_path, api_index_repo
 from cems.api.handlers.observation import api_session_observe
-from cems.api.handlers.session import api_session_analyze
+from cems.api.handlers.session import api_session_analyze, api_session_summarize
 from cems.api.handlers.tool import api_tool_learning
 
 __all__ = [
@@ -49,6 +49,7 @@ __all__ = [
     # Session / Observation
     "api_session_analyze",
     "api_session_observe",
+    "api_session_summarize",
     # Tool
     "api_tool_learning",
 ]

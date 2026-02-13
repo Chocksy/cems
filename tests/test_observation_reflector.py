@@ -133,8 +133,8 @@ class TestParseReflected:
         assert len(result) == 1
         assert "Coolify" in result[0]["content"]
 
-    def test_truncates_long_content(self):
-        """Should truncate observations longer than 300 chars."""
+    def test_preserves_long_content(self):
+        """Long content should be preserved without truncation."""
         from cems.llm.observation_reflection import _parse_reflected
 
         long_content = "x" * 350
@@ -142,8 +142,7 @@ class TestParseReflected:
 
         result = _parse_reflected(response, max_count=5)
         assert len(result) == 1
-        assert len(result[0]["content"]) == 300
-        assert result[0]["content"].endswith("...")
+        assert len(result[0]["content"]) == 350  # No truncation
 
     def test_normalizes_invalid_priority(self):
         """Should default to 'medium' for invalid priorities."""

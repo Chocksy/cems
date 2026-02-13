@@ -223,16 +223,16 @@ def search_cems(query: str, project: str | None = None) -> tuple[str | None, lis
 
 
 def fetch_recent_observations(project: str | None = None, limit: int = 5) -> str | None:
-    """Fetch recent observations for the current project.
+    """Fetch recent observations and session summaries for the current project.
 
-    Searches for observations tagged with the project's source_ref.
+    Searches for observations and session summaries tagged with the project's source_ref.
     Returns formatted string for context injection, or None.
     """
     if not CEMS_API_URL or not CEMS_API_KEY:
         return None
 
     try:
-        query = f"recent observations"
+        query = f"recent session activity"
         if project:
             query += f" for {project}"
 
@@ -257,19 +257,19 @@ def fetch_recent_observations(project: str | None = None, limit: int = 5) -> str
         data = response.json()
         results = data.get("results", [])
 
-        # Filter to only observation category
-        observations = [
+        # Filter to observation and session-summary categories
+        relevant = [
             r for r in results
-            if r.get("category") == "observation"
+            if r.get("category") in ("observation", "session-summary")
         ]
 
-        if not observations:
+        if not relevant:
             return None
 
-        lines = [f"- {r.get('content', r.get('memory', ''))}" for r in observations[:limit]]
+        lines = [f"- {r.get('content', r.get('memory', ''))}" for r in relevant[:limit]]
         project_label = project or "current project"
         return f"""<recent-observations>
-Recent observations ({project_label}):
+Recent session context ({project_label}):
 {chr(10).join(lines)}
 </recent-observations>"""
 

@@ -111,7 +111,7 @@ function createMcpServer(authHeaders: { authorization?: string; teamId?: string 
           max_results: z.number().default(10).describe("Max results (1-20)"),
           max_tokens: z
             .number()
-            .default(2000)
+            .default(4000)
             .describe("Token budget for results"),
           enable_graph: z
             .boolean()

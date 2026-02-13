@@ -50,6 +50,7 @@ from cems.api.handlers import (
     api_memory_update,
     api_session_analyze,
     api_session_observe,
+    api_session_summarize,
     api_tool_learning,
     health_check,
     ping,
@@ -186,6 +187,7 @@ def create_http_app():
         # REST API routes - Session
         Route("/api/session/analyze", api_session_analyze, methods=["POST"]),
         Route("/api/session/observe", api_session_observe, methods=["POST"]),
+        Route("/api/session/summarize", api_session_summarize, methods=["POST"]),
         # REST API routes - Tool
         Route("/api/tool/learning", api_tool_learning, methods=["POST"]),
     ]

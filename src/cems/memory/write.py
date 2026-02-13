@@ -123,6 +123,7 @@ class WriteMixin:
         pinned: bool = False,
         pin_reason: str | None = None,
         timestamp: datetime | None = None,  # For historical imports
+        title: str | None = None,
     ) -> dict[str, Any]:
         """Async add - document-first ingest with chunking.
 
@@ -195,7 +196,7 @@ class WriteMixin:
                 team_id=team_id,
                 scope=scope,
                 category=category,
-                title=None,  # Could extract title from content in future
+                title=title,
                 source=source,
                 source_ref=source_ref,
                 tags=tags,

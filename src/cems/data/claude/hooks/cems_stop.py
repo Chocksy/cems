@@ -293,16 +293,16 @@ def _extract_transcript_text(transcript: list[dict]) -> str:
     return "\n\n".join(lines)
 
 
-def observe_session(
+def summarize_session(
     transcript: list[dict],
     session_id: str,
     working_dir: str | None = None,
     project: str | None = None,
 ) -> bool:
-    """Send transcript to CEMS API for observation extraction.
+    """Send transcript to CEMS API for session summary extraction.
 
     Compresses transcript to user/assistant text + tool summaries and sends
-    to /api/session/observe for high-level observation extraction.
+    to /api/session/summarize for a consolidated 2-3 paragraph session summary.
 
     Returns True if the API call succeeded.
     """
@@ -315,24 +315,31 @@ def observe_session(
 
         content = _extract_transcript_text(transcript)
         if len(content) < 200:
-            return False  # Too short for meaningful observations
+            return False  # Too short for meaningful summary
 
         # Cap at ~25k tokens
         content = content[:100_000]
 
-        project_context = f"{project} ({working_dir})" if project else (working_dir or "unknown")
+        if project:
+            project_context = f"{project} ({working_dir})"
+        elif working_dir:
+            project_context = os.path.basename(working_dir.rstrip("/"))
+        else:
+            project_context = None
+
         payload = {
             "content": content,
             "session_id": session_id,
-            "project_context": project_context,
         }
+        if project_context:
+            payload["project_context"] = project_context
         if project:
             payload["source_ref"] = f"project:{project}"
 
         data = json.dumps(payload).encode('utf-8')
 
         req = urllib.request.Request(
-            f"{CEMS_API_URL}/api/session/observe",
+            f"{CEMS_API_URL}/api/session/summarize",
             data=data,
             headers={
                 "Authorization": f"Bearer {CEMS_API_KEY}",
@@ -341,7 +348,7 @@ def observe_session(
             method='POST'
         )
 
-        with urllib.request.urlopen(req, timeout=30) as response:
+        with urllib.request.urlopen(req, timeout=60) as response:
             return response.status == 200
 
     except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError):
@@ -398,7 +405,7 @@ def main():
                 with open(chat_file, "w") as f:
                     json.dump(transcript, f, indent=2)
 
-        # Send transcript to CEMS for intelligent analysis + observation
+        # Send transcript to CEMS for learning extraction + session summary
         if transcript_path:
             transcript = read_transcript(transcript_path)
             if transcript and len(transcript) > 2:  # Skip very short sessions
@@ -409,7 +416,7 @@ def main():
                     working_dir=cwd,
                     project=project,
                 )
-                observe_session(
+                summarize_session(
                     transcript=transcript,
                     session_id=session_id,
                     working_dir=cwd,

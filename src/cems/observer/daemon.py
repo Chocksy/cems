@@ -11,6 +11,7 @@ Usage:
 import json
 import logging
 import os
+import os.path
 import signal
 import time
 import urllib.error
@@ -46,21 +47,23 @@ BACKOFF_INTERVAL = 300  # 5 minutes between cycles when backed off
 
 
 
-def send_observation(
+def send_summary(
     content: str,
     session_id: str,
     source_ref: str | None,
-    project_context: str,
+    project_context: str | None,
+    segment_number: int,
     api_url: str,
     api_key: str,
 ) -> bool:
-    """Send content to CEMS for observation extraction.
+    """Send content to CEMS for session summary extraction.
 
     Args:
-        content: Transcript text to observe.
+        content: Transcript text to summarize.
         session_id: Session identifier.
         source_ref: Project reference (e.g., "project:org/repo").
-        project_context: Human-readable project context.
+        project_context: Human-readable project context (None if unknown).
+        segment_number: Daemon cycle count for this session.
         api_url: CEMS server URL.
         api_key: CEMS API key.
 
@@ -70,8 +73,65 @@ def send_observation(
     payload = {
         "content": content,
         "session_id": session_id,
-        "project_context": project_context,
+        "segment_number": segment_number,
     }
+    if project_context:
+        payload["project_context"] = project_context
+    if source_ref:
+        payload["source_ref"] = source_ref
+
+    try:
+        data = json.dumps(payload).encode("utf-8")
+        req = urllib.request.Request(
+            f"{api_url}/api/session/summarize",
+            data=data,
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+
+        with urllib.request.urlopen(req, timeout=60) as response:
+            if response.status == 200:
+                result = json.loads(response.read())
+                title = result.get("title", "unknown")
+                logger.info(f"Stored session summary for {session_id[:8]}: {title}")
+                return True
+            return False
+
+    except urllib.error.HTTPError as e:
+        if e.code in (401, 403):
+            raise RuntimeError(f"Auth failed ({e.code}): check CEMS_API_KEY") from e
+        if e.code == 404:
+            # Fallback: server hasn't been updated yet, try old observe endpoint
+            logger.warning("Summarize endpoint not found (404), falling back to observe")
+            return _send_observation_legacy(content, session_id, source_ref, project_context, api_url, api_key)
+        logger.warning(f"Summary API call failed for {session_id[:8]}: {e}")
+        return False
+    except (urllib.error.URLError, TimeoutError) as e:
+        logger.warning(f"Summary API call failed for {session_id[:8]}: {e}")
+        return False
+    except Exception as e:
+        logger.error(f"Unexpected error in summary call: {e}")
+        return False
+
+
+def _send_observation_legacy(
+    content: str,
+    session_id: str,
+    source_ref: str | None,
+    project_context: str | None,
+    api_url: str,
+    api_key: str,
+) -> bool:
+    """Legacy fallback: send to /api/session/observe if summarize endpoint is unavailable."""
+    payload = {
+        "content": content,
+        "session_id": session_id,
+    }
+    if project_context:
+        payload["project_context"] = project_context
     if source_ref:
         payload["source_ref"] = source_ref
 
@@ -86,28 +146,10 @@ def send_observation(
             },
             method="POST",
         )
-
         with urllib.request.urlopen(req, timeout=30) as response:
-            if response.status == 200:
-                result = json.loads(response.read())
-                stored = result.get("observations_stored", 0)
-                logger.info(f"Stored {stored} observations for session {session_id[:8]}")
-                return True
-            return False
-
-    except urllib.error.HTTPError as e:
-        if e.code in (401, 403):
-            # Auth errors should propagate — no point retrying every 30s
-            raise RuntimeError(f"Auth failed ({e.code}): check CEMS_API_KEY") from e
-        if e.code == 404:
-            raise RuntimeError("Observe endpoint not found (404): deploy CEMS update") from e
-        logger.warning(f"Observation API call failed for {session_id[:8]}: {e}")
-        return False
-    except (urllib.error.URLError, TimeoutError) as e:
-        logger.warning(f"Observation API call failed for {session_id[:8]}: {e}")
-        return False
+            return response.status == 200
     except Exception as e:
-        logger.error(f"Unexpected error in observation call: {e}")
+        logger.warning(f"Legacy observe fallback also failed: {e}")
         return False
 
 
@@ -137,19 +179,23 @@ def process_session(session: SessionInfo, api_url: str, api_key: str) -> bool:
     if not content or len(content) < 200:
         return False
 
-    # Build project context string
-    project_context = session.project_id or "unknown project"
-    if session.git_branch:
-        project_context += f" ({session.git_branch})"
-    if session.cwd:
-        project_context += f" — {session.cwd}"
+    # Build project context string (never use "unknown project")
+    project_context = session.project_id
+    if not project_context and session.cwd:
+        project_context = os.path.basename(session.cwd.rstrip("/"))
+    if project_context:
+        if session.git_branch:
+            project_context += f" ({session.git_branch})"
+        if session.cwd:
+            project_context += f" — {session.cwd}"
 
-    # Send to CEMS
-    success = send_observation(
+    # Send to CEMS for session summary extraction
+    success = send_summary(
         content=content,
         session_id=session.session_id,
         source_ref=session.source_ref,
         project_context=project_context,
+        segment_number=state.observation_count + 1,
         api_url=api_url,
         api_key=api_key,
     )

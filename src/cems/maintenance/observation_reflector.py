@@ -78,7 +78,7 @@ class ObservationReflector:
             project_obs.sort(key=lambda o: o.get("created_at") or datetime.min)
 
             # Extract project name from source_ref for LLM context
-            project_context = source_ref.replace("project:", "") if source_ref != "_no_project" else "unknown project"
+            project_context = source_ref.replace("project:", "") if source_ref != "_no_project" else None
 
             logger.info(
                 f"Reflecting {len(project_obs)} observations for {project_context}"

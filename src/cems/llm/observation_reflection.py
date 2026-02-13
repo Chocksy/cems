@@ -28,7 +28,7 @@ Produce a CONSOLIDATED set that:
 2. **Removes redundancy** — if two observations say the same thing, keep the more specific/recent one
 3. **Preserves ALL unique information** — every distinct fact must appear in the output
 4. **Resolves contradictions** — newer observations supersede older ones (observations are ordered oldest-first)
-5. **Keeps the same terse style** — 80-250 characters per observation
+5. **Keeps a concise but complete style** — each observation should be as long as needed to preserve all detail (typically 1-3 sentences)
 
 ## RULES
 
@@ -64,7 +64,7 @@ Only return the JSON array. No other text."""
 
 def reflect_observations(
     observations: list[dict],
-    project_context: str = "unknown project",
+    project_context: str | None = None,
     model: str | None = None,
 ) -> list[dict]:
     """Consolidate a list of observations into a compressed set.
@@ -94,7 +94,9 @@ def reflect_observations(
     client = get_client()
     use_model = model or REFLECTOR_MODEL
 
-    system = REFLECTOR_SYSTEM_PROMPT.format(project_context=project_context)
+    system = REFLECTOR_SYSTEM_PROMPT.format(
+        project_context=project_context or "various projects"
+    )
 
     try:
         response = client.complete(
@@ -102,7 +104,7 @@ def reflect_observations(
             system=system,
             model=use_model,
             temperature=0.1,
-            max_tokens=4000,
+            max_tokens=8000,
             fast_route=False,
         )
     except Exception as e:
@@ -140,9 +142,6 @@ def _parse_reflected(response: str, max_count: int) -> list[dict]:
         content = item.get("content", "").strip()
         if not content or len(content) < 30:
             continue
-
-        if len(content) > 300:
-            content = content[:297] + "..."
 
         priority = item.get("priority", "medium").lower()
         if priority not in ("high", "medium", "low"):
