@@ -7,17 +7,39 @@ All memory-related REST API endpoints:
 
 import logging
 from datetime import datetime
+from typing import Any
 
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
-from cems.api.deps import get_memory, get_scheduler
+from cems.api.deps import _scheduler_cache, get_memory
 from cems.chunking import Chunk, chunk_document
 
 logger = logging.getLogger(__name__)
 
-# Import scheduler cache for status endpoint
-from cems.api.deps import _scheduler_cache
+FOUNDATION_GUIDELINE_TAGS = {"foundation", "constitution"}
+FOUNDATION_SOURCE_REF_PREFIX = "foundation:constitution"
+
+
+def _normalize_tags(raw_tags: Any) -> set[str]:
+    """Normalize tags to lowercase strings for reliable matching."""
+    if not isinstance(raw_tags, list):
+        return set()
+    return {
+        str(tag).strip().lower()
+        for tag in raw_tags
+        if isinstance(tag, str) and str(tag).strip()
+    }
+
+
+def _is_foundation_guideline(doc: dict[str, Any]) -> bool:
+    """Return True when a guideline should be treated as foundational."""
+    tags = _normalize_tags(doc.get("tags"))
+    if tags & FOUNDATION_GUIDELINE_TAGS:
+        return True
+
+    source_ref = str(doc.get("source_ref") or "").strip().lower()
+    return source_ref.startswith(FOUNDATION_SOURCE_REF_PREFIX)
 
 
 async def api_memory_add(request: Request):
@@ -64,7 +86,6 @@ async def api_memory_add(request: Request):
         # Parse timestamp if provided
         timestamp = None
         if timestamp_str:
-            from datetime import datetime
             try:
                 timestamp = datetime.fromisoformat(timestamp_str.replace("Z", "+00:00"))
             except ValueError:
@@ -459,6 +480,7 @@ async def api_memory_profile(request: Request):
         "context": "Pre-formatted context string...",
         "components": {
             "preferences": 3,
+            "foundation_guidelines": 2,
             "guidelines": 2,
             "recent_memories": 5,
             "gate_rules_count": 4
@@ -477,6 +499,7 @@ async def api_memory_profile(request: Request):
         user_id = memory.config.user_id
         components = {
             "preferences": [],
+            "foundation_guidelines": [],
             "guidelines": [],
             "recent_memories": [],
             "gate_rules_count": 0,
@@ -495,9 +518,12 @@ async def api_memory_profile(request: Request):
         guidelines = await doc_store.get_documents_by_category(
             user_id=user_id,
             category="guidelines",
-            limit=10,
+            limit=25,
         )
-        components["guidelines"] = guidelines
+        foundation_guidelines = [g for g in guidelines if _is_foundation_guideline(g)]
+        non_foundation_guidelines = [g for g in guidelines if not _is_foundation_guideline(g)]
+        components["foundation_guidelines"] = foundation_guidelines[:10]
+        components["guidelines"] = (foundation_guidelines + non_foundation_guidelines)[:10]
 
         # 3. Fetch recent memories (last 24h, excluding certain categories)
         recent = await doc_store.get_recent_documents(
@@ -533,9 +559,17 @@ async def api_memory_profile(request: Request):
             pref_list = [f"- {m['content']}" for m in components["preferences"][:5]]
             context_parts.append("## Your Preferences\n" + "\n".join(pref_list))
 
+        if components["foundation_guidelines"]:
+            foundation_list = [f"- {m['content']}" for m in components["foundation_guidelines"][:5]]
+            context_parts.append("## Foundational Principles\n" + "\n".join(foundation_list))
+
         if components["guidelines"]:
-            guide_list = [f"- {m['content']}" for m in components["guidelines"][:5]]
-            context_parts.append("## Guidelines\n" + "\n".join(guide_list))
+            regular_guidelines = [
+                m for m in components["guidelines"] if not _is_foundation_guideline(m)
+            ]
+            if regular_guidelines:
+                guide_list = [f"- {m['content']}" for m in regular_guidelines[:5]]
+                context_parts.append("## Guidelines\n" + "\n".join(guide_list))
 
         if components["gate_rules_count"] > 0:
             context_parts.append(
@@ -569,6 +603,7 @@ async def api_memory_profile(request: Request):
 
         logger.info(
             f"[API] Profile: {len(components['preferences'])} prefs, "
+            f"{len(components['foundation_guidelines'])} foundation guidelines, "
             f"{len(components['guidelines'])} guidelines, "
             f"{len(components['recent_memories'])} recent, "
             f"{components['gate_rules_count']} rules, "
@@ -580,6 +615,7 @@ async def api_memory_profile(request: Request):
             "context": context,
             "components": {
                 "preferences": len(components["preferences"]),
+                "foundation_guidelines": len(components["foundation_guidelines"]),
                 "guidelines": len(components["guidelines"]),
                 "recent_memories": len(components["recent_memories"]),
                 "gate_rules_count": components["gate_rules_count"],

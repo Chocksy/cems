@@ -4,9 +4,10 @@ Tests the REST API endpoints with mocked dependencies.
 Uses Starlette TestClient for HTTP testing.
 """
 
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
 from starlette.testclient import TestClient
-from unittest.mock import MagicMock, patch, AsyncMock
 
 import cems.api.deps as deps_module
 import cems.api.handlers.memory as memory_handlers
@@ -456,6 +457,67 @@ class TestProfileEndpoint:
             assert response.status_code == 200
             data = response.json()
             assert data["success"] is True
+
+    @patch("cems.db.database.is_database_initialized", return_value=True)
+    @patch("cems.db.database.get_database")
+    @patch.object(memory_handlers, "get_memory")
+    def test_profile_prioritizes_foundation_guidelines(
+        self, mock_get_memory, mock_db, mock_is_db, mock_memory, mock_user
+    ):
+        """Test GET /api/memory/profile puts foundation guidelines first."""
+        mock_doc_store = MagicMock()
+        mock_doc_store.get_documents_by_category = AsyncMock(side_effect=[
+            [],  # preferences
+            [  # guidelines
+                {
+                    "id": "guide-regular",
+                    "content": "Keep functions small and focused",
+                    "category": "guidelines",
+                    "tags": ["style"],
+                },
+                {
+                    "id": "guide-foundation",
+                    "content": "If risk is unknown or unmitigated, stop execution.",
+                    "category": "guidelines",
+                    "tags": ["constitution", "foundation", "principle:15"],
+                    "source_ref": "foundation:constitution:v1",
+                },
+            ],
+            [],  # gate-rules
+        ])
+        mock_doc_store.get_recent_documents = AsyncMock(return_value=[])
+
+        mock_memory._ensure_initialized_async = AsyncMock()
+        mock_memory._ensure_document_store = AsyncMock(return_value=mock_doc_store)
+        mock_get_memory.return_value = mock_memory
+
+        mock_session = MagicMock()
+        mock_user_service = MagicMock()
+        mock_user_service.get_user_by_api_key.return_value = mock_user
+        mock_db.return_value.session.return_value.__enter__ = MagicMock(return_value=mock_session)
+        mock_db.return_value.session.return_value.__exit__ = MagicMock(return_value=False)
+
+        with patch("cems.admin.services.UserService", return_value=mock_user_service):
+            from cems.server import create_http_app
+            app = create_http_app()
+            client = TestClient(app)
+
+            response = client.get(
+                "/api/memory/profile",
+                headers={"Authorization": "Bearer test-api-key"},
+            )
+
+            assert response.status_code == 200
+            data = response.json()
+            assert data["success"] is True
+            assert data["components"]["foundation_guidelines"] == 1
+            context = data["context"]
+            assert "## Foundational Principles" in context
+            assert "## Guidelines" in context
+            assert context.index("## Foundational Principles") < context.index("## Guidelines")
+            assert context.index("If risk is unknown or unmitigated") < context.index(
+                "Keep functions small and focused"
+            )
 
     @patch("cems.db.database.is_database_initialized", return_value=True)
     @patch("cems.db.database.get_database")
