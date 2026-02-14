@@ -47,7 +47,7 @@ HOOK_STOP = HOOKS_DIR / "cems_stop.py"
 HOOK_POST_TOOL_USE = HOOKS_DIR / "cems_post_tool_use.py"
 
 # Gate cache directory (mirrors the hooks' constant)
-GATE_CACHE_DIR = Path.home() / ".claude" / "cache" / "gate_rules"
+GATE_CACHE_DIR = Path.home() / ".cems" / "cache" / "gate_rules"
 
 # Live server env vars (set these to enable online tests)
 CEMS_TEST_API_URL = os.environ.get("CEMS_TEST_API_URL", "")

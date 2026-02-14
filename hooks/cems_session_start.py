@@ -5,13 +5,14 @@
 # ///
 
 """
-CEMS SessionStart Hook - Profile Injection
+CEMS SessionStart Hook - Profile + Foundation Injection
 
-Injects user profile context at session start:
-1. User preferences and guidelines
-2. Recent relevant memories (last 24h)
-3. Gate rules summary
-4. Project-specific context
+Injects user context at session start:
+1. User preferences and guidelines (via /api/memory/profile)
+2. Foundation guidelines (via /api/memory/foundation, cached 15min)
+3. Recent relevant memories (last 24h)
+4. Gate rules summary
+5. Project-specific context
 
 Configuration:
   CEMS_API_URL - CEMS server URL (required)
@@ -103,6 +104,104 @@ def fetch_profile(project: str | None = None, token_budget: int = 2500) -> dict:
     except (httpx.RequestError, httpx.TimeoutException, json.JSONDecodeError) as e:
         print(f"CEMS profile fetch error: {e}", file=sys.stderr)
         return {}
+
+
+# =============================================================================
+# Foundation Guidelines Cache
+# =============================================================================
+
+FOUNDATION_CACHE_DIR = Path.home() / ".cems" / "cache" / "foundation"
+FOUNDATION_CACHE_TTL = 900  # 15 minutes
+
+
+def _get_foundation_cache_path(project: str | None) -> Path:
+    """Get cache file path for foundation guidelines."""
+    FOUNDATION_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    if project:
+        safe_name = project.replace("/", "_").replace("\\", "_")
+        return FOUNDATION_CACHE_DIR / f"{safe_name}.json"
+    return FOUNDATION_CACHE_DIR / "global.json"
+
+
+def fetch_foundation(project: str | None = None) -> list[dict]:
+    """Fetch foundation guidelines from CEMS, with local cache.
+
+    Uses /api/memory/foundation endpoint. Caches locally for 15 minutes.
+    On server error, falls back to stale cache if available.
+
+    Returns:
+        List of foundation guideline dicts with 'content' and 'tags'
+    """
+    import time
+
+    if not CEMS_API_URL or not CEMS_API_KEY:
+        return []
+
+    cache_path = _get_foundation_cache_path(project)
+
+    # Return cached if fresh
+    if cache_path.exists():
+        try:
+            age = cache_path.stat().st_mtime
+            if time.time() - age < FOUNDATION_CACHE_TTL:
+                return json.loads(cache_path.read_text())
+        except (OSError, json.JSONDecodeError):
+            pass
+
+    # Fetch from API
+    try:
+        url = f"{CEMS_API_URL}/api/memory/foundation"
+        if project:
+            url += f"?project={project}"
+
+        response = httpx.get(
+            url,
+            headers={"Authorization": f"Bearer {CEMS_API_KEY}"},
+            timeout=5.0,
+        )
+
+        if response.status_code != 200:
+            # On error, return stale cache if available
+            if cache_path.exists():
+                try:
+                    return json.loads(cache_path.read_text())
+                except (OSError, json.JSONDecodeError):
+                    pass
+            return []
+
+        data = response.json()
+        guidelines = data.get("guidelines", [])
+
+        # Write cache (even if empty — avoids re-fetching when no guidelines exist)
+        try:
+            cache_path.write_text(json.dumps(guidelines, indent=2))
+        except OSError:
+            pass
+
+        return guidelines
+
+    except (httpx.RequestError, httpx.TimeoutException, json.JSONDecodeError):
+        # On network error, return stale cache if available
+        if cache_path.exists():
+            try:
+                return json.loads(cache_path.read_text())
+            except (OSError, json.JSONDecodeError):
+                pass
+        return []
+
+
+def format_foundation(guidelines: list[dict]) -> str:
+    """Format foundation guidelines for context injection."""
+    if not guidelines:
+        return ""
+    lines = []
+    for g in guidelines:
+        content = g.get("content", "")
+        if content:
+            lines.append(f"- {content}")
+    if not lines:
+        return ""
+    return "## Foundation Guidelines\n" + "\n".join(lines)
 
 
 AUTO_UPDATE_INTERVAL = 300  # 5 minutes — background no-op if already latest
@@ -208,17 +307,30 @@ def main():
 
         project = get_project_id(cwd) if cwd else None
         profile = fetch_profile(project)
+        foundation = fetch_foundation(project)
 
-        if not profile.get("success") or not profile.get("context"):
+        context_parts = []
+
+        if profile.get("success") and profile.get("context"):
+            context_parts.append(f"""<cems-profile>
+{profile['context']}
+</cems-profile>""")
+
+        if foundation:
+            foundation_text = format_foundation(foundation)
+            if foundation_text:
+                context_parts.append(f"""<cems-foundation>
+{foundation_text}
+
+These are foundational principles. Follow them throughout this session.
+</cems-foundation>""")
+
+        if not context_parts:
             sys.exit(0)
 
-        # Format context for injection
-        context = f"""<cems-profile>
-{profile['context']}
-</cems-profile>"""
+        context = "\n\n".join(context_parts)
 
-        # SessionStart: stdout text is added as context for Claude
-        # Use hookSpecificOutput for structured injection
+        # SessionStart: use hookSpecificOutput for structured injection
         print(json.dumps({
             "hookSpecificOutput": {
                 "hookEventName": "SessionStart",

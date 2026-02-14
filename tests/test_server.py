@@ -968,3 +968,195 @@ class TestSoftDelete:
             assert "deleted" in data["message"]
             # Verify delete_async was called with hard=True
             mock_memory.delete_async.assert_called_once_with("mem-123", hard=True)
+
+
+class TestFoundationEndpoint:
+    """Tests for /api/memory/foundation endpoint."""
+
+    @patch("cems.db.database.is_database_initialized", return_value=True)
+    @patch("cems.db.database.get_database")
+    @patch.object(memory_handlers, "get_memory")
+    def test_foundation_returns_guidelines(self, mock_get_memory, mock_db, mock_is_db, mock_memory, mock_user):
+        """Test GET /api/memory/foundation returns foundation guidelines."""
+        mock_doc_store = MagicMock()
+        mock_doc_store.get_documents_by_category = AsyncMock(return_value=[
+            {
+                "id": "guide-1",
+                "content": "Always write tests",
+                "category": "guidelines",
+                "tags": ["foundation"],
+                "source_ref": None,
+            },
+            {
+                "id": "guide-2",
+                "content": "Use type hints",
+                "category": "guidelines",
+                "tags": ["foundation", "python"],
+                "source_ref": None,
+            },
+            {
+                "id": "guide-3",
+                "content": "Review PRs within 24h",
+                "category": "guidelines",
+                "tags": ["team"],  # NOT foundation
+                "source_ref": None,
+            },
+        ])
+
+        mock_memory._ensure_initialized_async = AsyncMock()
+        mock_memory._ensure_document_store = AsyncMock(return_value=mock_doc_store)
+        mock_get_memory.return_value = mock_memory
+
+        mock_session = MagicMock()
+        mock_user_service = MagicMock()
+        mock_user_service.get_user_by_api_key.return_value = mock_user
+        mock_db.return_value.session.return_value.__enter__ = MagicMock(return_value=mock_session)
+        mock_db.return_value.session.return_value.__exit__ = MagicMock(return_value=False)
+
+        with patch("cems.admin.services.UserService", return_value=mock_user_service):
+            from cems.server import create_http_app
+            app = create_http_app()
+            client = TestClient(app)
+
+            response = client.get(
+                "/api/memory/foundation",
+                headers={"Authorization": "Bearer test-api-key"}
+            )
+
+            assert response.status_code == 200
+            data = response.json()
+            assert data["success"] is True
+            assert data["count"] == 2  # Only foundation-tagged, not guide-3
+            assert len(data["guidelines"]) == 2
+            assert data["guidelines"][0]["content"] == "Always write tests"
+            assert data["guidelines"][1]["content"] == "Use type hints"
+
+    @patch("cems.db.database.is_database_initialized", return_value=True)
+    @patch("cems.db.database.get_database")
+    @patch.object(memory_handlers, "get_memory")
+    def test_foundation_with_constitution_source_ref(self, mock_get_memory, mock_db, mock_is_db, mock_memory, mock_user):
+        """Test foundation detection via source_ref prefix."""
+        mock_doc_store = MagicMock()
+        mock_doc_store.get_documents_by_category = AsyncMock(return_value=[
+            {
+                "id": "guide-1",
+                "content": "No force pushes to main",
+                "category": "guidelines",
+                "tags": [],
+                "source_ref": "foundation:constitution:git-safety",
+            },
+        ])
+
+        mock_memory._ensure_initialized_async = AsyncMock()
+        mock_memory._ensure_document_store = AsyncMock(return_value=mock_doc_store)
+        mock_get_memory.return_value = mock_memory
+
+        mock_session = MagicMock()
+        mock_user_service = MagicMock()
+        mock_user_service.get_user_by_api_key.return_value = mock_user
+        mock_db.return_value.session.return_value.__enter__ = MagicMock(return_value=mock_session)
+        mock_db.return_value.session.return_value.__exit__ = MagicMock(return_value=False)
+
+        with patch("cems.admin.services.UserService", return_value=mock_user_service):
+            from cems.server import create_http_app
+            app = create_http_app()
+            client = TestClient(app)
+
+            response = client.get(
+                "/api/memory/foundation",
+                headers={"Authorization": "Bearer test-api-key"}
+            )
+
+            assert response.status_code == 200
+            data = response.json()
+            assert data["count"] == 1
+            assert data["guidelines"][0]["content"] == "No force pushes to main"
+
+    @patch("cems.db.database.is_database_initialized", return_value=True)
+    @patch("cems.db.database.get_database")
+    @patch.object(memory_handlers, "get_memory")
+    def test_foundation_empty_when_no_guidelines(self, mock_get_memory, mock_db, mock_is_db, mock_memory, mock_user):
+        """Test foundation returns empty list when no foundation guidelines exist."""
+        mock_doc_store = MagicMock()
+        mock_doc_store.get_documents_by_category = AsyncMock(return_value=[])
+
+        mock_memory._ensure_initialized_async = AsyncMock()
+        mock_memory._ensure_document_store = AsyncMock(return_value=mock_doc_store)
+        mock_get_memory.return_value = mock_memory
+
+        mock_session = MagicMock()
+        mock_user_service = MagicMock()
+        mock_user_service.get_user_by_api_key.return_value = mock_user
+        mock_db.return_value.session.return_value.__enter__ = MagicMock(return_value=mock_session)
+        mock_db.return_value.session.return_value.__exit__ = MagicMock(return_value=False)
+
+        with patch("cems.admin.services.UserService", return_value=mock_user_service):
+            from cems.server import create_http_app
+            app = create_http_app()
+            client = TestClient(app)
+
+            response = client.get(
+                "/api/memory/foundation",
+                headers={"Authorization": "Bearer test-api-key"}
+            )
+
+            assert response.status_code == 200
+            data = response.json()
+            assert data["success"] is True
+            assert data["count"] == 0
+            assert data["guidelines"] == []
+
+    @patch("cems.db.database.is_database_initialized", return_value=True)
+    @patch("cems.db.database.get_database")
+    @patch.object(memory_handlers, "get_memory")
+    def test_foundation_with_project_filter(self, mock_get_memory, mock_db, mock_is_db, mock_memory, mock_user):
+        """Test foundation includes project-scoped guidelines."""
+        mock_doc_store = MagicMock()
+        # First call: global guidelines; Second call: project-scoped guidelines
+        mock_doc_store.get_documents_by_category = AsyncMock(side_effect=[
+            [
+                {
+                    "id": "global-1",
+                    "content": "Always write tests",
+                    "category": "guidelines",
+                    "tags": ["foundation"],
+                    "source_ref": None,
+                },
+            ],
+            [
+                {
+                    "id": "project-1",
+                    "content": "Use pytest for this repo",
+                    "category": "guidelines",
+                    "tags": ["foundation"],
+                    "source_ref": "project:myorg/myrepo",
+                },
+            ],
+        ])
+
+        mock_memory._ensure_initialized_async = AsyncMock()
+        mock_memory._ensure_document_store = AsyncMock(return_value=mock_doc_store)
+        mock_get_memory.return_value = mock_memory
+
+        mock_session = MagicMock()
+        mock_user_service = MagicMock()
+        mock_user_service.get_user_by_api_key.return_value = mock_user
+        mock_db.return_value.session.return_value.__enter__ = MagicMock(return_value=mock_session)
+        mock_db.return_value.session.return_value.__exit__ = MagicMock(return_value=False)
+
+        with patch("cems.admin.services.UserService", return_value=mock_user_service):
+            from cems.server import create_http_app
+            app = create_http_app()
+            client = TestClient(app)
+
+            response = client.get(
+                "/api/memory/foundation?project=myorg/myrepo",
+                headers={"Authorization": "Bearer test-api-key"}
+            )
+
+            assert response.status_code == 200
+            data = response.json()
+            assert data["count"] == 2
+            contents = [g["content"] for g in data["guidelines"]]
+            assert "Always write tests" in contents
+            assert "Use pytest for this repo" in contents

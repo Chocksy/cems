@@ -13,7 +13,7 @@ This hook runs before every tool use and:
 4. Logs tool calls for debugging
 
 Gate rules are cached by the UserPromptSubmit hook.
-Cache location: ~/.claude/cache/gate_rules/{project}.json
+Cache location: ~/.cems/cache/gate_rules/{project}.json
 """
 
 from __future__ import annotations
@@ -33,7 +33,7 @@ from utils.hook_logger import log_hook_event
 # Gate Rule Functions
 # =============================================================================
 
-GATE_CACHE_DIR = Path.home() / ".claude" / "cache" / "gate_rules"
+GATE_CACHE_DIR = Path.home() / ".cems" / "cache" / "gate_rules"
 
 
 def get_project_id(cwd: str) -> str | None:
