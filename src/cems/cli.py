@@ -10,12 +10,14 @@ from pathlib import Path
 import click
 
 from cems.cli_utils import setup_logging
-from cems.commands.status import health, status
-from cems.commands.memory import add, delete, list_memories, search, update as update_memory
+from cems.commands.admin import admin
 from cems.commands.index import index
 from cems.commands.maintenance import maintenance
-from cems.commands.admin import admin
+from cems.commands.memory import add, delete, list_memories, search
+from cems.commands.memory import update as update_memory
+from cems.commands.rule import rule
 from cems.commands.setup import setup
+from cems.commands.status import health, status
 from cems.commands.uninstall import uninstall
 from cems.commands.update import update_cmd
 
@@ -81,6 +83,7 @@ main.add_command(update_cmd, name="update")
 main.add_command(index)
 main.add_command(maintenance)
 main.add_command(admin)
+main.add_command(rule)
 main.add_command(setup)
 main.add_command(uninstall)
 

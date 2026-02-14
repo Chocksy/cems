@@ -138,6 +138,8 @@ cems health                          # Server health check
 cems add "I prefer dark mode"        # Add a memory
 cems search "coding preferences"     # Search memories
 cems list                            # List all memories
+cems rule add                        # Interactive constitution/playbook rule wizard
+cems rule load --kind constitution   # Load default constitution rule bundle
 cems update                          # Update to latest version
 cems update --hooks                  # Re-deploy hooks only (no package upgrade)
 cems maintenance --job consolidation # Run maintenance
