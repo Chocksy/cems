@@ -33,7 +33,7 @@ CONTAINER_NAME = "cems-server"
 API_KEY = ""  # Set dynamically in setup_api_key()
 
 HOOKS_DIR = Path(__file__).parent / "hooks"
-GATE_CACHE_DIR = Path.home() / ".claude" / "cache" / "gate_rules"
+GATE_CACHE_DIR = Path.home() / ".cems" / "cache" / "gate_rules"
 
 # Unique tag so we can clean up test artifacts
 TEST_RUN_TAG = f"hooktest_{int(time.time())}"
@@ -970,7 +970,7 @@ def test_gate_cache_population() -> tuple[bool, str]:
     """UserPromptSubmit should populate gate cache file on first run.
 
     The hook calls populate_gate_cache() which fetches from /api/memory/gate-rules
-    and writes to ~/.claude/cache/gate_rules/{project}.json.
+    and writes to ~/.cems/cache/gate_rules/{project}.json.
     """
     # We need a project identifier. Use the current repo.
     cwd = str(Path.cwd())

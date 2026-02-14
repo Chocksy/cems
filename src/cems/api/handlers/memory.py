@@ -464,6 +464,82 @@ async def api_memory_gate_rules(request: Request):
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
+async def api_memory_foundation(request: Request):
+    """REST API endpoint to fetch foundation guidelines.
+
+    GET /api/memory/foundation?project=org/repo
+
+    Returns all guidelines tagged as foundational (via 'foundation' or
+    'constitution' tags, or 'foundation:constitution' source_ref prefix).
+    Queries the document store directly (no semantic search).
+
+    Response: {
+        "success": true,
+        "guidelines": [
+            {
+                "memory_id": "...",
+                "content": "...",
+                "category": "guidelines",
+                "source_ref": "...",
+                "tags": ["foundation"]
+            }
+        ],
+        "count": 1
+    }
+    """
+    try:
+        project = request.query_params.get("project")
+
+        memory = get_memory()
+        await memory._ensure_initialized_async()
+        doc_store = await memory._ensure_document_store()
+
+        user_id = memory.config.user_id
+
+        # Fetch all guidelines (foundation lives under category="guidelines")
+        docs = await doc_store.get_documents_by_category(
+            user_id=user_id,
+            category="guidelines",
+            limit=50,
+        )
+
+        # Also fetch project-scoped guidelines if project is specified
+        if project:
+            project_docs = await doc_store.get_documents_by_category(
+                user_id=user_id,
+                category="guidelines",
+                limit=50,
+                source_ref_prefix=f"project:{project}",
+            )
+            seen_ids = {d["id"] for d in docs}
+            for doc in project_docs:
+                if doc["id"] not in seen_ids:
+                    docs.append(doc)
+
+        # Filter to foundation guidelines only
+        foundation = []
+        for doc in docs:
+            if _is_foundation_guideline(doc):
+                foundation.append({
+                    "memory_id": doc["id"],
+                    "content": doc["content"],
+                    "category": doc["category"],
+                    "source_ref": doc.get("source_ref"),
+                    "tags": doc.get("tags", []),
+                })
+
+        logger.info(f"[API] Foundation: found {len(foundation)} guidelines for project={project}")
+
+        return JSONResponse({
+            "success": True,
+            "guidelines": foundation,
+            "count": len(foundation),
+        })
+    except Exception as e:
+        logger.error(f"API memory_foundation error: {e}", exc_info=True)
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
 async def api_memory_profile(request: Request):
     """REST API endpoint to get session profile context.
 

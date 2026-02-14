@@ -301,7 +301,7 @@ def log_shown_memories(memory_ids: list[str]) -> None:
 # Gate Rule Cache Functions
 # =============================================================================
 
-GATE_CACHE_DIR = Path.home() / ".claude" / "cache" / "gate_rules"
+GATE_CACHE_DIR = Path.home() / ".cems" / "cache" / "gate_rules"
 
 # Pattern for parsing gate rule content: "Tool: pattern — reason"
 # Uses em dash (—), en dash (–), or " - " (hyphen with spaces) as separator

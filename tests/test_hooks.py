@@ -207,7 +207,7 @@ class TestUserPromptSubmit:
     """Tests for user_prompts_submit.py
 
     All tests pass HOME=tmp_path to isolate the gate cache from the real
-    user HOME directory. The hook writes gate cache to ~/.claude/cache/gate_rules/
+    user HOME directory. The hook writes gate cache to ~/.cems/cache/gate_rules/
     and has a 5-minute TTL -- using real HOME would cause tests to read stale
     caches or skip API calls unexpectedly.
     """
@@ -363,7 +363,7 @@ class TestUserPromptSubmit:
         assert len(gate_reqs) == 1
 
         # Verify cache file was actually written
-        cache_dir = tmp_path / ".claude" / "cache" / "gate_rules"
+        cache_dir = tmp_path / ".cems" / "cache" / "gate_rules"
         cache_files = list(cache_dir.glob("*.json")) if cache_dir.exists() else []
         assert len(cache_files) > 0, "Gate cache file should have been created"
 
@@ -415,7 +415,7 @@ class TestPreToolUse:
     def test_blocks_matching_gate_rule(self, cems_server: RecordingServer, tmp_path):
         """Commands matching a 'block' gate rule should exit 2 with stderr."""
         # First, write a gate cache file that the hook will read
-        cache_dir = tmp_path / ".claude" / "cache" / "gate_rules"
+        cache_dir = tmp_path / ".cems" / "cache" / "gate_rules"
         cache_dir.mkdir(parents=True)
         cache_file = cache_dir / "global.json"
         cache_file.write_text(json.dumps([
@@ -441,7 +441,7 @@ class TestPreToolUse:
 
     def test_warns_on_matching_warn_rule(self, cems_server: RecordingServer, tmp_path):
         """Commands matching a 'warn' gate rule should warn via additionalContext."""
-        cache_dir = tmp_path / ".claude" / "cache" / "gate_rules"
+        cache_dir = tmp_path / ".cems" / "cache" / "gate_rules"
         cache_dir.mkdir(parents=True)
         cache_file = cache_dir / "global.json"
         cache_file.write_text(json.dumps([
@@ -469,7 +469,7 @@ class TestPreToolUse:
 
     def test_non_bash_tools_skip_gate_check(self, cems_server: RecordingServer, tmp_path):
         """Non-Bash tools should not be checked against gate rules."""
-        cache_dir = tmp_path / ".claude" / "cache" / "gate_rules"
+        cache_dir = tmp_path / ".cems" / "cache" / "gate_rules"
         cache_dir.mkdir(parents=True)
         cache_file = cache_dir / "global.json"
         cache_file.write_text(json.dumps([
@@ -743,7 +743,7 @@ class TestHookIntegration:
         )
 
         # Step 3: Verify cache file was created
-        cache_dir = tmp_path / ".claude" / "cache" / "gate_rules"
+        cache_dir = tmp_path / ".cems" / "cache" / "gate_rules"
         cache_files = list(cache_dir.glob("*.json")) if cache_dir.exists() else []
         assert len(cache_files) > 0, "Gate cache should have been created"
 

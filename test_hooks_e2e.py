@@ -319,7 +319,7 @@ def test_user_prompt_submit_searches_memories():
         if match:
             project = match.group(1).removesuffix('.git')
 
-    gate_cache_dir = Path.home() / ".claude" / "cache" / "gate_rules"
+    gate_cache_dir = Path.home() / ".cems" / "cache" / "gate_rules"
 
     # Clear ALL gate cache files to force repopulation
     if gate_cache_dir.exists():
@@ -350,7 +350,7 @@ def test_user_prompt_submit_searches_memories():
 
 def test_gate_cache_populated():
     """Gate cache file exists after a claude -p run."""
-    gate_cache_dir = Path.home() / ".claude" / "cache" / "gate_rules"
+    gate_cache_dir = Path.home() / ".cems" / "cache" / "gate_rules"
 
     # Delete all cache files
     if gate_cache_dir.exists():
@@ -376,7 +376,7 @@ def test_gate_cache_populated():
 def test_short_prompt_skips_search():
     """Short prompts (<15 chars) skip memory search but hook still exits 0."""
     # Clear cache first
-    gate_cache_dir = Path.home() / ".claude" / "cache" / "gate_rules"
+    gate_cache_dir = Path.home() / ".cems" / "cache" / "gate_rules"
     for f in gate_cache_dir.glob("*.json"):
         f.unlink()
 
