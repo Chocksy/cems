@@ -11,6 +11,7 @@ import click
 
 from cems.cli_utils import setup_logging
 from cems.commands.admin import admin
+from cems.commands.env import env
 from cems.commands.index import index
 from cems.commands.maintenance import maintenance
 from cems.commands.memory import add, delete, list_memories, search
@@ -84,6 +85,7 @@ main.add_command(index)
 main.add_command(maintenance)
 main.add_command(admin)
 main.add_command(rule)
+main.add_command(env)
 main.add_command(setup)
 main.add_command(uninstall)
 

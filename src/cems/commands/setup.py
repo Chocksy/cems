@@ -28,6 +28,24 @@ def _get_data_path() -> Path:
     return Path(str(resources.files("cems.data")))
 
 
+def _read_credentials() -> dict[str, str]:
+    """Read ~/.cems/credentials as key=value pairs."""
+    creds_file = Path.home() / ".cems" / "credentials"
+    result = {}
+    try:
+        if creds_file.exists():
+            for line in creds_file.read_text().splitlines():
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                if "=" in line:
+                    key, _, value = line.partition("=")
+                    result[key.strip()] = value.strip().strip("'\"")
+    except OSError:
+        pass
+    return result
+
+
 def _is_interactive() -> bool:
     """Check if stdin is a terminal (not piped)."""
     return sys.stdin.isatty()
@@ -101,8 +119,8 @@ def _setup_credentials(api_url: str | None = None, api_key: str | None = None) -
     return True
 
 
-def _install_claude_hooks(data_path: Path) -> None:
-    """Install Claude Code hooks, skills, and settings."""
+def _install_claude_hooks(data_path: Path, api_url: str) -> None:
+    """Install Claude Code hooks, skills, settings, and MCP config."""
     claude_dir = Path.home() / ".claude"
     hooks_dir = claude_dir / "hooks"
     skills_dir = claude_dir / "skills" / "cems"
@@ -150,6 +168,42 @@ def _install_claude_hooks(data_path: Path) -> None:
 
     # Merge settings.json
     _merge_settings(claude_dir, data_path / "claude" / "settings.json")
+
+    # Register MCP server
+    _register_mcp_server(api_url)
+
+
+def _register_mcp_server(api_url: str) -> None:
+    """Register CEMS MCP server in Claude Code config.
+
+    Adds the CEMS MCP server to ~/.claude.json with Bearer token auth
+    using ${CEMS_API_KEY} env var expansion.
+    """
+    claude_json = Path.home() / ".claude.json"
+
+    existing: dict = {}
+    if claude_json.exists():
+        try:
+            existing = json.loads(claude_json.read_text())
+        except json.JSONDecodeError:
+            existing = {}
+
+    mcp_servers = existing.setdefault("mcpServers", {})
+
+    # Build MCP URL from API URL (same host, /mcp path on port 8766)
+    # e.g. https://cems.chocksy.com -> https://cems.chocksy.com/mcp
+    mcp_url = api_url.rstrip("/") + "/mcp"
+
+    mcp_servers["cems"] = {
+        "type": "http",
+        "url": mcp_url,
+        "headers": {
+            "Authorization": "Bearer ${CEMS_API_KEY}",
+        },
+    }
+
+    claude_json.write_text(json.dumps(existing, indent=2) + "\n")
+    console.print(f"  MCP server registered in {claude_json}")
 
 
 def _migrate_old_hook_names(hooks: dict) -> None:
@@ -292,10 +346,14 @@ def setup(install_claude: bool, install_cursor: bool, api_url: str | None, api_k
 
     console.print()
 
+    # Resolve API URL for MCP registration
+    creds = _read_credentials()
+    resolved_url = api_url or creds.get("CEMS_API_URL", "https://cems.chocksy.com")
+
     # Install
     if install_claude:
         console.print("[bold blue]Claude Code[/bold blue]")
-        _install_claude_hooks(data_path)
+        _install_claude_hooks(data_path, resolved_url)
         console.print()
 
     if install_cursor:
@@ -314,10 +372,17 @@ def setup(install_claude: bool, install_cursor: bool, api_url: str | None, api_k
     if install_claude:
         table.add_row("Claude hooks", str(Path.home() / ".claude" / "hooks"))
         table.add_row("Claude skills", str(Path.home() / ".claude" / "skills" / "cems"))
+        table.add_row("MCP server", str(Path.home() / ".claude.json"))
     if install_cursor:
         table.add_row("Cursor hooks", str(Path.home() / ".cursor" / "hooks"))
     console.print(table)
 
     console.print()
-    console.print("Next: restart your IDE. The observer daemon will auto-start.")
+    console.print("[bold]Add to your shell profile (~/.zshrc or ~/.bashrc):[/bold]")
+    console.print()
+    console.print('  [cyan]eval "$(cems env)"[/cyan]')
+    console.print()
+    console.print("This exports CEMS_API_KEY so the MCP server can authenticate.")
+    console.print("Then restart your shell and IDE.")
+    console.print()
     console.print("Test: [cyan]cems health[/cyan]")
