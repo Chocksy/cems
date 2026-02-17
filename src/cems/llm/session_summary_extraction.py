@@ -95,10 +95,11 @@ def extract_session_summary(
         logger.debug("Content too short for session summary extraction")
         return None
 
-    # Truncate to ~25k tokens worth of content
-    max_chars = 100_000
+    # Truncate to prevent OOM — 50K chars is plenty for summary extraction
+    max_chars = 50_000
     if len(content) > max_chars:
-        content = content[:max_chars]
+        half = max_chars // 2
+        content = content[:half] + "\n\n[...truncated...]\n\n" + content[-half:]
 
     client = get_client()
     use_model = model or SUMMARY_MODEL

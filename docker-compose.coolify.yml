@@ -16,6 +16,10 @@ services:
       CEMS_SERVER_HOST: 0.0.0.0
       CEMS_SERVER_PORT: 8765
       CEMS_MCP_PUBLIC_URL: https://mcp-cems.chocksy.com/mcp
+    # Memory limit prevents OOM cascade that kills other services on the host.
+    # Normal CEMS usage is ~200 MB; 768 MB allows headroom for large requests.
+    mem_limit: 768m
+    memswap_limit: 768m
     expose:
       - "8765"
     labels:

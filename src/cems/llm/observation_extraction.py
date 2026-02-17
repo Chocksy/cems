@@ -149,10 +149,14 @@ def extract_observations(
         logger.debug("Content too short for observation extraction")
         return []
 
-    # Truncate to ~25k tokens worth of content
-    max_chars = 100_000
+    # Truncate to prevent OOM — 50K chars (~12.5K tokens) is plenty for observations
+    max_chars = 50_000
     if len(content) > max_chars:
-        content = content[:max_chars]
+        # Take first half + last half to capture both context and conclusions
+        half = max_chars // 2
+        original_len = len(content)
+        content = content[:half] + "\n\n[...truncated...]\n\n" + content[-half:]
+        logger.warning(f"Observation content truncated from {original_len} to ~{max_chars} chars")
 
     client = get_client()
     use_model = model or OBSERVER_MODEL

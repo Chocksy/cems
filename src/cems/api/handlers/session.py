@@ -45,11 +45,20 @@ async def api_session_analyze(request: Request):
         tool_summary = body.get("tool_summary")
         source_ref = body.get("source_ref")  # e.g., "project:org/repo"
 
-        # Debug logging to help diagnose transcript issues
-        transcript_preview = transcript[:500] if isinstance(transcript, str) else str(transcript)[:500]
+        # Measure and cap transcript size to prevent OOM
+        # A 1.2 MB transcript produces ~200 chunks × LLM calls, causing 8+ GB RAM
+        MAX_TRANSCRIPT_CHARS = 50_000  # ~12.5K tokens — plenty for learning extraction
         transcript_len = len(transcript) if isinstance(transcript, str) else len(str(transcript))
         logger.info(f"session_analyze called: session_id={session_id}, transcript_len={transcript_len}")
-        logger.debug(f"session_analyze transcript preview: {transcript_preview}...")
+
+        if isinstance(transcript, str) and len(transcript) > MAX_TRANSCRIPT_CHARS:
+            # Take first 25K + last 25K to capture both context setup and results
+            half = MAX_TRANSCRIPT_CHARS // 2
+            transcript = transcript[:half] + "\n\n[...truncated...]\n\n" + transcript[-half:]
+            logger.warning(
+                f"Transcript truncated from {transcript_len} to {MAX_TRANSCRIPT_CHARS} chars "
+                f"to prevent OOM (session: {session_id})"
+            )
 
         # Run analysis (synchronous since haiku is fast)
         learnings = extract_session_learnings(
@@ -162,6 +171,17 @@ async def api_session_summarize(request: Request):
         mode = body.get("mode", "incremental")
         epoch = body.get("epoch", 0)
 
+        # Cap content size to prevent OOM (same logic as session_analyze)
+        MAX_SUMMARY_CHARS = 50_000
+        original_len = len(content)
+        if len(content) > MAX_SUMMARY_CHARS:
+            half = MAX_SUMMARY_CHARS // 2
+            content = content[:half] + "\n\n[...truncated...]\n\n" + content[-half:]
+            logger.warning(
+                f"Summary content truncated from {original_len} to ~{MAX_SUMMARY_CHARS} chars "
+                f"(session: {session_id})"
+            )
+
         # Epoch-aware session tag: session:{id[:8]} for epoch 0, session:{id[:8]}:e{N} for N>0
         tag = body.get("session_tag") or f"session:{session_id[:8]}"
         if epoch > 0 and ":e" not in tag:
@@ -169,8 +189,8 @@ async def api_session_summarize(request: Request):
 
         logger.info(
             f"session_summarize called: session_id={session_id}, "
-            f"content_len={len(content)}, project={project_context}, "
-            f"mode={mode}, epoch={epoch}, tag={tag}"
+            f"content_len={original_len} (capped to {len(content)}), "
+            f"project={project_context}, mode={mode}, epoch={epoch}, tag={tag}"
         )
 
         summary = extract_session_summary(

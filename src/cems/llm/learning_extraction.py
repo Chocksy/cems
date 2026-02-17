@@ -304,6 +304,19 @@ def _extract_from_chunks(
         Aggregated and deduplicated list of learnings
     """
     chunks = chunk_content(content, max_chunk_size=6000)
+
+    # Cap chunks to prevent 200+ sequential LLM calls that cause OOM.
+    # 10 chunks × 6KB = 60KB of content — more than enough for learning extraction.
+    MAX_CHUNKS = 10
+    if len(chunks) > MAX_CHUNKS:
+        # Take first half + last half to capture setup and conclusions
+        half = MAX_CHUNKS // 2
+        original_count = len(chunks)
+        chunks = chunks[:half] + chunks[-half:]
+        logger.warning(
+            f"Capped {original_count} chunks to {MAX_CHUNKS} to prevent OOM"
+        )
+
     all_learnings = []
 
     logger.info(f"Processing content in {len(chunks)} chunks")
