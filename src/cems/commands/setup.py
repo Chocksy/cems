@@ -173,11 +173,31 @@ def _install_claude_hooks(data_path: Path, api_url: str) -> None:
     _register_mcp_server(api_url)
 
 
+def _discover_mcp_url(api_url: str) -> str:
+    """Discover MCP URL from server, fall back to api_url + /mcp."""
+    import urllib.request
+    import urllib.error
+
+    discovery_url = api_url.rstrip("/") + "/api/config/setup"
+    try:
+        req = urllib.request.Request(discovery_url, method="GET")
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = json.loads(resp.read().decode())
+            mcp_url = data.get("mcp_url")
+            if mcp_url:
+                return mcp_url
+    except (urllib.error.URLError, json.JSONDecodeError, OSError):
+        pass
+
+    # Fallback: assume MCP at same host
+    return api_url.rstrip("/") + "/mcp"
+
+
 def _register_mcp_server(api_url: str) -> None:
     """Register CEMS MCP server in Claude Code config.
 
-    Adds the CEMS MCP server to ~/.claude.json with Bearer token auth
-    using ${CEMS_API_KEY} env var expansion.
+    Queries the server's discovery endpoint for the MCP URL,
+    falls back to {api_url}/mcp if unavailable.
     """
     claude_json = Path.home() / ".claude.json"
 
@@ -190,9 +210,7 @@ def _register_mcp_server(api_url: str) -> None:
 
     mcp_servers = existing.setdefault("mcpServers", {})
 
-    # Build MCP URL from API URL (same host, /mcp path on port 8766)
-    # e.g. https://cems.chocksy.com -> https://cems.chocksy.com/mcp
-    mcp_url = api_url.rstrip("/") + "/mcp"
+    mcp_url = _discover_mcp_url(api_url)
 
     mcp_servers["cems"] = {
         "type": "http",
@@ -203,7 +221,7 @@ def _register_mcp_server(api_url: str) -> None:
     }
 
     claude_json.write_text(json.dumps(existing, indent=2) + "\n")
-    console.print(f"  MCP server registered in {claude_json}")
+    console.print(f"  MCP server registered: {mcp_url}")
 
 
 def _migrate_old_hook_names(hooks: dict) -> None:
