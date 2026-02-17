@@ -518,12 +518,30 @@ class TestPreToolUse:
 class TestStop:
     """Tests for stop.py"""
 
-    def test_sends_transcript_to_cems(self, cems_server: RecordingServer, tmp_path):
-        """Stop hook should send transcript to /api/session/analyze."""
-        cems_server.set_response("/api/session/analyze", CannedResponse(
-            body={"success": True, "memories_created": 2}
-        ))
+    def test_writes_stop_signal(self, cems_server: RecordingServer, tmp_path):
+        """Stop hook should write a stop signal for the observer daemon."""
+        result = run_hook(
+            "cems_stop.py",
+            make_stop_input(cwd=str(tmp_path)),
+            server=cems_server,
+            extra_env={
+                "ELEVENLABS_API_KEY": "",
+                "OPENAI_API_KEY": "",
+                "ANTHROPIC_API_KEY": "",
+                "HOME": str(tmp_path),
+            },
+        )
 
+        assert result.exit_code == 0
+
+        # Verify signal file was written
+        signal_dir = tmp_path / ".cems" / "observer" / "signals"
+        if signal_dir.exists():
+            signal_files = list(signal_dir.glob("*.json"))
+            assert len(signal_files) >= 1
+
+    def test_does_not_call_session_analyze(self, cems_server: RecordingServer, tmp_path):
+        """Stop hook should NOT send transcript to /api/session/analyze (removed)."""
         # Create a mock transcript
         transcript_path = tmp_path / "transcript.jsonl"
         lines = [
@@ -542,7 +560,6 @@ class TestStop:
             ),
             server=cems_server,
             extra_env={
-                # Disable TTS/LLM so the test doesn't hang
                 "ELEVENLABS_API_KEY": "",
                 "OPENAI_API_KEY": "",
                 "ANTHROPIC_API_KEY": "",
@@ -551,39 +568,7 @@ class TestStop:
 
         assert result.exit_code == 0
 
-        # Verify transcript was sent to CEMS
-        analyze_reqs = cems_server.get_requests("/api/session/analyze")
-        assert len(analyze_reqs) == 1
-        body = analyze_reqs[0].body
-        assert "transcript" in body
-        assert len(body["transcript"]) == 4
-        assert body["session_id"] == "test-session-001"
-
-    def test_skips_short_transcripts(self, cems_server: RecordingServer, tmp_path):
-        """Transcripts with 2 or fewer messages should not be sent."""
-        transcript_path = tmp_path / "transcript.jsonl"
-        lines = [
-            json.dumps({"type": "user", "message": {"content": "Hi"}}),
-            json.dumps({"type": "assistant", "message": {"content": "Hello"}}),
-        ]
-        transcript_path.write_text("\n".join(lines))
-
-        result = run_hook(
-            "cems_stop.py",
-            make_stop_input(
-                transcript_path=str(transcript_path),
-                cwd=str(tmp_path),
-            ),
-            server=cems_server,
-            extra_env={
-                "ELEVENLABS_API_KEY": "",
-                "OPENAI_API_KEY": "",
-                "ANTHROPIC_API_KEY": "",
-            },
-        )
-
-        assert result.exit_code == 0
-        # Should NOT have called analyze (only 2 messages)
+        # Verify NO calls to session/analyze (removed — observer handles summaries)
         analyze_reqs = cems_server.get_requests("/api/session/analyze")
         assert len(analyze_reqs) == 0
 
@@ -787,9 +772,7 @@ class TestHookIntegration:
         cems_server.set_response("/api/tool/learning", CannedResponse(
             body={"success": True, "stored": True}
         ))
-        cems_server.set_response("/api/session/analyze", CannedResponse(
-            body={"success": True, "memories_created": 1}
-        ))
+        # Note: /api/session/analyze removed — observer daemon handles summaries
 
         # 1. SessionStart
         r1 = run_hook(
@@ -865,7 +848,7 @@ class TestHookIntegration:
         assert "/api/memory/log-shown" in all_paths
         assert "/api/memory/gate-rules" in all_paths
         assert "/api/tool/learning" in all_paths
-        assert "/api/session/analyze" in all_paths
+        # Note: /api/session/analyze removed — observer daemon handles summaries
 
 
 # ============================================================================

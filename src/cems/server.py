@@ -15,8 +15,7 @@ REST API endpoints:
 - POST /api/index/repo - Index a git repository
 - POST /api/index/path - Index a local directory
 - GET /api/index/patterns - List available index patterns
-- POST /api/session/analyze - Analyze session transcripts
-- POST /api/session/observe - Extract observations from session content
+- POST /api/session/summarize - Produce and store session summaries
 """
 
 import logging
@@ -50,8 +49,6 @@ from cems.api.handlers import (
     api_memory_summary_personal,
     api_memory_summary_shared,
     api_memory_update,
-    api_session_analyze,
-    api_session_observe,
     api_session_summarize,
     api_tool_learning,
     health_check,
@@ -190,8 +187,6 @@ def create_http_app():
         Route("/api/index/path", api_index_path, methods=["POST"]),
         Route("/api/index/patterns", api_index_patterns, methods=["GET"]),
         # REST API routes - Session
-        Route("/api/session/analyze", api_session_analyze, methods=["POST"]),
-        Route("/api/session/observe", api_session_observe, methods=["POST"]),
         Route("/api/session/summarize", api_session_summarize, methods=["POST"]),
         # REST API routes - Tool
         Route("/api/tool/learning", api_tool_learning, methods=["POST"]),

@@ -40,9 +40,22 @@ Write a **2-3 paragraph narrative summary** of this session segment. This is NOT
 - **Narrative voice**: "The user worked on X. They decided Y because Z. The implementation involved..."
 - **Preserve specifics**: Names, numbers, dates, tool names, service names, file paths that represent architecture decisions
 - **Temporal flow**: Capture what happened in order, not just topics
-- **State changes**: Explicitly note what changed: "migrated from X to Y", "switched to Z", "removed Q"
-- **User assertions are authoritative**: When the user states facts about their project, preserve them exactly
+- **State changes**: Explicitly note what changed AND what it replaced: "switched from X to Y", "replaced A with B". If the new state contradicts previous information, make that explicit.
+- **User assertions are authoritative**: When the user TELLS something about their project, preserve it exactly as fact. Distinguish from questions — "User stated they have two services running" vs "User asked about deployment options".
 - **Target length**: 200-400 words (2-3 paragraphs)
+
+## DETAIL PRESERVATION
+
+- **Names, handles, @usernames** — always preserve exactly
+- **Numbers, quantities, measurements, prices** — always preserve
+- **Non-standard terminology** — quote the user's exact words: "did a 'movement session' (their term for exercise)"
+- **Precise action verbs** — replace vague "getting/got" with specific verbs: "subscribed to", "purchased", "received", "enrolled in"
+- **Distinguishing details** — when listing recommendations or options, preserve the KEY ATTRIBUTE of each:
+  - BAD: "Assistant recommended 3 deployment options"
+  - GOOD: "Assistant recommended Docker Compose (simple), K8s (scalable), Railway (managed)"
+- **Specific results** — preserve concrete numbers: "Optimization achieved 43.7%% faster load times, memory dropped from 2.8GB to 940MB"
+
+{project_name_instruction}
 
 ## WHAT TO INCLUDE
 - Project goals and high-level context
@@ -106,7 +119,22 @@ def extract_session_summary(
 
     project_label = f" for: {project_context}" if project_context else ""
 
-    system = SUMMARY_SYSTEM_PROMPT.format(project_label=project_label)
+    # Dynamic instruction: weave project name into the summary text for searchability
+    if project_context:
+        project_name_instruction = (
+            "## PROJECT NAME\n\n"
+            f"Always mention the project/repo name in the summary so it's searchable without metadata:\n"
+            f'- BAD: "The user overhauled the memory quality system"\n'
+            f'- GOOD: "The user overhauled the memory quality system in {project_context}"\n\n'
+            f'The project context "{project_context}" should appear naturally in the summary.'
+        )
+    else:
+        project_name_instruction = ""
+
+    system = SUMMARY_SYSTEM_PROMPT.format(
+        project_label=project_label,
+        project_name_instruction=project_name_instruction,
+    )
 
     try:
         response = client.complete(

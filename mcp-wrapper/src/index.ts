@@ -262,40 +262,6 @@ function createMcpServer(authHeaders: { authorization?: string; teamId?: string 
       }
   );
 
-  server.registerTool(
-    "session_analyze",
-      {
-        title: "Analyze Session",
-        description: "Analyze session content and extract learnings to remember. Works with any format: raw transcripts, summaries, or notes.",
-        inputSchema: {
-          transcript: z.string().describe("Session content to analyze - can be a transcript, summary, or notes"),
-          session_id: z.string().optional().describe("Optional session identifier"),
-          working_dir: z.string().optional().describe("Optional working directory for context"),
-        },
-      },
-      async (args) => {
-        const auth = getAuthHeaders();
-        const response = await fetch(`${PYTHON_API_URL}/api/session/analyze`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            ...(auth.authorization && { Authorization: auth.authorization }),
-          },
-          body: JSON.stringify(args),
-        });
-
-        if (!response.ok) {
-          const error = await response.text();
-          throw new Error(`Python API error: ${error}`);
-        }
-
-        const result = await response.json();
-        return {
-          content: [{ type: "text", text: JSON.stringify(result) }],
-        };
-      }
-  );
-
   // Register resources
   server.registerResource(
     "memory_status",

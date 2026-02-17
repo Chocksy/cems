@@ -9,7 +9,7 @@ Two test tiers:
   1. OFFLINE (no CEMS server needed) - input parsing, output format, gate
      cache files, edge cases. These run always.
   2. ONLINE (requires running CEMS server) - actual API calls, memory search,
-     gate rule fetch, session analyze, log-shown. Skipped unless
+     gate rule fetch, log-shown. Skipped unless
      CEMS_TEST_API_URL and CEMS_TEST_API_KEY are set.
 
 Usage:
@@ -565,7 +565,7 @@ class TestStopOffline:
                 "transcript_path": str(transcript_path),
                 "cwd": tmpdir,
             }
-            # Without CEMS configured, analyze_session will return False but not crash
+            # Stop hook writes observer signal and exits cleanly
             result = run_hook(HOOK_STOP, input_data)
             assert result.returncode == 0
 
@@ -1003,19 +1003,19 @@ class TestSessionStartOnline:
 
 @needs_server
 class TestStopOnline:
-    """Tests that require a live CEMS server for session analysis."""
+    """Tests that require a live CEMS server for stop hook signal writing."""
 
-    def test_session_analysis_sent(self):
-        """Stop hook should send transcript to /api/session/analyze."""
+    def test_stop_writes_signal_file(self):
+        """Stop hook should write a signal file for the observer daemon."""
         with tempfile.TemporaryDirectory() as tmpdir:
             transcript_path = Path(tmpdir) / "transcript.jsonl"
             transcript_lines = [
                 json.dumps({"type": "user", "message": {"content": "Fix the login bug"}}),
                 json.dumps({"type": "assistant", "message": {"content": "I'll look at the auth module"}}),
-                json.dumps({"type": "user", "message": {"content": "What did you find?"}}),
-                json.dumps({"type": "assistant", "message": {"content": "Found an off-by-one error in token validation"}}),
             ]
             transcript_path.write_text("\n".join(transcript_lines))
+
+            signal_dir = Path(tmpdir) / ".cems" / "observer" / "signals"
 
             result = run_hook(
                 HOOK_STOP,
@@ -1027,9 +1027,9 @@ class TestStopOnline:
                 env_overrides={
                     "CEMS_API_URL": CEMS_TEST_API_URL,
                     "CEMS_API_KEY": CEMS_TEST_API_KEY,
+                    "HOME": tmpdir,
                 },
             )
-            # Should succeed (analysis is fire-and-forget; no output expected)
             assert result.returncode == 0
 
 

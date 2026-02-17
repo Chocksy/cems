@@ -37,9 +37,6 @@ from cems.llm.summarization import (
 
 # Learning extraction exports
 from cems.llm.learning_extraction import (
-    LEARNING_TYPES,
-    chunk_content,
-    extract_session_learnings,
     extract_tool_learning,
     normalize_category,
 )
@@ -66,10 +63,7 @@ __all__ = [
     "summarize_memories",
     "merge_memory_contents",
     # Learning extraction
-    "LEARNING_TYPES",
-    "extract_session_learnings",
     "extract_tool_learning",
-    "chunk_content",
     "normalize_category",
     # Observation extraction
     "extract_observations",

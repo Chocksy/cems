@@ -292,8 +292,7 @@ The MCP wrapper on port 8766 exposes CEMS as an MCP server with 6 tools:
 | GET | `/api/memory/status` | System status |
 | GET | `/api/memory/profile` | Session profile context |
 | GET | `/api/memory/gate-rules` | Gate rules by project |
-| POST | `/api/session/analyze` | Analyze session |
-| POST | `/api/session/observe` | Extract observations |
+| POST | `/api/session/summarize` | Session summary (observer daemon) |
 | POST | `/api/tool/learning` | Tool learning |
 | POST | `/api/index/repo` | Index git repo |
 

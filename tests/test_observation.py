@@ -1,7 +1,7 @@
-"""Tests for observation extraction and API endpoint."""
+"""Tests for observation extraction and category normalization."""
 
 import os
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -195,79 +195,3 @@ class TestNormalizeCategory:
         from cems.llm.learning_extraction import normalize_category
 
         assert normalize_category("") == "general"
-
-
-class TestObservationAPIHandler:
-    """Tests for the api_session_observe endpoint."""
-
-    @pytest.mark.asyncio
-    async def test_observe_requires_content(self):
-        """POST /api/session/observe without content returns 400."""
-        from cems.api.handlers.observation import api_session_observe
-
-        request = MagicMock()
-        request.json = AsyncMock(return_value={"session_id": "test"})
-
-        response = await api_session_observe(request)
-        assert response.status_code == 400
-
-    @pytest.mark.asyncio
-    @patch("cems.api.handlers.observation.extract_observations")
-    @patch("cems.api.handlers.observation.get_memory")
-    async def test_observe_stores_observations(self, mock_get_memory, mock_extract):
-        """POST /api/session/observe stores extracted observations."""
-        from cems.api.handlers.observation import api_session_observe
-
-        mock_extract.return_value = [
-            {"content": "User is building a test system", "priority": "high", "category": "observation"},
-        ]
-
-        mock_memory = MagicMock()
-        mock_memory.add_async = AsyncMock(return_value={
-            "results": [{"id": "mem-123"}]
-        })
-        mock_get_memory.return_value = mock_memory
-
-        request = MagicMock()
-        request.json = AsyncMock(return_value={
-            "content": "test transcript content...",
-            "session_id": "test-session",
-            "source_ref": "project:test/repo",
-            "project_context": "test/repo (main)",
-        })
-
-        response = await api_session_observe(request)
-        assert response.status_code == 200
-
-        import json
-        body = json.loads(response.body)
-        assert body["success"] is True
-        assert body["observations_stored"] == 1
-        assert body["observations"][0]["memory_id"] == "mem-123"
-
-        # Verify memory.add_async was called with correct args
-        mock_memory.add_async.assert_called_once()
-        call_kwargs = mock_memory.add_async.call_args[1]
-        assert call_kwargs["category"] == "observation"
-        assert call_kwargs["source_ref"] == "project:test/repo"
-        assert "observation" in call_kwargs["tags"]
-
-    @pytest.mark.asyncio
-    @patch("cems.api.handlers.observation.extract_observations")
-    async def test_observe_no_observations_returns_empty(self, mock_extract_obs):
-        """POST /api/session/observe with no observations returns success with 0 stored."""
-        from cems.api.handlers.observation import api_session_observe
-
-        mock_extract_obs.return_value = []
-
-        request = MagicMock()
-        request.json = AsyncMock(return_value={
-            "content": "short session with nothing interesting",
-        })
-
-        response = await api_session_observe(request)
-        assert response.status_code == 200
-
-        import json
-        body = json.loads(response.body)
-        assert body["observations_stored"] == 0
