@@ -40,6 +40,7 @@ from cems.api.handlers import (
     api_memory_forget,
     api_memory_foundation,
     api_memory_gate_rules,
+    config_setup,
     api_memory_list,
     api_memory_log_shown,
     api_memory_maintenance,
@@ -87,8 +88,8 @@ def create_http_app():
         """Middleware to extract user context and validate API key from headers."""
 
         async def dispatch(self, request: Request, call_next):
-            # Skip auth for health check
-            if request.url.path == "/health":
+            # Skip auth for health check and setup discovery
+            if request.url.path in ("/health", "/api/config/setup"):
                 return await call_next(request)
 
             # Skip middleware for admin routes (they handle their own auth)
@@ -167,6 +168,8 @@ def create_http_app():
         # Health check endpoints
         Route("/ping", ping, methods=["GET"]),
         Route("/health", health_check, methods=["GET"]),
+        # Setup discovery (unauthenticated)
+        Route("/api/config/setup", config_setup, methods=["GET"]),
         # REST API routes - Memory
         Route("/api/memory/add", api_memory_add, methods=["POST"]),
         Route("/api/memory/add_batch", api_memory_add_batch, methods=["POST"]),

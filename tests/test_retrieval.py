@@ -400,15 +400,14 @@ class TestRelevanceScoring:
         expected = min(1.0, expected)
         assert abs(score - expected) < 0.01
 
-    def test_apply_score_adjustments_cross_category_penalty(self):
-        """Cross-category penalty should reduce score by 20%."""
+    def test_apply_score_adjustments_no_category_penalty(self):
+        """Cross-category penalty is removed — category mismatch has no effect."""
         result = self._create_result(score=1.0, category="deployment", days_ago=0)
-        # With default config (penalties enabled), inferred category mismatch should apply 0.8x
         score = apply_score_adjustments(result, inferred_category="development")
-        assert score == 0.8
+        assert score == 1.0  # No penalty applied
 
-    def test_apply_score_adjustments_same_category_no_penalty(self):
-        """Same category should not apply penalty."""
+    def test_apply_score_adjustments_same_category(self):
+        """Same category — no special treatment (penalty removed)."""
         result = self._create_result(score=1.0, category="deployment", days_ago=0)
         score = apply_score_adjustments(result, inferred_category="deployment")
         assert score == 1.0
@@ -425,8 +424,8 @@ class TestRelevanceScoring:
         score = apply_score_adjustments(result, project="acme/api")
         assert score == 0.8
 
-    def test_apply_score_adjustments_skip_category_penalty(self):
-        """Category penalty can be skipped when categories are uniform."""
+    def test_apply_score_adjustments_skip_category_penalty_compat(self):
+        """skip_category_penalty param still accepted for compat (no-op)."""
         result = self._create_result(score=1.0, category="deployment", days_ago=0)
         score = apply_score_adjustments(
             result,

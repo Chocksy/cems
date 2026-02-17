@@ -253,8 +253,8 @@ class CEMSConfig(BaseSettings):
     # They're designed for multi-project, multi-category production usage.
     # Set to False for benchmarks with uniform categories (e.g., LongMemEval).
     enable_cross_category_penalty: bool = Field(
-        default=True,
-        description="Apply 0.8x penalty when memory category differs from inferred query category",
+        default=False,
+        description="Deprecated — cross-category penalty removed. Kept for config compat.",
     )
     enable_project_penalty: bool = Field(
         default=True,
@@ -292,6 +292,11 @@ class CEMSConfig(BaseSettings):
     # =========================================================================
     server_host: str = Field(default="localhost", description="MCP server host")
     server_port: int = Field(default=8765, description="MCP server port")
+    mcp_public_url: str | None = Field(
+        default=None,
+        description="Public URL for the MCP wrapper (e.g., https://mcp-cems.example.com/mcp). "
+                    "Exposed via /api/config/setup for client auto-discovery.",
+    )
 
     # =========================================================================
     # PostgreSQL Settings (required for HTTP mode)

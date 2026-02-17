@@ -169,35 +169,13 @@ class CEMSMemory(WriteMixin, SearchMixin, CRUDMixin, AnalyticsMixin, MetadataMix
         self._async_initialized = True
 
     def _infer_category_from_query(self, query: str) -> str | None:
-        """Infer the likely category from a search query.
+        """Deprecated — returns None. Category inference removed.
 
-        Uses keyword matching to determine if a query is about a specific domain.
-        Returns None if no category can be inferred.
-
-        Args:
-            query: Search query text
-
-        Returns:
-            Inferred category name or None
+        Cross-category penalty was removed because it caused more false
+        penalties than correct ones (e.g., "deploy cems" penalized cems-category
+        memories). Only 6 functional categories exist and they're set by code,
+        not inferred from queries.
         """
-        query_lower = query.lower()
-
-        # Category keyword mappings (keywords -> category)
-        category_keywords = {
-            "memory": ["memory", "recall", "remember", "retrieval", "search", "embedding"],
-            "deployment": ["deploy", "coolify", "server", "production", "hosting", "docker"],
-            "development": ["code", "coding", "programming", "debug", "git", "refactor"],
-            "ai": ["llm", "claude", "openai", "gpt", "ai", "model", "prompt"],
-            "project": ["project", "repo", "repository", "codebase"],
-            "preferences": ["prefer", "preference", "like", "favorite", "style"],
-            "workflow": ["workflow", "process", "habit", "routine", "automate"],
-        }
-
-        for category, keywords in category_keywords.items():
-            for keyword in keywords:
-                if keyword in query_lower:
-                    return category
-
         return None
 
     # add() and add_async() are provided by WriteMixin

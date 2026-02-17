@@ -22,32 +22,15 @@ LEARNING_TYPES = [
     "GUIDELINE",         # Rules, conventions, best practices
 ]
 
-# Controlled category vocabulary — prevents category fragmentation.
-# Must match the canonical categories established in Phase 2 cleanup.
-CANONICAL_CATEGORIES = [
-    "api", "ai", "architecture", "cems", "configuration", "css",
-    "database", "debugging", "deployment", "design", "development",
-    "email", "environment", "error-handling", "frontend", "gate-rules",
-    "general", "git", "hooks", "infrastructure", "observation",
-    "preferences", "project-management", "refactoring", "ruby",
-    "security", "seo", "task-management", "testing", "ui", "workflow",
-]
-
-# Common aliases that map to canonical categories
-_CATEGORY_ALIASES = {
-    "docker": "deployment", "coolify": "deployment", "ci-cd": "deployment",
-    "ci/cd": "deployment", "devops": "deployment",
-    "rails": "ruby", "rspec": "testing", "python": "development",
-    "javascript": "frontend", "typescript": "frontend", "svelte": "frontend",
-    "react": "frontend", "html": "frontend",
-    "postgres": "database", "postgresql": "database", "sql": "database",
-    "nginx": "infrastructure", "server": "infrastructure", "networking": "infrastructure",
-    "cors": "infrastructure", "ssl": "infrastructure",
-    "auth": "security", "authentication": "security", "oauth": "security",
-    "styling": "css", "scss": "css", "tailwind": "css",
-    "error-fix": "error-handling", "errors": "error-handling", "bug-fix": "error-handling",
-    "performance": "testing", "monitoring": "testing",
-    "documentation": "general", "learnings": "general", "patterns": "general",
+# Categories used as SQL filters in application logic (set by code, not LLMs).
+# All other categories are free-text display labels from LLM extraction.
+FUNCTIONAL_CATEGORIES = {
+    "gate-rules",       # PreToolUse hook blocking
+    "preferences",      # Session start profile
+    "guidelines",       # Session start profile
+    "observation",      # Observation reflection pipeline
+    "session-summary",  # Session analyze upserts
+    "project",          # Project-specific context
 }
 
 # Noise patterns to filter from extracted learnings
@@ -56,6 +39,8 @@ _NOISE_PATTERNS = [
     "/tmp/claude-",
     "background command",
     "exit code 0",
+    "task-notification",
+    "task notification",
 ]
 
 # Minimum content length for a learning to be stored
@@ -66,18 +51,19 @@ MIN_CONFIDENCE = 0.6
 
 
 def normalize_category(raw: str) -> str:
-    """Normalize a category string to canonical vocabulary.
+    """Normalize a category string to a clean lowercase-hyphenated form.
+
+    Functional categories (gate-rules, preferences, etc.) are preserved as-is.
+    All other categories are free-text from LLM output — just cleaned up for
+    consistent display. No alias mapping or canonicalization.
 
     Args:
         raw: Raw category string from LLM output
 
     Returns:
-        Canonical category string (lowercase, hyphenated)
+        Cleaned category string (lowercase, hyphenated)
     """
-    cleaned = raw.lower().strip().replace(" ", "-").replace("_", "-")
-    if cleaned in CANONICAL_CATEGORIES:
-        return cleaned
-    return _CATEGORY_ALIASES.get(cleaned, "general")
+    return raw.lower().strip().replace(" ", "-").replace("_", "-").replace("/", "-") or "general"
 
 
 def chunk_content(content: str, max_chunk_size: int = 6000) -> list[str]:

@@ -590,10 +590,11 @@ def deduplicate_results(results: list["SearchResult"]) -> list["SearchResult"]:
 
 def apply_score_adjustments(
     result: "SearchResult",
-    inferred_category: str | None = None,
     project: str | None = None,
-    skip_category_penalty: bool = False,
     config: "CEMSConfig | None" = None,
+    # Deprecated — kept for call-site compatibility, ignored
+    inferred_category: str | None = None,
+    skip_category_penalty: bool = False,
 ) -> float:
     """Apply all score adjustments in a single, consolidated function.
 
@@ -604,12 +605,10 @@ def apply_score_adjustments(
     1. Priority boost (1.0-2.0x from metadata)
     2. Time decay (60-day half-life)
     3. Pinned boost (1.1x)
-    4. Cross-category penalty (0.8x if enabled and category mismatch)
-    5. Project scoring (1.3x boost same-project, 0.8x penalty different-project)
+    4. Project scoring (1.3x boost same-project, 0.8x penalty different-project)
 
     Args:
         result: SearchResult to score
-        inferred_category: Optional category inferred from query
         project: Optional project ID for project-scoped scoring
         config: Optional config for penalty settings (defaults to penalties enabled)
 
@@ -632,16 +631,6 @@ def apply_score_adjustments(
         # Pinned boost (10%)
         if result.metadata.pinned:
             score *= 1.1
-
-        # Cross-category penalty (helps prioritize same-category results)
-        # Disabled by default for eval, enabled for production
-        enable_category_penalty = config.enable_cross_category_penalty if config else True
-        if skip_category_penalty:
-            enable_category_penalty = False
-        if enable_category_penalty and inferred_category and result.metadata.category:
-            if result.metadata.category.lower() != inferred_category.lower():
-                penalty = config.cross_category_penalty_factor if config else 0.8
-                score *= penalty
 
         # Project-scoped scoring (boost same-project, penalize different-project)
         enable_project_penalty = config.enable_project_penalty if config else True
