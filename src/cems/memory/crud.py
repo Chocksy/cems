@@ -94,11 +94,13 @@ class CRUDMixin:
         """Async get_all from DocumentStore."""
         doc_store = await self._ensure_document_store()
         user_id = self.config.user_id
+        team_id = self.config.team_id if scope in ("shared", "both") else None
 
         scope_filter = scope if scope != "both" else None
 
         docs = await doc_store.get_all_documents(
             user_id=user_id,
+            team_id=team_id,
             scope=scope_filter,
             limit=1000,
         )

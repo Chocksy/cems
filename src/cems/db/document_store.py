@@ -761,6 +761,7 @@ class DocumentStore:
     async def get_all_documents(
         self,
         user_id: str,
+        team_id: str | None = None,
         scope: str | None = None,
         limit: int = 1000,
         offset: int = 0,
@@ -768,9 +769,13 @@ class DocumentStore:
     ) -> list[dict[str, Any]]:
         """Get all documents for a user with pagination and filtering.
 
+        For shared/both scopes with a team_id, uses OR logic so users can see
+        their own docs plus shared docs from their team.
+
         Args:
             user_id: User ID
-            scope: Optional scope filter ("personal" or "shared")
+            team_id: Team ID (enables cross-user visibility for shared scope)
+            scope: Optional scope filter ("personal", "shared", or None for both)
             limit: Maximum results
             offset: Number of rows to skip (for pagination)
             category: Optional category filter
@@ -779,45 +784,46 @@ class DocumentStore:
             List of document dicts
         """
         pool = await self._get_pool()
-        user_uuid = UUID(user_id)
 
-        conditions = ["user_id = $1", "deleted_at IS NULL"]
-        params: list[Any] = [user_uuid]
-        idx = 2
-
-        if scope:
-            conditions.append(f"scope = ${idx}")
-            params.append(scope)
-            idx += 1
+        fb = FilterBuilder(start_idx=1)
+        fb.add("deleted_at IS NULL")
+        fb.add_ownership_filter(
+            user_id, team_id, scope or "both",
+        )
         if category:
-            conditions.append(f"category = ${idx}")
-            params.append(category)
-            idx += 1
+            fb.add_param("category = ${}", category)
 
-        where = " AND ".join(conditions)
+        limit_idx = fb.next_idx
+        offset_idx = limit_idx + 1
+        fb._values.extend([limit, offset])
+
         query = f"""
             SELECT {DOCUMENT_COLUMNS} FROM memory_documents
-            WHERE {where}
+            WHERE {fb.build()}
             ORDER BY created_at DESC
-            LIMIT ${idx} OFFSET ${idx + 1}
+            LIMIT ${limit_idx} OFFSET ${offset_idx}
         """
-        params.extend([limit, offset])
 
         async with pool.acquire() as conn:
-            rows = await conn.fetch(query, *params)
+            rows = await conn.fetch(query, *fb.values)
 
         return [self._doc_row_to_dict(row) for row in rows]
 
     async def count_documents(
         self,
         user_id: str,
+        team_id: str | None = None,
         scope: str | None = None,
         category: str | None = None,
     ) -> int:
         """Count documents for a user with optional filters.
 
+        For shared/both scopes with a team_id, uses OR logic so users can see
+        their own docs plus shared docs from their team.
+
         Args:
             user_id: User ID
+            team_id: Team ID (enables cross-user visibility for shared scope)
             scope: Optional scope filter
             category: Optional category filter
 
@@ -825,64 +831,58 @@ class DocumentStore:
             Document count matching the filters
         """
         pool = await self._get_pool()
-        user_uuid = UUID(user_id)
 
-        conditions = ["user_id = $1", "deleted_at IS NULL"]
-        params: list[Any] = [user_uuid]
-        idx = 2
-
-        if scope:
-            conditions.append(f"scope = ${idx}")
-            params.append(scope)
-            idx += 1
+        fb = FilterBuilder(start_idx=1)
+        fb.add("deleted_at IS NULL")
+        fb.add_ownership_filter(
+            user_id, team_id, scope or "both",
+        )
         if category:
-            conditions.append(f"category = ${idx}")
-            params.append(category)
-            idx += 1
+            fb.add_param("category = ${}", category)
 
-        where = " AND ".join(conditions)
-        query = f"SELECT COUNT(*) FROM memory_documents WHERE {where}"
+        query = f"SELECT COUNT(*) FROM memory_documents WHERE {fb.build()}"
 
         async with pool.acquire() as conn:
-            result = await conn.fetchval(query, *params)
+            result = await conn.fetchval(query, *fb.values)
 
         return result or 0
 
     async def get_document_category_counts(
         self,
         user_id: str,
+        team_id: str | None = None,
         scope: str | None = None,
     ) -> dict[str, int]:
         """Get document counts grouped by category.
 
+        For shared/both scopes with a team_id, uses OR logic so users can see
+        their own docs plus shared docs from their team.
+
         Args:
             user_id: User ID
+            team_id: Team ID (enables cross-user visibility for shared scope)
             scope: Optional scope filter
 
         Returns:
             Dict mapping category name to document count
         """
         pool = await self._get_pool()
-        user_uuid = UUID(user_id)
 
-        if scope:
-            query = """
-                SELECT category, COUNT(*) as count
-                FROM memory_documents
-                WHERE user_id = $1 AND scope = $2 AND deleted_at IS NULL
-                GROUP BY category
-            """
-            async with pool.acquire() as conn:
-                rows = await conn.fetch(query, user_uuid, scope)
-        else:
-            query = """
-                SELECT category, COUNT(*) as count
-                FROM memory_documents
-                WHERE user_id = $1 AND deleted_at IS NULL
-                GROUP BY category
-            """
-            async with pool.acquire() as conn:
-                rows = await conn.fetch(query, user_uuid)
+        fb = FilterBuilder(start_idx=1)
+        fb.add("deleted_at IS NULL")
+        fb.add_ownership_filter(
+            user_id, team_id, scope or "both",
+        )
+
+        query = f"""
+            SELECT category, COUNT(*) as count
+            FROM memory_documents
+            WHERE {fb.build()}
+            GROUP BY category
+        """
+
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(query, *fb.values)
 
         return {row["category"]: row["count"] for row in rows}
 
@@ -909,12 +909,7 @@ class DocumentStore:
 
         fb = FilterBuilder(start_idx=3)
         fb.add("d.deleted_at IS NULL")
-        if user_id:
-            fb.add_param("d.user_id = ${}", UUID(user_id))
-        if team_id and scope in ("shared", "both"):
-            fb.add_param("d.team_id = ${}", UUID(team_id))
-        if scope != "both":
-            fb.add_param("d.scope = ${}", scope)
+        fb.add_ownership_filter(user_id, team_id, scope, col_prefix="d.")
         if category:
             fb.add_param("d.category = ${}", category)
         if source_ref:
@@ -956,12 +951,7 @@ class DocumentStore:
 
         fb = FilterBuilder(start_idx=4)
         fb.add("d.deleted_at IS NULL")
-        if user_id:
-            fb.add_param("d.user_id = ${}", UUID(user_id))
-        if team_id and scope in ("shared", "both"):
-            fb.add_param("d.team_id = ${}", UUID(team_id))
-        if scope != "both":
-            fb.add_param("d.scope = ${}", scope)
+        fb.add_ownership_filter(user_id, team_id, scope, col_prefix="d.")
         if category:
             fb.add_param("d.category = ${}", category)
         if source_ref:
@@ -1041,12 +1031,7 @@ class DocumentStore:
 
         fb = FilterBuilder(start_idx=3)
         fb.add("d.deleted_at IS NULL")
-        if user_id:
-            fb.add_param("d.user_id = ${}", UUID(user_id))
-        if team_id and scope in ("shared", "both"):
-            fb.add_param("d.team_id = ${}", UUID(team_id))
-        if scope != "both":
-            fb.add_param("d.scope = ${}", scope)
+        fb.add_ownership_filter(user_id, team_id, scope, col_prefix="d.")
         if category:
             fb.add_param("d.category = ${}", category)
 

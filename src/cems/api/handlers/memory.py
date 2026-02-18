@@ -985,8 +985,10 @@ async def api_memory_list(request: Request):
             })
 
         # Browse mode — paginated list
+        team_id = memory.config.team_id
         docs = await doc_store.get_all_documents(
             user_id=user_id,
+            team_id=team_id,
             scope=scope,
             limit=limit,
             offset=offset,
@@ -994,6 +996,7 @@ async def api_memory_list(request: Request):
         )
         total = await doc_store.count_documents(
             user_id=user_id,
+            team_id=team_id,
             scope=scope,
             category=category,
         )

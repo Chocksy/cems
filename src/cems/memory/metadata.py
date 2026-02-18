@@ -43,10 +43,12 @@ class MetadataMixin:
         await self._ensure_initialized_async()
 
         user_id = self.config.user_id
+        team_id = self.config.team_id if scope in ("shared", "both") else None
         doc_store = await self._ensure_document_store()
 
         return await doc_store.get_document_category_counts(
             user_id=user_id,
+            team_id=team_id,
             scope=scope if scope != "both" else None,
         )
 
@@ -100,8 +102,9 @@ class MetadataMixin:
         """
         async def _get():
             doc_store = await self._ensure_document_store()
+            team_id = self.config.team_id if scope in ("shared", None) else None
             return await doc_store.get_document_category_counts(
-                self.config.user_id, scope
+                self.config.user_id, team_id=team_id, scope=scope
             )
 
         return _run_async(_get())

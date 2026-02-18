@@ -122,6 +122,73 @@ class FilterBuilder:
 
         return self
 
+    def add_ownership_filter(
+        self,
+        user_id: str | None,
+        team_id: str | None,
+        scope: str | Literal["both"],
+        col_prefix: str = "",
+    ) -> "FilterBuilder":
+        """Add ownership filter with OR logic for shared visibility.
+
+        Produces correct visibility rules:
+        - scope="personal": user_id = X AND scope = 'personal'
+        - scope="shared": (user_id = X OR team_id = Y) AND scope = 'shared'
+        - scope="both": (user_id = X OR (team_id = Y AND scope = 'shared'))
+
+        For shared/both scopes, a user can see docs they own OR docs
+        belonging to their team.
+
+        Args:
+            user_id: User ID
+            team_id: Team ID (required for shared/both to enable cross-user visibility)
+            scope: Memory scope filter
+            col_prefix: Column prefix (e.g., "d." for joined queries)
+
+        Returns:
+            Self for chaining
+        """
+        p = col_prefix
+
+        if scope == "personal" or not team_id:
+            # Personal scope or no team: just filter by user_id
+            if user_id:
+                self.add_param(f"{p}user_id = ${{}}", UUID(user_id))
+            if scope != "both":
+                self.add_param(f"{p}scope = ${{}}", scope)
+        elif scope == "shared":
+            # Shared: user sees own docs OR team docs, all with scope='shared'
+            if user_id:
+                uid_idx = self._param_idx
+                self._values.append(UUID(user_id))
+                self._param_idx += 1
+                tid_idx = self._param_idx
+                self._values.append(UUID(team_id))
+                self._param_idx += 1
+                self._conditions.append(
+                    f"({p}user_id = ${uid_idx} OR {p}team_id = ${tid_idx})"
+                )
+            else:
+                self.add_param(f"{p}team_id = ${{}}", UUID(team_id))
+            self.add_param(f"{p}scope = ${{}}", "shared")
+        elif scope == "both":
+            # Both: user sees all own docs OR shared team docs
+            if user_id:
+                uid_idx = self._param_idx
+                self._values.append(UUID(user_id))
+                self._param_idx += 1
+                tid_idx = self._param_idx
+                self._values.append(UUID(team_id))
+                self._param_idx += 1
+                self._conditions.append(
+                    f"({p}user_id = ${uid_idx} OR "
+                    f"({p}team_id = ${tid_idx} AND {p}scope = 'shared'))"
+                )
+            else:
+                self.add_param(f"{p}team_id = ${{}}", UUID(team_id))
+
+        return self
+
     def build(self, default: str = "TRUE") -> str:
         """Build the WHERE clause string.
 
