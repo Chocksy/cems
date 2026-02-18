@@ -17,7 +17,7 @@ class SessionInfo:
     """Metadata about a discovered session, tool-agnostic."""
     path: Path
     session_id: str
-    tool: str                      # "claude" | "codex" | "cursor"
+    tool: str                      # "claude" | "codex" | "cursor" | "goose"
     file_size: int = 0
     modified_at: float = 0.0
     # Enriched fields (populated by adapter.enrich_metadata)
@@ -32,7 +32,7 @@ class SessionInfo:
 class SessionAdapter(Protocol):
     """Interface each tool adapter implements."""
 
-    tool_name: str  # "claude", "codex", "cursor"
+    tool_name: str  # "claude" | "codex" | "cursor" | "goose"
 
     def discover_sessions(self, max_age_hours: int = 2) -> list[SessionInfo]:
         """Find active sessions for this tool.

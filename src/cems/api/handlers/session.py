@@ -63,10 +63,10 @@ async def api_session_summarize(request: Request):
                 f"(session: {session_id})"
             )
 
-        # Epoch-aware session tag: session:{id[:8]} for epoch 0, session:{id[:8]}:e{N} for N>0
-        tag = body.get("session_tag") or f"session:{session_id[:8]}"
+        # Epoch-aware session tag: session:{id[:12]} for epoch 0, session:{id[:12]}:e{N} for N>0
+        tag = body.get("session_tag") or f"session:{session_id[:12]}"
         if epoch > 0 and ":e" not in tag:
-            tag = f"session:{session_id[:8]}:e{epoch}"
+            tag = f"session:{session_id[:12]}:e{epoch}"
 
         logger.info(
             f"session_summarize called: session_id={session_id}, "
@@ -105,9 +105,10 @@ async def api_session_summarize(request: Request):
         doc_store = await memory._ensure_document_store()
         user_id = memory.config.user_id
 
-        # For append mode, we need the existing content to merge before chunking.
-        # Read it OUTSIDE the atomic upsert to avoid holding the row lock during
-        # the slow LLM embedding call.
+        # Pre-merge: read existing content OUTSIDE the DB lock (the slow
+        # embedding call happens between read and upsert).  We pass the merged
+        # blob with mode="replace" so upsert_document_by_tag overwrites rather
+        # than appending again (which previously caused exponential doubling).
         upsert_content = summary["content"]
         upsert_mode = "replace"
 
@@ -120,9 +121,24 @@ async def api_session_summarize(request: Request):
                 existing_content = existing.get("content", "")
                 if existing_content:
                     upsert_content = f"{existing_content}\n\n---\n\n{summary['content']}"
-                upsert_mode = "append"
+                upsert_mode = "replace"  # handler pre-merges; upsert just stores
         elif mode == "finalize":
             upsert_mode = "finalize"
+
+        # Safety cap: prevent stored summaries from growing unboundedly.
+        # 20 incremental summaries × ~2000 chars each = ~40KB; cap at 100KB.
+        MAX_STORED_SUMMARY_CHARS = 100_000
+        if len(upsert_content) > MAX_STORED_SUMMARY_CHARS:
+            # Keep only the tail (most recent summaries)
+            upsert_content = upsert_content[-MAX_STORED_SUMMARY_CHARS:]
+            # Clean up: don't start mid-paragraph
+            first_sep = upsert_content.find("\n\n---\n\n")
+            if first_sep > 0:
+                upsert_content = upsert_content[first_sep + 7:]
+            logger.warning(
+                f"Stored summary capped to ~{MAX_STORED_SUMMARY_CHARS} chars "
+                f"(session: {session_id})"
+            )
 
         # Chunk and embed the final content (slow, done outside the DB lock)
         from cems.chunking import chunk_document

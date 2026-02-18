@@ -174,6 +174,8 @@ def handle_signal(
     # Finalize current epoch if there's content to finalize
     if state.observation_count > 0:
         adapter.enrich_metadata(session)
+        # Thread watermark for SQLite-based adapters (e.g., Goose)
+        session.extra.setdefault("last_observed_message_id", state.last_observed_message_id)
         content = adapter.extract_text(session, state.last_observed_bytes)
         project_context = _build_project_context(session)
 
@@ -193,6 +195,9 @@ def handle_signal(
         # Update bytes pointer if we read new content
         if content:
             state.last_observed_bytes = session.file_size
+            # Update watermark for SQLite-based adapters
+            if "max_message_id" in session.extra:
+                state.last_observed_message_id = session.extra["max_message_id"]
 
     if sig.type == "compact":
         state.epoch += 1
@@ -265,6 +270,9 @@ def process_session_growth(
     # Enrich session with project metadata
     adapter.enrich_metadata(session)
 
+    # Thread watermark for SQLite-based adapters (e.g., Goose)
+    session.extra.setdefault("last_observed_message_id", state.last_observed_message_id)
+
     # Phase 2: Extract text and gate on extracted length
     content = adapter.extract_text(session, state.last_observed_bytes)
     if not content or len(content) < MIN_EXTRACTED_CHARS:
@@ -289,6 +297,9 @@ def process_session_growth(
         state.project_id = session.project_id
         state.source_ref = session.source_ref
         state.last_observed_bytes = session.file_size
+        # Update watermark for SQLite-based adapters
+        if "max_message_id" in session.extra:
+            state.last_observed_message_id = session.extra["max_message_id"]
         state.last_observed_at = time.time()
         state.observation_count += 1
         save_state(state)

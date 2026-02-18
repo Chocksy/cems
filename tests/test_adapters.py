@@ -342,7 +342,7 @@ class TestEpochTags:
         from cems.observer.state import session_tag
 
         tag = session_tag("abcdefgh-1234-5678-9abc-def012345678", epoch=0)
-        assert tag == "session:abcdefgh"
+        assert tag == "session:abcdefgh-123"
         assert ":e" not in tag
 
     def test_epoch_n_has_suffix(self):
@@ -350,17 +350,17 @@ class TestEpochTags:
         from cems.observer.state import session_tag
 
         tag = session_tag("abcdefgh-1234-5678-9abc-def012345678", epoch=1)
-        assert tag == "session:abcdefgh:e1"
+        assert tag == "session:abcdefgh-123:e1"
 
         tag = session_tag("abcdefgh-1234-5678-9abc-def012345678", epoch=5)
-        assert tag == "session:abcdefgh:e5"
+        assert tag == "session:abcdefgh-123:e5"
 
     def test_epoch_default_is_0(self):
         """Default epoch should be 0."""
         from cems.observer.state import session_tag
 
         tag = session_tag("abcdefgh-1234")
-        assert tag == "session:abcdefgh"
+        assert tag == "session:abcdefgh-123"
 
 
 class TestStaleness:

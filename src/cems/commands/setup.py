@@ -1,12 +1,13 @@
 """Setup command for CEMS CLI.
 
-Installs hooks, skills, and credentials for Claude Code and/or Cursor.
+Installs hooks, skills, and credentials for Claude Code, Cursor, and/or Goose.
 All files are bundled inside the cems package — no clone needed.
 
 Usage:
     cems setup              # Interactive (prompts for IDE + credentials)
     cems setup --claude     # Claude Code only, no prompts for IDE choice
     cems setup --cursor     # Cursor only
+    cems setup --goose      # Goose only
     cems setup --claude --api-url URL --api-key KEY   # Non-interactive
 """
 
@@ -290,6 +291,66 @@ def _merge_settings(claude_dir: Path, template_path: Path) -> None:
     console.print(f"  Settings merged into {settings_file}")
 
 
+def _install_goose_config(api_url: str) -> None:
+    """Install CEMS extension config for Goose."""
+    goose_config_dir = Path.home() / ".config" / "goose"
+    goose_config_file = goose_config_dir / "config.yaml"
+
+    # Read existing config or start fresh
+    existing_content = ""
+    if goose_config_file.exists():
+        existing_content = goose_config_file.read_text()
+
+    # Check if CEMS extension is already configured
+    if "cems-mcp" in existing_content or "CEMS Memory" in existing_content:
+        console.print("  CEMS extension already configured in Goose config")
+        return
+
+    # Build the extension config block
+    cems_block = f"""\
+  cems:
+    name: CEMS Memory
+    description: Long-term memory system for search, store, and manage memories
+    cmd: cems-mcp
+    args: []
+    enabled: true
+    type: stdio
+    timeout: 300
+    envs:
+      CEMS_API_URL: "{api_url}"
+"""
+
+    goose_config_dir.mkdir(parents=True, exist_ok=True)
+
+    if "extensions:" in existing_content:
+        # Append CEMS config under existing extensions section
+        lines = existing_content.split("\n")
+        new_lines = []
+        inserted = False
+        for line in lines:
+            new_lines.append(line)
+            if line.strip() == "extensions:" and not inserted:
+                new_lines.append(cems_block.rstrip())
+                inserted = True
+
+        if not inserted:
+            # extensions: wasn't on its own line, just append
+            new_lines.append(cems_block)
+
+        goose_config_file.write_text("\n".join(new_lines))
+    else:
+        # No extensions section — append the full block
+        extension_block = f"""
+# CEMS Memory extension — added by cems setup
+extensions:
+{cems_block}"""
+        if existing_content and not existing_content.endswith("\n"):
+            existing_content += "\n"
+        goose_config_file.write_text(existing_content + extension_block)
+
+    console.print(f"  Goose config updated: {goose_config_file}")
+
+
 def _install_cursor_hooks(data_path: Path) -> None:
     """Install Cursor hooks."""
     cursor_dir = Path.home() / ".cursor"
@@ -320,12 +381,13 @@ def _install_cursor_hooks(data_path: Path) -> None:
 @click.command()
 @click.option("--claude", "install_claude", is_flag=True, help="Install Claude Code hooks only")
 @click.option("--cursor", "install_cursor", is_flag=True, help="Install Cursor hooks only")
+@click.option("--goose", "install_goose", is_flag=True, help="Install Goose extension config only")
 @click.option("--api-url", help="CEMS server URL (non-interactive)")
 @click.option("--api-key", help="CEMS API key (non-interactive)")
-def setup(install_claude: bool, install_cursor: bool, api_url: str | None, api_key: str | None) -> None:
+def setup(install_claude: bool, install_cursor: bool, install_goose: bool, api_url: str | None, api_key: str | None) -> None:
     """Set up CEMS hooks and credentials for your IDE.
 
-    Installs hooks, skills, and settings for Claude Code and/or Cursor.
+    Installs hooks, skills, and settings for Claude Code, Cursor, and/or Goose.
     Prompts for API credentials if not already configured.
 
     \b
@@ -333,6 +395,7 @@ def setup(install_claude: bool, install_cursor: bool, api_url: str | None, api_k
         cems setup              # Interactive
         cems setup --claude     # Claude Code only
         cems setup --cursor     # Cursor only
+        cems setup --goose      # Goose only
         cems setup --claude --api-url URL --api-key KEY  # Non-interactive
     """
     console.print()
@@ -342,20 +405,22 @@ def setup(install_claude: bool, install_cursor: bool, api_url: str | None, api_k
     data_path = _get_data_path()
 
     # Determine what to install
-    if not install_claude and not install_cursor:
+    if not install_claude and not install_cursor and not install_goose:
         if _is_interactive():
             # Interactive mode — ask
             console.print("Which IDE(s) to configure?")
             console.print("  1) Claude Code")
             console.print("  2) Cursor")
-            console.print("  3) Both")
+            console.print("  3) Goose")
+            console.print("  4) All")
             console.print()
-            choice = click.prompt("Choose", type=click.IntRange(1, 3), default=1)
-            install_claude = choice in (1, 3)
-            install_cursor = choice in (2, 3)
+            choice = click.prompt("Choose", type=click.IntRange(1, 4), default=1)
+            install_claude = choice in (1, 4)
+            install_cursor = choice in (2, 4)
+            install_goose = choice in (3, 4)
         else:
             # Non-interactive — default to Claude Code
-            console.print("[yellow]Non-interactive mode: installing Claude Code hooks (use --cursor for Cursor)[/yellow]")
+            console.print("[yellow]Non-interactive mode: installing Claude Code hooks (use --cursor/--goose for others)[/yellow]")
             install_claude = True
 
     # Credentials
@@ -379,6 +444,11 @@ def setup(install_claude: bool, install_cursor: bool, api_url: str | None, api_k
         _install_cursor_hooks(data_path)
         console.print()
 
+    if install_goose:
+        console.print("[bold blue]Goose[/bold blue]")
+        _install_goose_config(resolved_url)
+        console.print()
+
     # Summary
     console.print("[bold green]Setup complete![/bold green]")
     console.print()
@@ -393,6 +463,8 @@ def setup(install_claude: bool, install_cursor: bool, api_url: str | None, api_k
         table.add_row("MCP server", str(Path.home() / ".claude.json"))
     if install_cursor:
         table.add_row("Cursor hooks", str(Path.home() / ".cursor" / "hooks"))
+    if install_goose:
+        table.add_row("Goose config", str(Path.home() / ".config" / "goose" / "config.yaml"))
     console.print(table)
 
     console.print()

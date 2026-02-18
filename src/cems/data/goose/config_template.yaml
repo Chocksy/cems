@@ -1,0 +1,12 @@
+# CEMS Memory extension for Goose
+# Added by: cems setup --goose
+cems:
+  name: CEMS Memory
+  description: Long-term memory system for search, store, and manage memories
+  cmd: cems-mcp
+  args: []
+  enabled: true
+  type: stdio
+  timeout: 300
+  envs:
+    CEMS_API_URL: "{api_url}"

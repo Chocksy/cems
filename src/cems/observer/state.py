@@ -31,13 +31,14 @@ class ObservationState:
     # Staleness detection: tracks when the file last grew
     last_growth_seen_at: float = 0.0
     is_done: bool = False
+    last_observed_message_id: int = 0  # SQLite adapters: max message ID seen
 
 
 def session_tag(session_id: str, epoch: int = 0) -> str:
     """Build the session tag used to identify documents per epoch.
 
-    Epoch 0 uses backwards-compatible format: session:{id[:8]}
-    Epoch N>0 appends epoch suffix: session:{id[:8]}:e{N}
+    Epoch 0 uses backwards-compatible format: session:{id[:12]}
+    Epoch N>0 appends epoch suffix: session:{id[:12]}:e{N}
 
     Args:
         session_id: Session UUID.
@@ -46,7 +47,7 @@ def session_tag(session_id: str, epoch: int = 0) -> str:
     Returns:
         Session tag string.
     """
-    tag = f"session:{session_id[:8]}"
+    tag = f"session:{session_id[:12]}"
     if epoch > 0:
         tag += f":e{epoch}"
     return tag

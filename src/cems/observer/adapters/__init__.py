@@ -8,6 +8,7 @@ from cems.observer.adapters.base import SessionAdapter, SessionInfo
 from cems.observer.adapters.claude import ClaudeAdapter
 from cems.observer.adapters.codex import CodexAdapter
 from cems.observer.adapters.cursor import CursorAdapter
+from cems.observer.adapters.goose import GooseAdapter
 
 __all__ = [
     "SessionAdapter",
@@ -15,10 +16,11 @@ __all__ = [
     "ClaudeAdapter",
     "CodexAdapter",
     "CursorAdapter",
+    "GooseAdapter",
     "get_adapters",
 ]
 
 
 def get_adapters() -> list[SessionAdapter]:
     """Return all available adapters."""
-    return [ClaudeAdapter(), CodexAdapter(), CursorAdapter()]
+    return [ClaudeAdapter(), CodexAdapter(), CursorAdapter(), GooseAdapter()]

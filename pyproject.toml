@@ -54,6 +54,7 @@ dev = [
 cems = "cems.cli:main"
 cems-server = "cems.server:run_server"
 cems-observer = "cems.observer.__main__:main"
+cems-mcp = "cems.mcp_stdio:main"
 
 [build-system]
 requires = ["hatchling"]

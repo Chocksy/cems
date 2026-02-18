@@ -9,6 +9,11 @@
 #   CEMS_API_KEY=your-key CEMS_API_URL=https://cems.example.com \
 #     curl -sSf https://raw.githubusercontent.com/chocksy/cems/main/remote-install.sh | bash
 #
+# Environment variables:
+#   CEMS_API_KEY   — Your CEMS API key (required for non-interactive)
+#   CEMS_API_URL   — CEMS server URL (default: https://cems.chocksy.com)
+#   CEMS_TOOL      — Which tool to configure: claude, cursor, goose, all (default: claude)
+#
 # What it does:
 #   1. Installs uv (if missing)
 #   2. Installs CEMS CLI + observer daemon via uv tool
@@ -84,7 +89,18 @@ fi
 echo
 
 # Build setup flags from environment variables
-SETUP_FLAGS="--claude"
+TOOL="${CEMS_TOOL:-claude}"
+case "$TOOL" in
+    claude)  SETUP_FLAGS="--claude" ;;
+    cursor)  SETUP_FLAGS="--cursor" ;;
+    goose)   SETUP_FLAGS="--goose" ;;
+    all)     SETUP_FLAGS="--claude --cursor --goose" ;;
+    *)
+        echo -e "${RED}Unknown CEMS_TOOL value: $TOOL (expected: claude, cursor, goose, all)${NC}"
+        exit 1
+        ;;
+esac
+
 if [ -n "$CEMS_API_KEY" ]; then
     SETUP_FLAGS="$SETUP_FLAGS --api-key $CEMS_API_KEY"
 fi
