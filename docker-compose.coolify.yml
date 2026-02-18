@@ -17,10 +17,10 @@ services:
       CEMS_SERVER_PORT: 8765
       CEMS_MCP_PUBLIC_URL: https://mcp-cems.chocksy.com/mcp
     # Memory limit prevents OOM cascade that kills other services on the host.
-    # Idle: ~180 MB RSS, ~720 MB VmPeak. Search pipeline (9-stage with LLM calls,
-    # embeddings, pgvector queries over 13k chunks) needs ~1.2 GB peak.
-    mem_limit: 1536m
-    memswap_limit: 1536m
+    # Idle: ~115 MB RSS. Search pipeline peaks at ~1.5 GB RSS (9-stage retrieval
+    # with 5 queries * candidates + LLM calls). 2 GB gives safe headroom.
+    mem_limit: 2048m
+    memswap_limit: 2048m
     expose:
       - "8765"
     labels:
