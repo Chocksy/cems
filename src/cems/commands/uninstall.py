@@ -91,6 +91,20 @@ def _remove_claude_hooks() -> int:
         except (json.JSONDecodeError, OSError):
             pass
 
+    # Clean MCP entry from ~/.claude.json
+    claude_json = Path.home() / ".claude.json"
+    if claude_json.exists():
+        try:
+            config = json.loads(claude_json.read_text())
+            if "cems" in config.get("mcpServers", {}):
+                del config["mcpServers"]["cems"]
+                if not config["mcpServers"]:
+                    del config["mcpServers"]
+                claude_json.write_text(json.dumps(config, indent=2) + "\n")
+                console.print("  Cleaned CEMS MCP entry from ~/.claude.json")
+        except (json.JSONDecodeError, OSError):
+            pass
+
     return removed
 
 
