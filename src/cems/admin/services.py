@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from cems.admin.auth import generate_api_key, get_key_prefix, verify_api_key
 from cems.db.models import AuditLog, Team, TeamMember, User
@@ -449,10 +449,12 @@ class TeamService:
         return member
 
     def list_members(self, team_id: uuid.UUID) -> list[TeamMember]:
-        """List all members of a team."""
+        """List all members of a team (with user info eagerly loaded)."""
         return list(
             self.session.execute(
-                select(TeamMember).where(TeamMember.team_id == team_id)
+                select(TeamMember)
+                .where(TeamMember.team_id == team_id)
+                .options(joinedload(TeamMember.user))
             )
             .scalars()
             .all()

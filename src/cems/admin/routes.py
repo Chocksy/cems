@@ -410,6 +410,7 @@ async def get_team(request: Request) -> JSONResponse:
                 "members": [
                     {
                         "user_id": str(m.user_id),
+                        "username": m.user.username if m.user else "?",
                         "role": m.role,
                         "joined_at": m.joined_at.isoformat(),
                     }
@@ -426,18 +427,39 @@ async def delete_team(request: Request) -> JSONResponse:
     if err := require_database(request):
         return err
 
-    team_id_str = request.path_params["team_id"]
-    try:
-        team_id = uuid.UUID(team_id_str)
-    except ValueError:
-        return JSONResponse({"error": "Invalid team ID"}, status_code=400)
+    team_id_or_name = request.path_params["team_id"]
 
     db = get_database()
     with db.session() as session:
         service = TeamService(session)
+
+        team_id = _resolve_team_id(service, team_id_or_name)
+        if not team_id:
+            return JSONResponse({"error": f"Team not found: {team_id_or_name}"}, status_code=404)
+
         if service.delete_team(team_id):
             return JSONResponse({"message": "Team deleted"})
         return JSONResponse({"error": "Team not found"}, status_code=404)
+
+
+def _resolve_team_id(service: TeamService, team_id_or_name: str) -> uuid.UUID | None:
+    """Resolve a team name or UUID string to a UUID."""
+    try:
+        return uuid.UUID(team_id_or_name)
+    except ValueError:
+        team = service.get_team_by_name(team_id_or_name)
+        return team.id if team else None
+
+
+def _resolve_user_id(
+    user_service: "UserService", user_id_or_name: str
+) -> uuid.UUID | None:
+    """Resolve a username or UUID string to a UUID."""
+    try:
+        return uuid.UUID(user_id_or_name)
+    except ValueError:
+        user = user_service.get_user_by_username(user_id_or_name)
+        return user.id if user else None
 
 
 async def add_team_member(request: Request) -> JSONResponse:
@@ -447,33 +469,34 @@ async def add_team_member(request: Request) -> JSONResponse:
     if err := require_database(request):
         return err
 
-    team_id_str = request.path_params["team_id"]
-    try:
-        team_id = uuid.UUID(team_id_str)
-    except ValueError:
-        return JSONResponse({"error": "Invalid team ID"}, status_code=400)
+    team_id_or_name = request.path_params["team_id"]
 
     try:
         data = await request.json()
     except Exception:
         return JSONResponse({"error": "Invalid JSON body"}, status_code=400)
 
-    user_id_str = data.get("user_id")
-    if not user_id_str:
+    user_id_or_name = data.get("user_id")
+    if not user_id_or_name:
         return JSONResponse({"error": "user_id is required"}, status_code=400)
-
-    try:
-        user_id = uuid.UUID(user_id_str)
-    except ValueError:
-        return JSONResponse({"error": "Invalid user_id"}, status_code=400)
 
     role = data.get("role", "member")
 
     db = get_database()
     with db.session() as session:
-        service = TeamService(session)
+        team_service = TeamService(session)
+        user_service = UserService(session)
+
+        team_id = _resolve_team_id(team_service, team_id_or_name)
+        if not team_id:
+            return JSONResponse({"error": f"Team not found: {team_id_or_name}"}, status_code=404)
+
+        user_id = _resolve_user_id(user_service, user_id_or_name)
+        if not user_id:
+            return JSONResponse({"error": f"User not found: {user_id_or_name}"}, status_code=404)
+
         try:
-            member = service.add_member(team_id=team_id, user_id=user_id, role=role)
+            member = team_service.add_member(team_id=team_id, user_id=user_id, role=role)
             if member:
                 return JSONResponse(
                     {
@@ -498,19 +521,23 @@ async def remove_team_member(request: Request) -> JSONResponse:
     if err := require_database(request):
         return err
 
-    team_id_str = request.path_params["team_id"]
-    user_id_str = request.path_params["user_id"]
-
-    try:
-        team_id = uuid.UUID(team_id_str)
-        user_id = uuid.UUID(user_id_str)
-    except ValueError:
-        return JSONResponse({"error": "Invalid ID"}, status_code=400)
+    team_id_or_name = request.path_params["team_id"]
+    user_id_or_name = request.path_params["user_id"]
 
     db = get_database()
     with db.session() as session:
-        service = TeamService(session)
-        if service.remove_member(team_id, user_id):
+        team_service = TeamService(session)
+        user_service = UserService(session)
+
+        team_id = _resolve_team_id(team_service, team_id_or_name)
+        if not team_id:
+            return JSONResponse({"error": f"Team not found: {team_id_or_name}"}, status_code=404)
+
+        user_id = _resolve_user_id(user_service, user_id_or_name)
+        if not user_id:
+            return JSONResponse({"error": f"User not found: {user_id_or_name}"}, status_code=404)
+
+        if team_service.remove_member(team_id, user_id):
             return JSONResponse({"message": "Member removed"})
         return JSONResponse({"error": "Member not found"}, status_code=404)
 

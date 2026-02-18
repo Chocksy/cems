@@ -658,25 +658,25 @@ class CEMSAdminClient:
         """
         return self._request("GET", f"/admin/teams/{team_id_or_name}")
 
-    def delete_team(self, team_id: str) -> dict[str, Any]:
+    def delete_team(self, team_id_or_name: str) -> dict[str, Any]:
         """Delete a team.
 
         Args:
-            team_id: Team ID (UUID)
+            team_id_or_name: Team ID (UUID) or name
 
         Returns:
             Deletion confirmation
         """
-        return self._request("DELETE", f"/admin/teams/{team_id}")
+        return self._request("DELETE", f"/admin/teams/{team_id_or_name}")
 
     def add_team_member(
-        self, team_id: str, user_id: str, role: str = "member"
+        self, team_id_or_name: str, user_id_or_name: str, role: str = "member"
     ) -> dict[str, Any]:
         """Add a user to a team.
 
         Args:
-            team_id: Team ID (UUID)
-            user_id: User ID (UUID) to add
+            team_id_or_name: Team ID (UUID) or name
+            user_id_or_name: User ID (UUID) or username
             role: Role ('admin', 'member', 'viewer')
 
         Returns:
@@ -684,18 +684,18 @@ class CEMSAdminClient:
         """
         return self._request(
             "POST",
-            f"/admin/teams/{team_id}/members",
-            json={"user_id": user_id, "role": role},
+            f"/admin/teams/{team_id_or_name}/members",
+            json={"user_id": user_id_or_name, "role": role},
         )
 
-    def remove_team_member(self, team_id: str, user_id: str) -> dict[str, Any]:
+    def remove_team_member(self, team_id_or_name: str, user_id_or_name: str) -> dict[str, Any]:
         """Remove a user from a team.
 
         Args:
-            team_id: Team ID (UUID)
-            user_id: User ID (UUID) to remove
+            team_id_or_name: Team ID (UUID) or name
+            user_id_or_name: User ID (UUID) or username
 
         Returns:
             Removal confirmation
         """
-        return self._request("DELETE", f"/admin/teams/{team_id}/members/{user_id}")
+        return self._request("DELETE", f"/admin/teams/{team_id_or_name}/members/{user_id_or_name}")

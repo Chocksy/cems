@@ -99,13 +99,13 @@ def teams_get(ctx: click.Context, team: str) -> None:
         if members:
             console.print("\n[bold]Members:[/bold]")
             table = Table()
-            table.add_column("User ID", style="dim", max_width=12)
-            table.add_column("Role", style="cyan")
-            table.add_column("Joined", style="white")
+            table.add_column("Username", style="cyan")
+            table.add_column("Role", style="white")
+            table.add_column("Joined", style="dim")
 
             for m in members:
                 table.add_row(
-                    m.get("user_id", "?")[:12],
+                    m.get("username", m.get("user_id", "?")[:12]),
                     m.get("role", "?"),
                     m.get("joined_at", "?")[:10] if m.get("joined_at") else "?",
                 )
@@ -119,16 +119,16 @@ def teams_get(ctx: click.Context, team: str) -> None:
 
 
 @admin_teams.command("delete")
-@click.argument("team_id")
+@click.argument("team")
 @click.option("--yes", "-y", is_flag=True, help="Skip confirmation")
 @click.pass_context
-def teams_delete(ctx: click.Context, team_id: str, yes: bool) -> None:
+def teams_delete(ctx: click.Context, team: str, yes: bool) -> None:
     """Delete a team.
 
-    TEAM_ID must be the UUID.
+    TEAM can be a team name or UUID.
     """
     if not yes:
-        if not click.confirm(f"Delete team {team_id}?"):
+        if not click.confirm(f"Delete team {team}?"):
             console.print("[yellow]Cancelled[/yellow]")
             return
 
@@ -136,7 +136,7 @@ def teams_delete(ctx: click.Context, team_id: str, yes: bool) -> None:
         client = get_admin_client(ctx, ctx.obj.get("admin_key"))
 
         with console.status("Deleting team..."):
-            client.delete_team(team_id)
+            client.delete_team(team)
 
         console.print("[green]Team deleted[/green]")
 
@@ -145,21 +145,24 @@ def teams_delete(ctx: click.Context, team_id: str, yes: bool) -> None:
 
 
 @admin_teams.command("add-member")
-@click.argument("team_id")
-@click.argument("user_id")
+@click.argument("team")
+@click.argument("user")
 @click.option("--role", "-r", default="member", type=click.Choice(["admin", "member", "viewer"]))
 @click.pass_context
-def teams_add_member(ctx: click.Context, team_id: str, user_id: str, role: str) -> None:
+def teams_add_member(ctx: click.Context, team: str, user: str, role: str) -> None:
     """Add a user to a team.
 
+    TEAM can be a team name or UUID.
+    USER can be a username or UUID.
+
     Example:
-        cems admin teams add-member <team-uuid> <user-uuid> --role member
+        cems admin teams add-member tr hubble --role member
     """
     try:
         client = get_admin_client(ctx, ctx.obj.get("admin_key"))
 
         with console.status("Adding member..."):
-            result = client.add_team_member(team_id, user_id, role)
+            result = client.add_team_member(team, user, role)
 
         console.print("[green]Member added successfully![/green]")
         member = result.get("member", {})
@@ -170,14 +173,18 @@ def teams_add_member(ctx: click.Context, team_id: str, user_id: str, role: str) 
 
 
 @admin_teams.command("remove-member")
-@click.argument("team_id")
-@click.argument("user_id")
+@click.argument("team")
+@click.argument("user")
 @click.option("--yes", "-y", is_flag=True, help="Skip confirmation")
 @click.pass_context
-def teams_remove_member(ctx: click.Context, team_id: str, user_id: str, yes: bool) -> None:
-    """Remove a user from a team."""
+def teams_remove_member(ctx: click.Context, team: str, user: str, yes: bool) -> None:
+    """Remove a user from a team.
+
+    TEAM can be a team name or UUID.
+    USER can be a username or UUID.
+    """
     if not yes:
-        if not click.confirm(f"Remove user {user_id} from team {team_id}?"):
+        if not click.confirm(f"Remove user {user} from team {team}?"):
             console.print("[yellow]Cancelled[/yellow]")
             return
 
@@ -185,7 +192,7 @@ def teams_remove_member(ctx: click.Context, team_id: str, user_id: str, yes: boo
         client = get_admin_client(ctx, ctx.obj.get("admin_key"))
 
         with console.status("Removing member..."):
-            client.remove_team_member(team_id, user_id)
+            client.remove_team_member(team, user)
 
         console.print("[green]Member removed[/green]")
 
