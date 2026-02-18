@@ -46,8 +46,7 @@ CHUNK_COLUMNS = """
 CHUNK_WITH_DOC_COLUMNS = f"""
     {CHUNK_COLUMNS},
     d.user_id, d.team_id, d.scope, d.category, d.title, d.source, d.source_ref,
-    d.tags, d.content AS document_content, d.content_hash, d.content_bytes,
-    d.created_at AS document_created_at
+    d.tags, d.created_at AS document_created_at
 """
 
 
