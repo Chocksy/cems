@@ -1,0 +1,75 @@
+---
+description: "Persistent memory integration — search before tasks, store discoveries"
+alwaysApply: true
+---
+
+# CEMS Memory Integration
+
+You have access to a persistent memory system via MCP tools. Use it proactively.
+
+## Before Starting Any Task
+
+**Always call `memory_search` first** with a query relevant to the task at hand.
+This retrieves past decisions, preferences, conventions, and debugging insights.
+
+Examples of when to search:
+- Before coding: "authentication patterns", "database conventions"
+- Before debugging: "similar error patterns", "known issues with X"
+- Before architecture decisions: "past decisions about Y", "tech stack choices"
+- Before code review: "team conventions", "naming patterns"
+
+## When to Store Memories
+
+**Call `memory_add` when you discover something worth remembering:**
+
+- User preferences: "prefers functional components over class components"
+- Project conventions: "all API responses include a `success` boolean"
+- Architecture decisions: "chose PostgreSQL for main database because..."
+- Debugging insights: "test suite needs Docker running for integration tests"
+- Workflow patterns: "deployments go through Coolify on Hetzner server"
+
+### Categories
+
+Use these categories for organization:
+
+| Category | Examples |
+|----------|---------|
+| `preferences` | User style, tool choices, communication preferences |
+| `conventions` | Naming patterns, code style, project rules |
+| `architecture` | Tech stack, system design, infrastructure decisions |
+| `decisions` | Why something was chosen over alternatives |
+| `workflow` | Deployment process, CI/CD, development flow |
+| `general` | Everything else |
+
+### Project Context
+
+When in a git repository, include the project reference for scoped recall:
+
+1. Get the git remote: `git remote get-url origin`
+2. Extract org/repo (e.g., `myorg/webapp`)
+3. Pass as `source_ref: "project:myorg/webapp"`
+
+This ensures memories from this project are boosted when searching from the same project.
+
+## When NOT to Store
+
+- Session-specific context (current task details, temporary state)
+- Information already in the codebase (don't duplicate README content)
+- Build output or error messages being debugged right now
+- Speculative conclusions from a single observation
+
+## Shared Team Memory
+
+Use `scope: "shared"` for knowledge the whole team should access:
+- Team conventions and standards
+- Architecture decisions (ADRs)
+- Deployment processes
+- Codebase patterns
+- Onboarding knowledge
+
+## Search Tips
+
+- Use natural language queries for best results
+- Be specific: "Python backend auth patterns" > "preferences"
+- The system finds semantic matches, not just keywords
+- Use `raw: true` for debugging retrieval issues

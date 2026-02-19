@@ -123,6 +123,45 @@ def _remove_cursor_hooks() -> int:
     return removed
 
 
+def _remove_goose_config() -> bool:
+    """Remove CEMS extension block from ~/.config/goose/config.yaml. Returns True if modified."""
+    goose_config = Path.home() / ".config" / "goose" / "config.yaml"
+    if not goose_config.exists():
+        return False
+
+    try:
+        content = goose_config.read_text()
+        if "cems-mcp" not in content and "CEMS Memory" not in content:
+            return False
+
+        # Remove the CEMS extension block (from "  cems:" to next extension or end of section)
+        lines = content.split("\n")
+        new_lines = []
+        skip = False
+        for line in lines:
+            # Start skipping at "  cems:" under extensions
+            if line.strip().startswith("cems:") and not skip:
+                skip = True
+                continue
+            # Stop skipping at next top-level extension key (2-space indent + word + colon)
+            if skip and line and not line.startswith("    ") and not line.startswith("\t\t"):
+                if line.startswith("  ") and ":" in line and not line.strip().startswith("#"):
+                    skip = False
+                elif not line.startswith("  "):
+                    skip = False
+            if skip:
+                continue
+            new_lines.append(line)
+
+        # Remove the comment line if it exists
+        new_lines = [l for l in new_lines if "CEMS Memory extension" not in l]
+
+        goose_config.write_text("\n".join(new_lines))
+        return True
+    except OSError:
+        return False
+
+
 def _remove_credentials() -> bool:
     """Remove ~/.cems/credentials. Returns True if removed."""
     creds_file = Path.home() / ".cems" / "credentials"
@@ -180,6 +219,12 @@ def uninstall(remove_all: bool, yes: bool) -> None:
         console.print(f"  [red]Removed {cursor_removed} Cursor files[/red]")
     else:
         console.print("  No Cursor hooks found")
+
+    # Goose
+    if _remove_goose_config():
+        console.print("  [red]Removed CEMS extension from Goose config[/red]")
+    else:
+        console.print("  No Goose config found")
 
     # Credentials
     if remove_all:

@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "hooks": {
+    "beforeShellExecution": [
+      {
+        "command": "uv run --script ./hooks/cems_gate_rules.py"
+      }
+    ],
+    "beforeMCPExecution": [
+      {
+        "command": "uv run --script ./hooks/cems_mcp_gate.py"
+      }
+    ],
+    "stop": [
+      {
+        "command": "uv run --script ./hooks/cems_stop.py"
+      }
+    ]
+  }
+}

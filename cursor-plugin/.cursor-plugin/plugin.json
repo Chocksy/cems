@@ -1,0 +1,29 @@
+{
+  "name": "cems",
+  "displayName": "CEMS — Persistent Memory for AI Agents",
+  "version": "1.0.0",
+  "description": "Give your AI agent persistent memory across sessions. CEMS stores preferences, conventions, architecture decisions, and debugging insights — then recalls them when relevant. Includes gate rules for command safety.",
+  "author": {
+    "name": "Chocksy",
+    "email": "razvan@chocksy.com"
+  },
+  "license": "MIT",
+  "category": "developer-tools",
+  "tags": ["memory", "ai-agent", "context"],
+  "keywords": ["cems", "memory", "persistent-memory", "ai-memory", "context", "recall", "preferences"],
+  "logo": "assets/avatar.png",
+  "homepage": "https://github.com/Chocksy/cems",
+  "repository": "https://github.com/Chocksy/cems",
+  "mcpServers": {
+    "cems": {
+      "type": "http",
+      "url": "https://mcp-cems.chocksy.com/mcp",
+      "headers": {
+        "Authorization": "Bearer ${CEMS_API_KEY}"
+      }
+    }
+  },
+  "skills": "./skills/",
+  "rules": "./rules/",
+  "hooks": "./hooks/hooks.json"
+}
