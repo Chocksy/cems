@@ -2,7 +2,7 @@
 # Install CEMS hooks from source tree (for developers).
 #
 # For non-dev users, use: cems setup --claude
-# Or the remote installer: curl -sSf https://getcems.com/install.sh | bash
+# Or the remote installer: curl -fsSL https://getcems.com/install.sh | bash
 
 set -e
 

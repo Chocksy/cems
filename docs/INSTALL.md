@@ -16,35 +16,35 @@ The remote installer handles everything: installs `uv`, installs the CEMS packag
 
 ```bash
 CEMS_API_KEY=your-key \
-  curl -sSf https://getcems.com/install.sh | bash
+  curl -fsSL https://getcems.com/install.sh | bash
 ```
 
 ### Goose
 
 ```bash
 CEMS_TOOL=goose CEMS_API_KEY=your-key \
-  curl -sSf https://getcems.com/install.sh | bash
+  curl -fsSL https://getcems.com/install.sh | bash
 ```
 
 ### Cursor
 
 ```bash
 CEMS_TOOL=cursor CEMS_API_KEY=your-key \
-  curl -sSf https://getcems.com/install.sh | bash
+  curl -fsSL https://getcems.com/install.sh | bash
 ```
 
 ### All Tools
 
 ```bash
 CEMS_TOOL=all CEMS_API_KEY=your-key \
-  curl -sSf https://getcems.com/install.sh | bash
+  curl -fsSL https://getcems.com/install.sh | bash
 ```
 
 Set `CEMS_API_URL` if your server is not at the default URL:
 
 ```bash
 CEMS_TOOL=goose CEMS_API_KEY=your-key CEMS_API_URL=https://cems.example.com \
-  curl -sSf https://getcems.com/install.sh | bash
+  curl -fsSL https://getcems.com/install.sh | bash
 ```
 
 ## Manual Install
