@@ -4,7 +4,7 @@
 # For developers who cloned the repo. Installs in editable mode.
 # For non-dev users, use the remote installer instead:
 #
-#   curl -sSf https://raw.githubusercontent.com/chocksy/cems/main/remote-install.sh | bash
+#   curl -sSf https://getcems.com/install.sh | bash
 #
 set -e
 

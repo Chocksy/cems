@@ -23,8 +23,7 @@ You need two things from your CEMS admin: a **server URL** and an **API key**.
 ### Option A: Interactive install (recommended)
 
 ```bash
-curl -sSf https://raw.githubusercontent.com/chocksy/cems/main/remote-install.sh -o install-cems.sh
-bash install-cems.sh
+curl -sSf https://getcems.com/install.sh | bash
 ```
 
 It will ask for your API URL and key interactively.
@@ -33,7 +32,7 @@ It will ask for your API URL and key interactively.
 
 ```bash
 CEMS_API_KEY=your-key-here CEMS_API_URL=https://cems.example.com \
-  curl -sSf https://raw.githubusercontent.com/chocksy/cems/main/remote-install.sh | bash
+  curl -sSf https://getcems.com/install.sh | bash
 ```
 
 ### Option C: Install from source

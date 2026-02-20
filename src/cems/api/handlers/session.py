@@ -126,8 +126,9 @@ async def api_session_summarize(request: Request):
             upsert_mode = "finalize"
 
         # Safety cap: prevent stored summaries from growing unboundedly.
-        # 20 incremental summaries × ~2000 chars each = ~40KB; cap at 100KB.
-        MAX_STORED_SUMMARY_CHARS = 100_000
+        # Each LLM summary is ~2K chars; 20 incremental appends = ~40K.
+        # Largest healthy session observed: ~14K. Cap at 50K (3× headroom).
+        MAX_STORED_SUMMARY_CHARS = 50_000
         if len(upsert_content) > MAX_STORED_SUMMARY_CHARS:
             # Keep only the tail (most recent summaries)
             upsert_content = upsert_content[-MAX_STORED_SUMMARY_CHARS:]

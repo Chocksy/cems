@@ -2,12 +2,12 @@
 # CEMS — One-command remote installer
 #
 # Usage (interactive — download first):
-#   curl -sSf https://raw.githubusercontent.com/chocksy/cems/main/remote-install.sh -o install-cems.sh
+#   curl -sSf https://getcems.com/install.sh -o install-cems.sh
 #   bash install-cems.sh
 #
 # Usage (non-interactive — pipe with env vars):
 #   CEMS_API_KEY=your-key CEMS_API_URL=https://cems.example.com \
-#     curl -sSf https://raw.githubusercontent.com/chocksy/cems/main/remote-install.sh | bash
+#     curl -sSf https://getcems.com/install.sh | bash
 #
 # Environment variables:
 #   CEMS_API_KEY   — Your CEMS API key (required for non-interactive)
