@@ -761,6 +761,43 @@ async def api_memory_forget(request: Request):
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
+async def api_memory_get(request: Request):
+    """REST API endpoint to retrieve a full document by ID.
+
+    GET /api/memory/get?id=<memory_id>
+
+    Returns the full document content, category, tags, and metadata.
+    Used by LLMs to fetch full context after seeing a snippet in search results.
+    """
+    try:
+        memory_id = request.query_params.get("id")
+        if not memory_id:
+            return JSONResponse({"error": "id query param is required"}, status_code=400)
+
+        memory = get_memory()
+        doc_store = await memory._ensure_document_store()
+        doc = await doc_store.get_document(memory_id)
+
+        if not doc:
+            return JSONResponse({"error": "Document not found"}, status_code=404)
+
+        return JSONResponse({
+            "success": True,
+            "document": {
+                "id": doc["id"],
+                "content": doc.get("content", ""),
+                "category": doc.get("category", "general"),
+                "source_ref": doc.get("source_ref"),
+                "tags": doc.get("tags", []),
+                "created_at": str(doc.get("created_at", "")),
+                "updated_at": str(doc.get("updated_at", "")),
+            },
+        })
+    except Exception as e:
+        logger.error(f"API memory_get error: {e}")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
 async def api_memory_update(request: Request):
     """REST API endpoint to update a memory.
 

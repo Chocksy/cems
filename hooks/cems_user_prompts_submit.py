@@ -165,13 +165,18 @@ def search_cems(query: str, project: str | None = None) -> tuple[str | None, lis
         formatted = []
         memory_ids = []
         score_details = []
+        has_truncated = False
         for i, r in enumerate(results, 1):
             content = r.get("content", r.get("memory", ""))
             category = r.get("category", "general")
             mem_id = r.get("memory_id", r.get("id", ""))
             short_id = mem_id[:8] if mem_id else ""
             score = r.get("score", 0.0)
-            formatted.append(f"{i}. [{category}] (score: {score:.2f}) {content} (id: {short_id})")
+            truncated = r.get("truncated", False)
+            suffix = f" [truncated — full doc: {r['full_length']} chars]" if truncated else ""
+            formatted.append(f"{i}. [{category}] (score: {score:.2f}) {content}{suffix} (id: {short_id})")
+            if truncated:
+                has_truncated = True
             if mem_id:
                 memory_ids.append(mem_id)
             score_details.append({"id": short_id, "score": round(score, 3), "category": category, "content": content})
@@ -181,6 +186,8 @@ def search_cems(query: str, project: str | None = None) -> tuple[str | None, lis
         avg_score = sum(scores) / len(scores) if scores else 0
         top_score = max(scores) if scores else 0
         formatted.append(f"\n--- Retrieval: {len(results)} results, avg score {avg_score:.2f}, top {top_score:.2f} ---")
+        if has_truncated:
+            formatted.append("Tip: For full document content, use the /recall skill with the memory ID.")
 
         return "\n".join(formatted), memory_ids, score_details
 

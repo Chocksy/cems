@@ -13,6 +13,43 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Snippet limit for search results. Keeps context compact — LLMs can
+# fetch the full document via GET /api/memory/get?id=<memory_id>.
+_SNIPPET_CHARS = 500
+
+
+def _make_snippet(content: str) -> tuple[str, bool]:
+    """Return (snippet, was_truncated)."""
+    if len(content) <= _SNIPPET_CHARS:
+        return content, False
+    cut = content[:_SNIPPET_CHARS]
+    for sep in (". ", ".\n", "\n\n", "\n"):
+        pos = cut.rfind(sep)
+        if pos > _SNIPPET_CHARS // 2:
+            return content[: pos + len(sep)].rstrip(), True
+    return cut.rstrip() + "...", True
+
+
+def _serialize_results(selected: list[SearchResult]) -> list[dict[str, Any]]:
+    """Serialize SearchResult list with snippet truncation."""
+    out: list[dict[str, Any]] = []
+    for r in selected:
+        snippet, truncated = _make_snippet(r.content)
+        entry: dict[str, Any] = {
+            "memory_id": r.memory_id,
+            "content": snippet,
+            "score": r.score,
+            "scope": r.scope.value,
+            "category": r.metadata.category if r.metadata else None,
+            "source_ref": r.metadata.source_ref if r.metadata else None,
+            "tags": r.metadata.tags if r.metadata else [],
+        }
+        if truncated:
+            entry["truncated"] = True
+            entry["full_length"] = len(r.content)
+        out.append(entry)
+    return out
+
 
 class RetrievalMixin:
     """Mixin class providing retrieval operations for CEMSMemory."""
@@ -304,18 +341,7 @@ class RetrievalMixin:
             log.info(f"[RETRIEVAL] Final: {filtered_count} candidates -> {len(selected)} selected, {tokens_used} tokens")
 
         return {
-            "results": [
-                {
-                    "memory_id": r.memory_id,
-                    "content": r.content,
-                    "score": r.score,
-                    "scope": r.scope.value,
-                    "category": r.metadata.category if r.metadata else None,
-                    "source_ref": r.metadata.source_ref if r.metadata else None,
-                    "tags": r.metadata.tags if r.metadata else [],
-                }
-                for r in selected
-            ],
+            "results": _serialize_results(selected),
             "tokens_used": tokens_used,
             "formatted_context": format_memory_context(selected),
             "queries_used": queries_to_search,
@@ -650,18 +676,7 @@ class RetrievalMixin:
         log.info(f"[TIMING] PIPELINE TOTAL: {pipeline_ms:.0f}ms | {filtered_count} candidates -> {len(selected)} selected, {tokens_used} tokens")
 
         return {
-            "results": [
-                {
-                    "memory_id": r.memory_id,
-                    "content": r.content,
-                    "score": r.score,
-                    "scope": r.scope.value,
-                    "category": r.metadata.category if r.metadata else None,
-                    "source_ref": r.metadata.source_ref if r.metadata else None,
-                    "tags": r.metadata.tags if r.metadata else [],
-                }
-                for r in selected
-            ],
+            "results": _serialize_results(selected),
             "tokens_used": tokens_used,
             "formatted_context": format_memory_context(selected),
             "queries_used": queries_to_search,

@@ -903,3 +903,61 @@ class TestMMRDiversity:
         # Both should include #1 (top scorer)
         assert any(r.memory_id == "1" for r in selected_high)
         assert any(r.memory_id == "1" for r in selected_low)
+
+
+class TestSnippetTruncation:
+    """Tests for _make_snippet and _serialize_results."""
+
+    def test_short_content_not_truncated(self):
+        from cems.memory.retrieval import _make_snippet
+
+        text = "Short memory about Python testing."
+        snippet, truncated = _make_snippet(text)
+        assert snippet == text
+        assert truncated is False
+
+    def test_long_content_truncated_at_sentence(self):
+        from cems.memory.retrieval import _make_snippet
+
+        # Build content > 500 chars with sentence boundaries
+        text = "First sentence about deployment. " * 20  # ~640 chars
+        snippet, truncated = _make_snippet(text)
+        assert truncated is True
+        assert len(snippet) <= 520  # Roughly at limit
+        assert snippet.endswith("deployment.")  # Ends at sentence
+
+    def test_long_content_truncated_at_newline(self):
+        from cems.memory.retrieval import _make_snippet
+
+        # No sentence boundaries, but has newlines
+        text = "word " * 80 + "\n" + "more " * 40  # ~620 chars
+        snippet, truncated = _make_snippet(text)
+        assert truncated is True
+        assert len(snippet) <= 520
+
+    def test_serialize_results_includes_truncation_fields(self):
+        from cems.memory.retrieval import _serialize_results
+
+        short_result = SearchResult(
+            memory_id="short-1",
+            content="Short content here.",
+            score=0.9,
+            scope=MemoryScope.PERSONAL,
+        )
+        long_result = SearchResult(
+            memory_id="long-1",
+            content="A" * 800,
+            score=0.8,
+            scope=MemoryScope.PERSONAL,
+        )
+        serialized = _serialize_results([short_result, long_result])
+
+        assert len(serialized) == 2
+        # Short result: no truncation fields
+        assert "truncated" not in serialized[0]
+        assert "full_length" not in serialized[0]
+        assert serialized[0]["content"] == "Short content here."
+        # Long result: truncated
+        assert serialized[1]["truncated"] is True
+        assert serialized[1]["full_length"] == 800
+        assert len(serialized[1]["content"]) < 800
