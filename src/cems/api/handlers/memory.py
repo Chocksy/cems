@@ -71,7 +71,12 @@ async def api_memory_add(request: Request):
         if not content:
             return JSONResponse({"error": "content is required"}, status_code=400)
 
-        category = body.get("category", "general")
+        from cems.llm import normalize_category
+
+        raw_category = body.get("category", "general")
+        # Functional categories bypass normalization (exact format required)
+        functional = {"gate-rules", "guidelines", "preferences", "category-summary"}
+        category = raw_category if raw_category in functional else normalize_category(raw_category)
         scope = body.get("scope", "personal")
         tags = body.get("tags", [])  # Optional: tags for organization
         # Gate rules must preserve exact pattern format, so disable LLM inference

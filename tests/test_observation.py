@@ -86,14 +86,14 @@ class TestObservationExtraction:
         assert result[0]["priority"] == "medium"
 
     def test_parse_observations_normalizes_category(self):
-        """Non-observation categories get cleaned (lowercased, hyphenated)."""
+        """Non-observation categories get mapped to canonical categories."""
         from cems.llm.observation_extraction import _parse_observations
 
         response = '[{"content": "User prefers Docker deployments over manual server setup", "priority": "high", "category": "Docker Config"}]'
 
         result = _parse_observations(response)
         assert len(result) == 1
-        assert result[0]["category"] == "docker-config"  # lowercased + hyphenated
+        assert result[0]["category"] == "infrastructure"  # "Docker Config" → "infrastructure" via alias
 
     def test_parse_observations_max_cap(self):
         """No more than MAX_OBSERVATIONS returned."""
@@ -167,13 +167,14 @@ class TestNormalizeCategory:
         assert normalize_category("database") == "database"
         assert normalize_category("deployment") == "deployment"
 
-    def test_free_text_passthrough(self):
-        """LLM-generated categories pass through as-is (lowercased)."""
+    def test_alias_mapping(self):
+        """LLM-generated categories map to canonical categories via aliases."""
         from cems.llm.learning_extraction import normalize_category
 
-        assert normalize_category("docker") == "docker"
-        assert normalize_category("rails") == "rails"
-        assert normalize_category("Payload CMS") == "payload-cms"
+        assert normalize_category("docker") == "infrastructure"
+        assert normalize_category("rails") == "general"  # no alias, falls through
+        assert normalize_category("ai") == "development"
+        assert normalize_category("sql") == "database"
 
     def test_case_insensitive(self):
         """Category normalization is case-insensitive."""
@@ -182,16 +183,19 @@ class TestNormalizeCategory:
         assert normalize_category("Database") == "database"
         assert normalize_category("DEPLOYMENT") == "deployment"
 
-    def test_separator_normalization(self):
-        """Spaces, underscores, and slashes convert to hyphens."""
+    def test_prefix_and_suffix_matching(self):
+        """Compound categories match via prefix or suffix to canonical."""
         from cems.llm.learning_extraction import normalize_category
 
-        assert normalize_category("error handling") == "error-handling"
-        assert normalize_category("error_handling") == "error-handling"
-        assert normalize_category("cems/observer") == "cems-observer"
+        assert normalize_category("database-migration") == "database"
+        assert normalize_category("testing-config") == "testing"
+        assert normalize_category("docker-config") == "infrastructure"
+        assert normalize_category("svelte-frontend") == "frontend"
 
-    def test_empty_defaults_to_general(self):
-        """Empty string defaults to 'general'."""
+    def test_unrecognized_defaults_to_general(self):
+        """Unrecognized categories and empty strings default to 'general'."""
         from cems.llm.learning_extraction import normalize_category
 
         assert normalize_category("") == "general"
+        assert normalize_category("zsh-completion") == "general"
+        assert normalize_category("Payload CMS") == "general"

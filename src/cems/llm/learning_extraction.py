@@ -26,20 +26,134 @@ _TOOL_LEARNING_TYPES = {
 _MIN_CONFIDENCE = 0.6
 
 
-def normalize_category(raw: str) -> str:
-    """Normalize a category string to a clean lowercase-hyphenated form.
+# Canonical categories — all LLM-generated categories are mapped to one of these.
+# Prevents category explosion (1000+ unique categories from free-text LLM output).
+CANONICAL_CATEGORIES = {
+    "general",
+    "api",
+    "architecture",
+    "authentication",
+    "cems",
+    "configuration",
+    "database",
+    "debugging",
+    "deployment",
+    "development",
+    "documentation",
+    "environment",
+    "frontend",
+    "infrastructure",
+    "monitoring",
+    "networking",
+    "performance",
+    "preferences",
+    "project-management",
+    "refactoring",
+    "security",
+    "session-summary",
+    "testing",
+    "ui",
+    "workflow",
+    # Functional categories (system-generated, never from LLM)
+    "category-summary",
+    "gate-rules",
+    "observation",
+}
 
-    Functional categories (gate-rules, preferences, etc.) are preserved as-is.
-    All other categories are free-text from LLM output — just cleaned up for
-    consistent display. No alias mapping or canonicalization.
+# Aliases: common LLM-generated categories → canonical category
+_CATEGORY_ALIASES: dict[str, str] = {
+    "ai": "development",
+    "backend": "development",
+    "build": "development",
+    "ci": "deployment",
+    "ci-cd": "deployment",
+    "cli": "development",
+    "cloud": "infrastructure",
+    "coolify": "infrastructure",
+    "code-quality": "refactoring",
+    "code-review": "refactoring",
+    "css": "frontend",
+    "data": "database",
+    "devops": "infrastructure",
+    "docker": "infrastructure",
+    "error": "debugging",
+    "error-handling": "debugging",
+    "git": "workflow",
+    "html": "frontend",
+    "integration": "api",
+    "javascript": "frontend",
+    "logging": "monitoring",
+    "migration": "database",
+    "node": "development",
+    "node.js": "development",
+    "observability": "monitoring",
+    "ops": "infrastructure",
+    "optimization": "performance",
+    "python": "development",
+    "react": "frontend",
+    "ruby": "development",
+    "rust": "development",
+    "scaling": "performance",
+    "scripting": "development",
+    "server": "infrastructure",
+    "sql": "database",
+    "svelte": "frontend",
+    "tailwind": "frontend",
+    "typescript": "frontend",
+    "ux": "ui",
+}
+
+
+def normalize_category(raw: str) -> str:
+    """Normalize a category string to a canonical category.
+
+    Maps free-text LLM-generated categories to a fixed set of canonical
+    categories. Uses exact match first, then alias lookup, then prefix
+    matching. Falls back to "general" for unrecognized categories.
 
     Args:
         raw: Raw category string from LLM output
 
     Returns:
-        Cleaned category string (lowercase, hyphenated)
+        Canonical category string (lowercase, hyphenated)
     """
-    return raw.lower().strip().replace(" ", "-").replace("_", "-").replace("/", "-") or "general"
+    cleaned = raw.lower().strip().replace(" ", "-").replace("_", "-").replace("/", "-")
+    if not cleaned:
+        return "general"
+
+    # Exact match to canonical set
+    if cleaned in CANONICAL_CATEGORIES:
+        return cleaned
+
+    # Exact alias lookup
+    if cleaned in _CATEGORY_ALIASES:
+        return _CATEGORY_ALIASES[cleaned]
+
+    # Prefix match: "database-migration" → "database", "testing-config" → "testing"
+    for canonical in CANONICAL_CATEGORIES:
+        if cleaned.startswith(canonical + "-"):
+            return canonical
+
+    # Prefix alias match: "docker-config" → first part "docker" → alias to "infrastructure"
+    first_part = cleaned.split("-")[0]
+    if first_part in _CATEGORY_ALIASES:
+        return _CATEGORY_ALIASES[first_part]
+    if first_part in CANONICAL_CATEGORIES:
+        return first_part
+
+    # Suffix match: "svelte-frontend" → "frontend"
+    for canonical in CANONICAL_CATEGORIES:
+        if cleaned.endswith("-" + canonical):
+            return canonical
+
+    # Suffix alias: "web-api" → last part "api" → canonical
+    last_part = cleaned.rsplit("-", 1)[-1]
+    if last_part in CANONICAL_CATEGORIES:
+        return last_part
+    if last_part in _CATEGORY_ALIASES:
+        return _CATEGORY_ALIASES[last_part]
+
+    return "general"
 
 
 def extract_tool_learning(
@@ -150,7 +264,7 @@ Return ONLY valid JSON (object or null)."""
             "type": learning["type"],
             "content": str(learning["content"])[:500],
             "confidence": float(learning.get("confidence", 0.7)),
-            "category": str(learning.get("category", "general"))[:50],
+            "category": normalize_category(str(learning.get("category", "general"))),
         }
 
     except Exception as e:
