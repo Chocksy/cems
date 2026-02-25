@@ -178,13 +178,16 @@ class CEMSScheduler:
             self._scheduler.shutdown(wait=False)
             logger.info("CEMS scheduler stopped")
 
-    def run_now(self, job_type: str, memory: "CEMSMemory | None" = None) -> dict:
+    def run_now(
+        self, job_type: str, memory: "CEMSMemory | None" = None, **kwargs
+    ) -> dict:
         """Run a maintenance job immediately.
 
         Args:
             job_type: One of "consolidation", "summarization", "reindex", "reflect"
             memory: Optional per-user memory instance. If provided, runs for
                     that user only. If None, runs for all active users.
+            **kwargs: Extra params passed to the job (e.g. full_sweep, limit, offset)
 
         Returns:
             Job result dict (single user) or dict of user_id -> result (all users)
@@ -194,7 +197,7 @@ class CEMSScheduler:
             raise ValueError(f"Unknown job type: {job_type}. Use: {sorted(valid_jobs)}")
 
         if memory:
-            return self._run_job_for_memory(job_type, memory)
+            return self._run_job_for_memory(job_type, memory, **kwargs)
 
         user_ids = self._get_user_ids()
         if not user_ids:
@@ -204,15 +207,17 @@ class CEMSScheduler:
         for user_id in user_ids:
             try:
                 user_memory = self._create_user_memory(user_id)
-                results[user_id[:8]] = self._run_job_for_memory(job_type, user_memory)
+                results[user_id[:8]] = self._run_job_for_memory(
+                    job_type, user_memory, **kwargs
+                )
             except Exception as e:
                 results[user_id[:8]] = {"error": str(e)}
         return results
 
-    def _run_job_for_memory(self, job_type: str, memory: "CEMSMemory") -> dict:
+    def _run_job_for_memory(self, job_type: str, memory: "CEMSMemory", **kwargs) -> dict:
         """Run a specific job type with a given memory instance."""
         if job_type == "consolidation":
-            return _run_async(ConsolidationJob(memory).run_async())
+            return _run_async(ConsolidationJob(memory).run_async(**kwargs))
         elif job_type == "summarization":
             return _run_async(SummarizationJob(memory).run_async())
         elif job_type == "reindex":

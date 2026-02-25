@@ -496,6 +496,54 @@ class TestConsolidationJob:
         assert result["conflicts_found"] == 0  # Not counted (already existed)
         doc_store.add_conflict.assert_awaited_once()
 
+    def test_full_sweep_uses_get_all_documents(self, mock_memory):
+        """full_sweep=True uses get_all_documents instead of get_recent_documents."""
+        from cems.maintenance.consolidation import ConsolidationJob
+
+        memory, doc_store, _ = mock_memory
+        doc_store.get_all_documents = AsyncMock(return_value=[])
+        doc_store.get_recent_documents = AsyncMock(return_value=[])
+
+        job = ConsolidationJob(memory)
+        result = _run(job.run_async(full_sweep=True))
+
+        assert result["memories_checked"] == 0
+        assert result["offset"] == 0
+        doc_store.get_all_documents.assert_awaited_once()
+        doc_store.get_recent_documents.assert_not_awaited()
+
+    def test_full_sweep_with_limit_and_offset(self, mock_memory):
+        """full_sweep respects limit and offset params."""
+        from cems.maintenance.consolidation import ConsolidationJob
+
+        memory, doc_store, _ = mock_memory
+        doc1 = _make_doc("doc-1", "Content A")
+        doc_store.get_all_documents = AsyncMock(return_value=[doc1])
+
+        job = ConsolidationJob(memory)
+        result = _run(job.run_async(full_sweep=True, limit=200, offset=100))
+
+        assert result["memories_checked"] == 1
+        assert result["offset"] == 100
+        doc_store.get_all_documents.assert_awaited_once_with(
+            TEST_UUID, limit=200, offset=100
+        )
+
+    def test_nightly_mode_uses_get_recent_documents(self, mock_memory):
+        """Default (nightly) mode uses get_recent_documents."""
+        from cems.maintenance.consolidation import ConsolidationJob
+
+        memory, doc_store, _ = mock_memory
+        doc_store.get_recent_documents = AsyncMock(return_value=[])
+        doc_store.get_all_documents = AsyncMock(return_value=[])
+
+        job = ConsolidationJob(memory)
+        result = _run(job.run_async())
+
+        doc_store.get_recent_documents.assert_awaited_once()
+        doc_store.get_all_documents.assert_not_awaited()
+        assert "offset" not in result
+
 
 class TestSummarizationJob:
     """Tests for the async SummarizationJob."""

@@ -36,8 +36,15 @@ class ConsolidationJob:
         self.memory = memory
         self.config = memory.config
 
-    async def run_async(self) -> dict[str, int]:
+    async def run_async(
+        self, *, full_sweep: bool = False, limit: int = 0, offset: int = 0
+    ) -> dict[str, int]:
         """Run the consolidation job.
+
+        Args:
+            full_sweep: If True, process ALL documents (not just last 7 days).
+            limit: Override document limit (0 = use defaults: 100 nightly, 500 sweep).
+            offset: Skip first N documents (for paginated sweeps).
 
         Returns:
             Dict with counts of operations performed
@@ -45,14 +52,25 @@ class ConsolidationJob:
         doc_store = await self.memory._ensure_document_store()
         user_id = self.config.user_id
 
-        # Get recent documents (last 7 days for broader dedup)
-        recent_docs = await doc_store.get_recent_documents(
-            user_id, hours=168, limit=100
-        )
-        logger.info(f"Found {len(recent_docs)} recent documents to check")
+        if full_sweep:
+            effective_limit = limit or 500
+            docs = await doc_store.get_all_documents(
+                user_id, limit=effective_limit, offset=offset
+            )
+            logger.info(
+                f"Full sweep: {len(docs)} documents (offset={offset}, limit={effective_limit})"
+            )
+        else:
+            effective_limit = limit or 100
+            docs = await doc_store.get_recent_documents(
+                user_id, hours=168, limit=effective_limit
+            )
+            logger.info(f"Found {len(docs)} recent documents to check")
 
-        result = await self._merge_duplicates(recent_docs)
-        result["memories_checked"] = len(recent_docs)
+        result = await self._merge_duplicates(docs)
+        result["memories_checked"] = len(docs)
+        if full_sweep:
+            result["offset"] = offset
 
         logger.info(f"Consolidation completed: {result}")
         return result

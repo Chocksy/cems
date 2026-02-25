@@ -809,6 +809,11 @@ async def api_memory_maintenance(request: Request):
                 "results": result,
             })
 
+        # Sweep params (for consolidation full_sweep)
+        full_sweep = body.get("full_sweep", False)
+        sweep_limit = body.get("limit", 0)
+        sweep_offset = body.get("offset", 0)
+
         if job_type == "all":
             from cems.maintenance.consolidation import ConsolidationJob
             from cems.maintenance.observation_reflector import ObservationReflector
@@ -816,7 +821,9 @@ async def api_memory_maintenance(request: Request):
             from cems.maintenance.summarization import SummarizationJob
 
             results = {}
-            results["consolidation"] = await ConsolidationJob(memory).run_async()
+            results["consolidation"] = await ConsolidationJob(memory).run_async(
+                full_sweep=full_sweep, limit=sweep_limit, offset=sweep_offset
+            )
             results["summarization"] = await SummarizationJob(memory).run_async()
             results["reindex"] = await ReindexJob(memory).run_async()
             results["reflect"] = await ObservationReflector(memory).run_async()
@@ -833,8 +840,17 @@ async def api_memory_maintenance(request: Request):
         from cems.maintenance.reindex import ReindexJob
         from cems.maintenance.summarization import SummarizationJob
 
+        if job_type == "consolidation":
+            result = await ConsolidationJob(memory).run_async(
+                full_sweep=full_sweep, limit=sweep_limit, offset=sweep_offset
+            )
+            return JSONResponse({
+                "success": True,
+                "job_type": job_type,
+                "results": result,
+            })
+
         jobs = {
-            "consolidation": ConsolidationJob(memory).run_async,
             "summarization": SummarizationJob(memory).run_async,
             "reindex": ReindexJob(memory).run_async,
             "reflect": ObservationReflector(memory).run_async,
