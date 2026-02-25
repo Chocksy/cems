@@ -317,6 +317,25 @@ CREATE OR REPLACE VIEW pinned_memories AS
 SELECT * FROM memory_metadata
 WHERE pinned = true AND archived = false;
 
+-- =============================================================================
+-- Memory Conflicts Table (detected during consolidation)
+-- =============================================================================
+
+CREATE TABLE IF NOT EXISTS memory_conflicts (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL,
+    doc_a_id UUID NOT NULL REFERENCES memory_documents(id) ON DELETE CASCADE,
+    doc_b_id UUID NOT NULL REFERENCES memory_documents(id) ON DELETE CASCADE,
+    explanation TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'open',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    resolved_at TIMESTAMP WITH TIME ZONE,
+    UNIQUE(doc_a_id, doc_b_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_conflicts_user_status
+    ON memory_conflicts(user_id, status);
+
 -- Grant permissions (for manual setup - Docker uses cems user directly)
 -- GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO cems;
 -- GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO cems;

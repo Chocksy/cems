@@ -58,68 +58,6 @@ def is_confirmatory(prompt: str) -> bool:
     return False
 
 
-def extract_intent(prompt: str) -> str:
-    """
-    Extract the INTENT from user prompt - what they're actually asking about.
-    Removes meta-language to get core topic.
-
-    For long prompts (>200 chars after stripping), falls back to keyword
-    extraction to avoid sending noisy multi-sentence queries to the
-    embedding model.
-    """
-    # Strip -u flag before processing
-    clean_prompt = prompt.rstrip()
-    if clean_prompt.endswith('-u'):
-        clean_prompt = clean_prompt[:-2].rstrip()
-
-    # Meta-phrases to remove
-    meta_patterns = [
-        r'^(can you|could you|would you|please|help me|i want to|i need to|let\'s|lets)\s+',
-        r'^(show me|tell me|find|search for|look for|recall|remember)\s+',
-        r'^(how do i|how can i|how to|what is|what are|where is|where are)\s+',
-        r'\s+(for me|please|thanks|thank you)$',
-        r'\?$',
-    ]
-
-    intent = clean_prompt.strip().lower()
-
-    for pattern in meta_patterns:
-        intent = re.sub(pattern, '', intent, flags=re.IGNORECASE)
-
-    intent = intent.strip()
-
-    # If too short, extract keywords
-    if len(intent) < 5:
-        return extract_keywords(clean_prompt)
-
-    # If still too long, extract keywords instead — long intents produce
-    # noisy embeddings that return irrelevant results
-    if len(intent) > 200:
-        return extract_keywords(clean_prompt)
-
-    return intent
-
-
-def extract_keywords(prompt: str) -> str:
-    """Extract meaningful keywords from prompt."""
-    stop_words = {
-        'a', 'an', 'the', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
-        'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could',
-        'should', 'may', 'might', 'must', 'can', 'to', 'of', 'in', 'for',
-        'on', 'with', 'at', 'by', 'from', 'as', 'into', 'through', 'during',
-        'before', 'after', 'above', 'below', 'between', 'under', 'again',
-        'i', 'me', 'my', 'you', 'your', 'we', 'our', 'they', 'them', 'it',
-        'this', 'that', 'these', 'what', 'which', 'who', 'and', 'but', 'if',
-        'or', 'because', 'help', 'want', 'need', 'please', 'just', 'now',
-        'get', 'make', 'use', 'like', 'know', 'think', 'take', 'go', 'see',
-    }
-
-    words = re.sub(r'[^\w\s-]', ' ', prompt.lower()).split()
-    keywords = [w for w in words if len(w) > 2 and w not in stop_words]
-
-    return ' '.join(list(dict.fromkeys(keywords))[:5])
-
-
 def get_project_id(cwd: str) -> str | None:
     """Extract project ID from git remote (e.g., 'org/repo').
 
@@ -195,6 +133,34 @@ def search_cems(query: str, project: str | None = None) -> tuple[str | None, lis
         if not results:
             return None, [], []
 
+        # Client-side score filter: drop low-relevance results
+        results = [r for r in results if r.get("score", 0) >= 0.4]
+        if not results:
+            return None, [], []
+
+        # Session dedup: if multiple results share a session tag, keep only highest-scoring
+        seen_sessions: dict[str, dict] = {}
+        deduped: list[dict] = []
+        for r in results:
+            tags = r.get("tags", [])
+            session_tag = next((t for t in tags if t.startswith("session:")), None)
+            if session_tag:
+                # Extract base session ID (strip epoch suffix like ":e1")
+                base_session = session_tag.split(":")[0] + ":" + session_tag.split(":")[1] if ":" in session_tag else session_tag
+                existing = seen_sessions.get(base_session)
+                if existing is None or r.get("score", 0) > existing.get("score", 0):
+                    if existing is not None:
+                        deduped.remove(existing)
+                    seen_sessions[base_session] = r
+                    deduped.append(r)
+                # else: skip lower-scoring duplicate from same session
+            else:
+                deduped.append(r)
+        results = deduped
+
+        if not results:
+            return None, [], []
+
         # Format results for Claude and collect memory IDs + scores
         formatted = []
         memory_ids = []
@@ -208,7 +174,7 @@ def search_cems(query: str, project: str | None = None) -> tuple[str | None, lis
             formatted.append(f"{i}. [{category}] (score: {score:.2f}) {content} (id: {short_id})")
             if mem_id:
                 memory_ids.append(mem_id)
-            score_details.append({"id": short_id, "score": round(score, 3), "category": category})
+            score_details.append({"id": short_id, "score": round(score, 3), "category": category, "content": content})
 
         # Add retrieval summary footer
         scores = [d["score"] for d in score_details]
@@ -220,61 +186,6 @@ def search_cems(query: str, project: str | None = None) -> tuple[str | None, lis
 
     except (httpx.RequestError, httpx.TimeoutException, json.JSONDecodeError):
         return None, [], []
-
-
-def fetch_recent_observations(project: str | None = None, limit: int = 5) -> str | None:
-    """Fetch recent observations and session summaries for the current project.
-
-    Searches for observations and session summaries tagged with the project's source_ref.
-    Returns formatted string for context injection, or None.
-    """
-    if not CEMS_API_URL or not CEMS_API_KEY:
-        return None
-
-    try:
-        query = f"recent session activity"
-        if project:
-            query += f" for {project}"
-
-        payload = {
-            "query": query,
-            "scope": "personal",
-            "max_results": limit,
-        }
-        if project:
-            payload["project"] = project
-
-        response = httpx.post(
-            f"{CEMS_API_URL}/api/memory/search",
-            json=payload,
-            headers={"Authorization": f"Bearer {CEMS_API_KEY}"},
-            timeout=3.0,
-        )
-
-        if response.status_code != 200:
-            return None
-
-        data = response.json()
-        results = data.get("results", [])
-
-        # Filter to observation and session-summary categories
-        relevant = [
-            r for r in results
-            if r.get("category") in ("observation", "session-summary")
-        ]
-
-        if not relevant:
-            return None
-
-        lines = [f"- {r.get('content', r.get('memory', ''))}" for r in relevant[:limit]]
-        project_label = project or "current project"
-        return f"""<recent-observations>
-Recent session context ({project_label}):
-{chr(10).join(lines)}
-</recent-observations>"""
-
-    except (httpx.RequestError, httpx.TimeoutException, json.JSONDecodeError):
-        return None
 
 
 def log_shown_memories(memory_ids: list[str]) -> None:
@@ -527,8 +438,19 @@ def main():
         session_id = input_data.get('session_id', '')
         cwd = input_data.get('cwd', '')
 
+        # Strip system-injected XML tags from the prompt field.
+        # Claude Code includes wire-format tags (task notifications, system reminders,
+        # previous hook output) in the prompt — these are not user text.
+        user_text = re.sub(
+            r'<(?:task-notification|system-reminder|user-prompt-submit-hook|memory-recall|'
+            r'recent-observations|cems-profile|cems-foundation)[^>]*>.*?'
+            r'</(?:task-notification|system-reminder|user-prompt-submit-hook|memory-recall|'
+            r'recent-observations|cems-profile|cems-foundation)>',
+            '', prompt, flags=re.DOTALL
+        ).strip()
+
         log_hook_event("UserPromptSubmit", session_id, {
-            "prompt_len": len(prompt),
+            "prompt_len": len(user_text),
         }, input_data=input_data)
 
         # Detect if running in Cursor (vs Claude Code CLI)
@@ -547,43 +469,43 @@ def main():
 
         # Handle confirmatory prompts ("yes", "go ahead", etc.)
         # Instead of skipping, derive search intent from what Claude proposed
-        if is_confirmatory(prompt):
+        if is_confirmatory(user_text):
             output_parts = []
-            if prompt.rstrip().endswith('-u'):
+            if user_text.rstrip().endswith('-u'):
                 output_parts.append("Use the maximum amount of ultrathink. Take all the time you need.")
 
-            # Derive search intent from what Claude just proposed
+            # Derive search query from what Claude just proposed — send raw text
             transcript_path = input_data.get('transcript_path', '')
             if transcript_path:
-                assistant_text = read_last_assistant_message(transcript_path, max_chars=500)
-                if assistant_text:
-                    # Extract keywords from last 1-2 sentences (the proposal)
-                    sentences = re.split(r'[.!?]\s+', assistant_text.strip())
-                    proposal = ' '.join(sentences[-2:])
-                    intent = extract_keywords(proposal)
-                    if intent and len(intent) >= 3:
-                        project = get_project_id(cwd) if cwd else None
-                        memories, memory_ids, _ = search_cems(intent, project=project)
-                        if memories:
-                            output_parts.append(f"""<memory-recall>
-CONTEXT for confirmed action "{intent}":
+                assistant_text = read_last_assistant_message(transcript_path, max_chars=5000)
+                if assistant_text and len(assistant_text.strip()) >= 3:
+                    project = get_project_id(cwd) if cwd else None
+                    memories, memory_ids, _ = search_cems(assistant_text.strip(), project=project)
+                    if memories:
+                        output_parts.append(f"""<memory-recall>
+CONTEXT for confirmed action:
 
 {memories}
 
 Review these memories before proceeding.
 </memory-recall>""")
-                            log_shown_memories(memory_ids)
+                        log_shown_memories(memory_ids)
 
             if output_parts:
-                output_result('\n\n'.join(output_parts), is_cursor)
+                combined = '\n\n'.join(output_parts)
+                log_hook_event("UserPromptSubmitOutput", session_id, {
+                    "output_len": len(combined),
+                    "has_memories": "<memory-recall>" in combined,
+                }, output_text=combined)
+                output_result(combined, is_cursor)
             return
 
         # Skip remaining short prompts (greetings, gibberish) — not worth searching
-        if len(prompt) < 15:
+        if len(user_text) < 15:
             return
 
         # Skip slash commands
-        if prompt.strip().startswith('/'):
+        if user_text.startswith('/'):
             return
 
         output_parts = []
@@ -595,36 +517,16 @@ Review these memories before proceeding.
         # This ensures PreToolUse hook has cached gate rules to check
         populate_gate_cache(project)
 
-        # 1. Memory awareness - search CEMS
-        # Enrich the search query with assistant context (what Claude was doing)
-        intent = extract_intent(prompt)
-
-        # Read last assistant message to add context about what Claude proposed/discussed
-        transcript_path = input_data.get('transcript_path', '')
-        if transcript_path and intent:
-            assistant_text = read_last_assistant_message(transcript_path, max_chars=500)
-            if assistant_text:
-                sentences = re.split(r'[.!?]\s+', assistant_text.strip())
-                assistant_keywords = extract_keywords(' '.join(sentences[-2:]))
-                if assistant_keywords and len(assistant_keywords) >= 3:
-                    # Blend: user intent first (primary), assistant context second
-                    intent = f"{intent} {assistant_keywords}"
-                    # Cap total length to avoid noisy embeddings
-                    if len(intent) > 200:
-                        intent = intent[:200]
-
-        if intent and len(intent) >= 3:
-            memories, memory_ids, score_details = search_cems(intent, project=project)
+        # 1. Memory awareness - search CEMS (user_text already has XML tags stripped)
+        if len(user_text) >= 3:
+            memories, memory_ids, score_details = search_cems(user_text, project=project)
             if memories:
-                # Show the user-facing intent (without assistant keywords clutter)
-                display_intent = extract_intent(prompt)
                 memory_context = f"""<memory-recall>
-RELEVANT MEMORIES found for "{display_intent}":
+RELEVANT MEMORIES found for "{user_text}":
 
 {memories}
 
 After responding, note which memories (by number) were relevant vs noise.
-Use /recall "{display_intent}" for more detailed results.
 </memory-recall>"""
                 output_parts.append(memory_context)
 
@@ -632,28 +534,29 @@ Use /recall "{display_intent}" for more detailed results.
                 if score_details:
                     scores = [d["score"] for d in score_details]
                     log_hook_event("MemoryRetrieval", session_id, {
-                        "query": display_intent[:100],
+                        "query": user_text,
                         "result_count": len(score_details),
                         "avg_score": round(sum(scores) / len(scores), 3),
                         "top_score": round(max(scores), 3),
                         "details": score_details,
-                    })
+                    }, input_data={"query": user_text, "score_details": score_details})
 
                 # Log that these memories were shown (fire-and-forget)
                 log_shown_memories(memory_ids)
 
-        # 2. Recent observations for project context
-        obs_context = fetch_recent_observations(project=project)
-        if obs_context:
-            output_parts.append(obs_context)
-
-        # 3. Ultrathink flag
-        if prompt.rstrip().endswith('-u'):
+        # 2. Ultrathink flag
+        if user_text.endswith('-u'):
             output_parts.append("Use the maximum amount of ultrathink. Take all the time you need. It's much better if you do too much research and thinking than not enough.")
 
         # Output combined context
         if output_parts:
-            output_result('\n\n'.join(output_parts), is_cursor)
+            combined = '\n\n'.join(output_parts)
+            log_hook_event("UserPromptSubmitOutput", session_id, {
+                "output_len": len(combined),
+                "has_memories": "<memory-recall>" in combined,
+                "has_ultrathink": "ultrathink" in combined.lower(),
+            }, output_text=combined)
+            output_result(combined, is_cursor)
 
     except json.JSONDecodeError:
         pass

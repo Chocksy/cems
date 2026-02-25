@@ -181,7 +181,7 @@ class CEMSConfig(BaseSettings):
         description="Force query synthesis for preference/recommendation queries even when enable_query_synthesis=False",
     )
     relevance_threshold: float = Field(
-        default=0.3,  # Raised from 0.005 after Phase 2 data cleanup (584 quality memories)
+        default=0.4,  # Raised from 0.3 in Phase 2 pipeline quality (filters low-relevance noise)
         description="Minimum similarity score to include in results (Stage 3)",
     )
     default_max_tokens: int = Field(
@@ -284,7 +284,15 @@ class CEMSConfig(BaseSettings):
     )
     duplicate_similarity_threshold: float = Field(
         default=0.92,
-        description="Cosine similarity threshold for duplicate detection",
+        description="Cosine similarity threshold for duplicate detection (legacy — see dedup thresholds)",
+    )
+    dedup_automerge_threshold: float = Field(
+        default=0.98,
+        description="Auto-merge without LLM above this similarity (near-exact duplicates only)",
+    )
+    dedup_llm_threshold: float = Field(
+        default=0.80,
+        description="Lower bound for LLM classification tier (0.80-0.98 range)",
     )
 
     # =========================================================================

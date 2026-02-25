@@ -222,11 +222,13 @@ class TestUserPromptSubmit:
                         "memory_id": "abc12345-6789-0000-0000-000000000000",
                         "content": "Docker config uses port 8765",
                         "category": "technical",
+                        "score": 0.85,
                     },
                     {
                         "memory_id": "def12345-6789-0000-0000-000000000000",
                         "content": "Use docker compose build before deploy",
                         "category": "workflow",
+                        "score": 0.72,
                     },
                 ],
             }
@@ -250,10 +252,9 @@ class TestUserPromptSubmit:
         assert "Docker config uses port 8765" in ctx
         assert "docker compose build" in ctx
 
-        # Verify search was called with intent extraction
-        # (2 requests: memory search + observation fetch)
+        # Verify search was called (1 request — observations fetch removed in Phase 2)
         search_reqs = cems_server.get_requests("/api/memory/search")
-        assert len(search_reqs) == 2
+        assert len(search_reqs) == 1
         assert "query" in search_reqs[0].body
 
         # Verify log-shown was called with the memory IDs
@@ -392,6 +393,264 @@ class TestUserPromptSubmit:
         assert result.exit_code == 0
         assert len(cems_server.requests) == 0
 
+    # --- Phase 6: Observability tests ---
+
+    def test_output_logged_in_lean_log(self, cems_server: RecordingServer, tmp_path):
+        """UserPromptSubmit should log a UserPromptSubmitOutput event to the lean log."""
+        cems_server.set_response("/api/memory/search", CannedResponse(
+            body={
+                "success": True,
+                "results": [
+                    {
+                        "memory_id": "abc12345-6789-0000-0000-000000000000",
+                        "content": "Docker config uses port 8765",
+                        "category": "technical",
+                        "score": 0.85,
+                    },
+                ],
+            }
+        ))
+        cems_server.set_response("/api/memory/log-shown", CannedResponse(body={"success": True}))
+        cems_server.set_response("/api/memory/gate-rules", CannedResponse(
+            body={"success": True, "rules": []}
+        ))
+
+        result = run_hook(
+            "cems_user_prompts_submit.py",
+            make_user_prompt_input(
+                prompt="How do I configure Docker for this project?",
+                session_id="log-test-session-001",
+            ),
+            server=cems_server,
+            extra_env={"HOME": str(tmp_path)},
+        )
+
+        assert result.exit_code == 0
+
+        # Check lean log for UserPromptSubmitOutput event
+        log_file = tmp_path / ".claude" / "hooks" / "logs" / "hook_events.jsonl"
+        assert log_file.exists(), "Lean log file should have been created"
+
+        events = [json.loads(line) for line in log_file.read_text().splitlines() if line.strip()]
+        output_events = [e for e in events if e.get("event") == "UserPromptSubmitOutput"]
+        assert len(output_events) == 1, f"Expected 1 UserPromptSubmitOutput event, found {len(output_events)}"
+
+        evt = output_events[0]
+        assert evt["output_len"] > 0
+        assert evt["has_memories"] is True
+        assert evt["session_id"] == "log-test-ses"  # truncated to 12 chars
+
+    def test_output_logged_in_verbose(self, cems_server: RecordingServer, tmp_path):
+        """UserPromptSubmitOutput should have full output text in verbose log."""
+        cems_server.set_response("/api/memory/search", CannedResponse(
+            body={
+                "success": True,
+                "results": [
+                    {
+                        "memory_id": "abc12345-6789-0000-0000-000000000000",
+                        "content": "Docker config uses port 8765",
+                        "category": "technical",
+                        "score": 0.85,
+                    },
+                ],
+            }
+        ))
+        cems_server.set_response("/api/memory/log-shown", CannedResponse(body={"success": True}))
+        cems_server.set_response("/api/memory/gate-rules", CannedResponse(
+            body={"success": True, "rules": []}
+        ))
+
+        result = run_hook(
+            "cems_user_prompts_submit.py",
+            make_user_prompt_input(
+                prompt="How do I configure Docker for this project?",
+                session_id="verbose-test-session",
+            ),
+            server=cems_server,
+            extra_env={"HOME": str(tmp_path)},
+        )
+
+        assert result.exit_code == 0
+
+        # Check verbose log for output text
+        verbose_file = tmp_path / ".claude" / "hooks" / "logs" / "verbose" / "verbose-test.jsonl"
+        assert verbose_file.exists(), "Verbose log file should exist"
+
+        entries = [json.loads(line) for line in verbose_file.read_text().splitlines() if line.strip()]
+        output_entries = [e for e in entries if e.get("event") == "UserPromptSubmitOutput"]
+        assert len(output_entries) == 1
+        assert "output" in output_entries[0]
+        assert "memory-recall" in output_entries[0]["output"]
+        assert "Docker config uses port 8765" in output_entries[0]["output"]
+
+    def test_memory_retrieval_has_verbose_entry(self, cems_server: RecordingServer, tmp_path):
+        """MemoryRetrieval should write to verbose log too (with score details)."""
+        cems_server.set_response("/api/memory/search", CannedResponse(
+            body={
+                "success": True,
+                "results": [
+                    {
+                        "memory_id": "abc12345-6789-0000-0000-000000000000",
+                        "content": "Docker config uses port 8765",
+                        "category": "technical",
+                        "score": 0.85,
+                    },
+                ],
+            }
+        ))
+        cems_server.set_response("/api/memory/log-shown", CannedResponse(body={"success": True}))
+        cems_server.set_response("/api/memory/gate-rules", CannedResponse(
+            body={"success": True, "rules": []}
+        ))
+
+        result = run_hook(
+            "cems_user_prompts_submit.py",
+            make_user_prompt_input(
+                prompt="How do I configure Docker for this project?",
+                session_id="retrieval-verbose",
+            ),
+            server=cems_server,
+            extra_env={"HOME": str(tmp_path)},
+        )
+
+        assert result.exit_code == 0
+
+        # Check verbose log for MemoryRetrieval entry
+        verbose_file = tmp_path / ".claude" / "hooks" / "logs" / "verbose" / "retrieval-ve.jsonl"
+        assert verbose_file.exists(), "Verbose log file should exist"
+
+        entries = [json.loads(line) for line in verbose_file.read_text().splitlines() if line.strip()]
+        retrieval_entries = [e for e in entries if e.get("event") == "MemoryRetrieval"]
+        assert len(retrieval_entries) == 1
+        assert "score_details" in retrieval_entries[0]
+
+    # --- Phase 2: Pipeline quality tests ---
+
+    def test_no_fetch_recent_observations(self, cems_server: RecordingServer, tmp_path):
+        """fetch_recent_observations is removed — only 1 search call, no observations block."""
+        cems_server.set_response("/api/memory/search", CannedResponse(
+            body={
+                "success": True,
+                "results": [
+                    {
+                        "memory_id": "abc12345-6789-0000-0000-000000000000",
+                        "content": "Docker config uses port 8765",
+                        "category": "technical",
+                        "score": 0.85,
+                    },
+                ],
+            }
+        ))
+        cems_server.set_response("/api/memory/log-shown", CannedResponse(body={"success": True}))
+        cems_server.set_response("/api/memory/gate-rules", CannedResponse(
+            body={"success": True, "rules": []}
+        ))
+
+        result = run_hook(
+            "cems_user_prompts_submit.py",
+            make_user_prompt_input(prompt="How do I configure Docker for this project?"),
+            server=cems_server,
+            extra_env={"HOME": str(tmp_path)},
+        )
+
+        assert result.exit_code == 0
+        # Only 1 search request (no second call for observations)
+        search_reqs = cems_server.get_requests("/api/memory/search")
+        assert len(search_reqs) == 1
+
+        # No <recent-observations> block in output
+        ctx = result.additional_context or ""
+        assert "recent-observations" not in ctx
+
+    def test_client_side_score_filter(self, cems_server: RecordingServer, tmp_path):
+        """Results below 0.4 should be filtered out client-side."""
+        cems_server.set_response("/api/memory/search", CannedResponse(
+            body={
+                "success": True,
+                "results": [
+                    {
+                        "memory_id": "high-score-id-0000-0000-000000000000",
+                        "content": "High relevance memory",
+                        "category": "technical",
+                        "score": 0.85,
+                    },
+                    {
+                        "memory_id": "low-score-id-0000-0000-000000000000",
+                        "content": "Low relevance noise",
+                        "category": "general",
+                        "score": 0.25,
+                    },
+                ],
+            }
+        ))
+        cems_server.set_response("/api/memory/log-shown", CannedResponse(body={"success": True}))
+        cems_server.set_response("/api/memory/gate-rules", CannedResponse(
+            body={"success": True, "rules": []}
+        ))
+
+        result = run_hook(
+            "cems_user_prompts_submit.py",
+            make_user_prompt_input(prompt="How do I configure Docker for this project?"),
+            server=cems_server,
+            extra_env={"HOME": str(tmp_path)},
+        )
+
+        assert result.exit_code == 0
+        ctx = result.additional_context or ""
+        assert "High relevance memory" in ctx
+        assert "Low relevance noise" not in ctx
+
+    def test_session_dedup(self, cems_server: RecordingServer, tmp_path):
+        """Multiple results from the same session should keep only the highest-scoring."""
+        cems_server.set_response("/api/memory/search", CannedResponse(
+            body={
+                "success": True,
+                "results": [
+                    {
+                        "memory_id": "sess-summary-0000-0000-000000000000",
+                        "content": "Session summary: worked on Docker setup",
+                        "category": "session-summary",
+                        "score": 0.75,
+                        "tags": ["session:abc12345"],
+                    },
+                    {
+                        "memory_id": "sess-obs-0000-0000-000000000000",
+                        "content": "Observation from same session about Docker",
+                        "category": "observation",
+                        "score": 0.65,
+                        "tags": ["session:abc12345"],
+                    },
+                    {
+                        "memory_id": "other-mem-0000-0000-000000000000",
+                        "content": "Different session memory about Docker",
+                        "category": "technical",
+                        "score": 0.70,
+                        "tags": ["session:def98765"],
+                    },
+                ],
+            }
+        ))
+        cems_server.set_response("/api/memory/log-shown", CannedResponse(body={"success": True}))
+        cems_server.set_response("/api/memory/gate-rules", CannedResponse(
+            body={"success": True, "rules": []}
+        ))
+
+        result = run_hook(
+            "cems_user_prompts_submit.py",
+            make_user_prompt_input(prompt="How do I configure Docker for this project?"),
+            server=cems_server,
+            extra_env={"HOME": str(tmp_path)},
+        )
+
+        assert result.exit_code == 0
+        ctx = result.additional_context or ""
+        # Higher-scoring session result should be kept
+        assert "Session summary: worked on Docker setup" in ctx
+        # Lower-scoring duplicate from same session should be deduped
+        assert "Observation from same session about Docker" not in ctx
+        # Different session should still be present
+        assert "Different session memory about Docker" in ctx
+
 
 # ============================================================================
 # PreToolUse hook tests
@@ -508,6 +767,87 @@ class TestPreToolUse:
 
         # No cache = no rules = allow
         assert result.exit_code == 0
+
+    # --- Phase 6: Gate trigger logging ---
+
+    def test_gate_block_logs_event(self, cems_server: RecordingServer, tmp_path):
+        """Blocked gate should log a GateTriggered event to the lean log."""
+        cache_dir = tmp_path / ".cems" / "cache" / "gate_rules"
+        cache_dir.mkdir(parents=True)
+        cache_file = cache_dir / "global.json"
+        cache_file.write_text(json.dumps([
+            {
+                "tool": "bash",
+                "pattern": "rm\\s+-rf",
+                "raw_pattern": "rm -rf",
+                "reason": "Dangerous recursive delete",
+                "severity": "block",
+            }
+        ]))
+
+        result = run_hook(
+            "cems_pre_tool_use.py",
+            make_pre_tool_use_input(
+                command="rm -rf /important-data",
+                session_id="gate-test-session",
+            ),
+            server=cems_server,
+            extra_env={"HOME": str(tmp_path)},
+        )
+
+        assert result.exit_code == 2
+
+        # Check lean log for GateTriggered event
+        log_file = tmp_path / ".claude" / "hooks" / "logs" / "hook_events.jsonl"
+        assert log_file.exists(), "Lean log file should exist"
+
+        events = [json.loads(line) for line in log_file.read_text().splitlines() if line.strip()]
+        gate_events = [e for e in events if e.get("event") == "GateTriggered"]
+        assert len(gate_events) == 1, f"Expected 1 GateTriggered event, found {len(gate_events)}"
+
+        evt = gate_events[0]
+        assert evt["gate_action"] == "block"
+        assert evt["reason"] == "Dangerous recursive delete"
+        assert evt["tool"] == "Bash"
+
+    def test_gate_warn_logs_event(self, cems_server: RecordingServer, tmp_path):
+        """Warned gate should also log a GateTriggered event."""
+        cache_dir = tmp_path / ".cems" / "cache" / "gate_rules"
+        cache_dir.mkdir(parents=True)
+        cache_file = cache_dir / "global.json"
+        cache_file.write_text(json.dumps([
+            {
+                "tool": "bash",
+                "pattern": "docker\\s+push",
+                "raw_pattern": "docker push",
+                "reason": "Confirm before pushing Docker images",
+                "severity": "warn",
+            }
+        ]))
+
+        result = run_hook(
+            "cems_pre_tool_use.py",
+            make_pre_tool_use_input(
+                command="docker push myapp:latest",
+                session_id="gate-warn-session",
+            ),
+            server=cems_server,
+            extra_env={"HOME": str(tmp_path)},
+        )
+
+        assert result.exit_code == 0
+
+        # Check lean log for GateTriggered event
+        log_file = tmp_path / ".claude" / "hooks" / "logs" / "hook_events.jsonl"
+        assert log_file.exists()
+
+        events = [json.loads(line) for line in log_file.read_text().splitlines() if line.strip()]
+        gate_events = [e for e in events if e.get("event") == "GateTriggered"]
+        assert len(gate_events) == 1
+
+        evt = gate_events[0]
+        assert evt["gate_action"] == "warn"
+        assert evt["reason"] == "Confirm before pushing Docker images"
 
 
 # ============================================================================
@@ -762,6 +1102,7 @@ class TestHookIntegration:
                     "memory_id": "mem-001",
                     "content": "Project uses FastAPI",
                     "category": "technical",
+                    "score": 0.90,
                 }],
             }
         ))
@@ -880,6 +1221,68 @@ class TestEdgeCases:
                 },
             )
             assert result.exit_code == 0, f"{hook} crashed on empty input: {result.stderr}"
+
+    def test_log_rotation_lean(self, cems_server: RecordingServer, tmp_path):
+        """Lean log should be rotated when it exceeds 10MB."""
+        # Create an oversized lean log file
+        log_dir = tmp_path / ".claude" / "hooks" / "logs"
+        log_dir.mkdir(parents=True)
+        log_file = log_dir / "hook_events.jsonl"
+
+        # Write >10MB of dummy data
+        line = json.dumps({"ts": "2026-01-01T00:00:00", "event": "Test", "session_id": "x" * 12}) + "\n"
+        lines_needed = (10_000_001 // len(line)) + 1
+        log_file.write_text(line * lines_needed)
+
+        assert log_file.stat().st_size > 10_000_000, "Pre-condition: file must be >10MB"
+
+        # Run any hook — log_hook_event calls _rotate_if_needed()
+        result = run_hook(
+            "cems_user_prompts_submit.py",
+            make_user_prompt_input(prompt="trigger rotation test hook call please"),
+            server=cems_server,
+            extra_env={"HOME": str(tmp_path)},
+        )
+
+        assert result.exit_code == 0
+
+        # Old file should have been rotated to .1
+        rotated = log_dir / "hook_events.jsonl.1"
+        assert rotated.exists(), "Rotated .1 file should exist"
+        # Current log file should be small (just the new event)
+        assert log_file.exists()
+        assert log_file.stat().st_size < 1_000_000, "Current log should be small after rotation"
+
+    def test_log_rotation_verbose_cleanup(self, cems_server: RecordingServer, tmp_path):
+        """Verbose log files older than 7 days should be cleaned up."""
+        log_dir = tmp_path / ".claude" / "hooks" / "logs"
+        verbose_dir = log_dir / "verbose"
+        verbose_dir.mkdir(parents=True)
+
+        # Create an old verbose file (mtime = 8 days ago)
+        old_file = verbose_dir / "old-session-i.jsonl"
+        old_file.write_text('{"ts": "old", "event": "Test"}\n')
+        old_mtime = time.time() - 8 * 86400
+        os.utime(old_file, (old_mtime, old_mtime))
+
+        # Create a recent verbose file
+        new_file = verbose_dir / "new-session-i.jsonl"
+        new_file.write_text('{"ts": "new", "event": "Test"}\n')
+
+        # Run any hook to trigger rotation
+        result = run_hook(
+            "cems_user_prompts_submit.py",
+            make_user_prompt_input(prompt="trigger verbose cleanup test please"),
+            server=cems_server,
+            extra_env={"HOME": str(tmp_path)},
+        )
+
+        assert result.exit_code == 0
+
+        # Old file should be deleted
+        assert not old_file.exists(), "Old verbose file (>7d) should be cleaned up"
+        # New file should still exist
+        assert new_file.exists(), "Recent verbose file should be kept"
 
     def test_hooks_respond_within_timeout(self, cems_server: RecordingServer, tmp_path):
         """All hooks should respond within a reasonable time (5s with server)."""

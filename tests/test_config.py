@@ -81,9 +81,9 @@ class TestCEMSConfig:
 
     def test_relevance_threshold(self):
         """Test relevance threshold default and custom values."""
-        # Test default value (raised after Phase 2 data cleanup)
+        # Default: 0.4 (raised from 0.3 in Phase 2 pipeline quality)
         config = CEMSConfig()
-        assert config.relevance_threshold == 0.3
+        assert config.relevance_threshold == 0.4
 
         # Test custom value
         config = CEMSConfig(relevance_threshold=0.7)

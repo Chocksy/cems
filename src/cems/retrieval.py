@@ -605,7 +605,7 @@ def apply_score_adjustments(
     1. Priority boost (1.0-2.0x from metadata)
     2. Time decay (60-day half-life)
     3. Pinned boost (1.1x)
-    4. Project scoring (1.3x boost same-project, 0.8x penalty different-project)
+    4. Project scoring (1.3x same-project, 0.8x different-project, 0.9x no-project-tag)
 
     Args:
         result: SearchResult to score
@@ -644,10 +644,12 @@ def apply_score_adjustments(
                 # Different project: penalty
                 penalty = config.project_penalty_factor if config else 0.8
                 score *= penalty
+            else:
+                # No project tag: mild penalty when project filter is active
+                score *= 0.9
 
-    # CRITICAL: Clamp score to [0, 1] range
-    # Fixes negative vector scores and ensures consistent scoring
-    score = max(0.0, min(1.0, score))
+    # Floor at 0.0 (no upper clamp — scores >1.0 are valid for ranking)
+    score = max(0.0, score)
 
     return score
 

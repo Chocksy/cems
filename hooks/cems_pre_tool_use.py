@@ -204,6 +204,14 @@ def main():
                 rule = result["rule"]
                 severity = result["severity"]
 
+                # Log the gate trigger for dashboard observability
+                log_hook_event("GateTriggered", session_id, {
+                    "tool": tool_name,
+                    "gate_action": severity,
+                    "reason": rule["reason"],
+                    "pattern": rule["raw_pattern"],
+                })
+
                 if severity == "block":
                     # Block: stderr is fed to Claude on exit 2 (stdout is ignored)
                     msg = f"BLOCKED by gate rule: {rule['reason']} (pattern: {rule['raw_pattern']})"

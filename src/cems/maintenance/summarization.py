@@ -1,7 +1,12 @@
-"""Weekly summarization job - compress old memories, prune stale ones."""
+"""Weekly summarization job — compress old memories, prune stale ones.
 
+Uses DocumentStore (memory_documents) exclusively via async pattern.
+Follows the ObservationReflector pattern for async + DocumentStore access.
+"""
+
+import asyncio
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -10,199 +15,170 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _is_older_than(doc: dict, days: int) -> bool:
+    """Check if a document is older than N days."""
+    created_at = doc.get("created_at")
+    if not created_at:
+        return False
+    if isinstance(created_at, str):
+        created_at = datetime.fromisoformat(created_at)
+    if created_at.tzinfo is None:
+        created_at = created_at.replace(tzinfo=UTC)
+    return created_at < datetime.now(UTC) - timedelta(days=days)
+
+
 class SummarizationJob:
     """Weekly maintenance job for memory summarization.
 
-    Runs every week to:
-    1. Compress old memories into category summaries
-    2. Prune memories not accessed in 90+ days
+    Compresses old memories into category summaries and prunes
+    stale memories that haven't been accessed in 90+ days.
     """
 
     def __init__(self, memory: "CEMSMemory"):
         self.memory = memory
         self.config = memory.config
 
-    def run(self) -> dict[str, int]:
+    async def run_async(self) -> dict[str, int]:
         """Run the summarization job.
 
         Returns:
             Dict with counts of operations performed
         """
+        doc_store = await self.memory._ensure_document_store()
         user_id = self.config.user_id
-        log_id = self.memory.metadata_store.log_maintenance(
-            "summarization", user_id, "started"
-        )
 
-        try:
-            # Step 1: Get old memories (30+ days)
-            old_ids = self.memory.get_old_memories(days=30)
-            logger.info(f"Found {len(old_ids)} old memories to potentially summarize")
+        # Get all docs, filter to 30+ days old
+        all_docs = await doc_store.get_all_documents(user_id, limit=500)
+        old_docs = [d for d in all_docs if _is_older_than(d, days=30)]
+        logger.info(f"Found {len(old_docs)} old documents to potentially summarize")
 
-            # Step 2: Compress old memories by category
-            categories_updated = self._compress_by_category(old_ids)
+        categories_updated = await self._compress_by_category(old_docs)
+        pruned = await self._prune_stale(doc_store, user_id, all_docs)
 
-            # Step 3: Prune stale memories
-            pruned = self._prune_stale()
+        result = {
+            "categories_updated": categories_updated,
+            "memories_pruned": pruned,
+            "old_memories_checked": len(old_docs),
+        }
+        logger.info(f"Summarization completed: {result}")
+        return result
 
-            result = {
-                "categories_updated": categories_updated,
-                "memories_pruned": pruned,
-                "old_memories_checked": len(old_ids),
-            }
-
-            self.memory.metadata_store.update_maintenance_log(
-                log_id, "completed", str(result)
-            )
-            logger.info(f"Summarization completed: {result}")
-            return result
-
-        except Exception as e:
-            self.memory.metadata_store.update_maintenance_log(
-                log_id, "failed", str(e)
-            )
-            logger.error(f"Summarization failed: {e}")
-            raise
-
-    def _compress_by_category(self, memory_ids: list[str]) -> int:
+    async def _compress_by_category(self, old_docs: list[dict]) -> int:
         """Compress old memories into category summaries.
 
-        Groups memories by category and creates/updates summary documents.
+        Groups documents by category and creates summary documents
+        for categories with 3+ old memories.
 
         Args:
-            memory_ids: List of old memory IDs
+            old_docs: List of old document dicts
 
         Returns:
             Number of categories updated
         """
-        if not memory_ids:
+        if not old_docs:
             return 0
 
         # Group by category
-        categories: dict[str, list[str]] = {}
-        for mem_id in memory_ids:
-            metadata = self.memory.get_metadata(mem_id)
-            if metadata:
-                cat = metadata.category
-                if cat not in categories:
-                    categories[cat] = []
-                categories[cat].append(mem_id)
+        categories: dict[str, list[dict]] = {}
+        for doc in old_docs:
+            cat = doc.get("category", "general")
+            categories.setdefault(cat, []).append(doc)
 
         updated = 0
-        for category, ids in categories.items():
-            if len(ids) >= 3:  # Only summarize if we have enough memories
+        for category, docs in categories.items():
+            if len(docs) >= 3:
                 try:
-                    self._create_category_summary(category, ids)
+                    await self._create_category_summary(category, docs)
                     updated += 1
                 except Exception as e:
                     logger.warning(f"Failed to summarize category {category}: {e}")
 
         return updated
 
-    def _create_category_summary(self, category: str, memory_ids: list[str]) -> None:
+    async def _create_category_summary(
+        self, category: str, docs: list[dict]
+    ) -> None:
         """Create an LLM-generated summary for a category.
-
-        Uses the configured LLM to generate a coherent summary of all memories
-        in the category, then stores it in the database.
 
         Args:
             category: The category name
-            memory_ids: Memory IDs in this category
+            docs: Documents in this category
         """
         from cems.llm import summarize_memories
-        from cems.models import CategorySummary, MemoryScope
 
-        # Gather memory contents
-        contents = []
-        for mem_id in memory_ids:
-            mem = self.memory.get(mem_id)
-            if mem:
-                content = mem.get("memory", "")
-                if content:
-                    contents.append(content)
-
+        contents = [d.get("content", "") for d in docs if d.get("content")]
         if not contents:
             logger.debug(f"No content found for category {category}")
             return
 
-        # Generate LLM summary (uses OpenRouter via llm.py)
-        logger.info(f"Generating LLM summary for category '{category}' with {len(contents)} memories")
+        logger.info(
+            f"Generating LLM summary for category '{category}' with {len(contents)} memories"
+        )
         summary_text = summarize_memories(
             memories=contents,
             category=category,
-            model=self.config.llm_model,  # OpenRouter format: provider/model
+            model=self.config.llm_model,
         )
 
-        # Get existing summary version if any
-        existing = self.memory.metadata_store.get_category_summary(
-            self.config.user_id, category, MemoryScope.PERSONAL
+        # Store as a new document with category-summary tag
+        await self.memory.add_async(
+            content=summary_text,
+            scope="personal",
+            category="category-summary",
+            tags=["category-summary", f"category:{category}"],
+            infer=False,
+            source_ref=f"summary:{category}",
         )
-        version = (existing.version + 1) if existing else 1
-
-        # Store in database via PostgresMetadataStore
-        summary_obj = CategorySummary(
-            category=category,
-            scope=MemoryScope.PERSONAL,
-            summary=summary_text,
-            item_count=len(contents),
-            last_updated=datetime.now(UTC),
-            version=version,
-        )
-        self.memory.metadata_store.save_category_summary(summary_obj)
 
         logger.info(f"Created LLM summary for category {category} with {len(contents)} items")
 
-    def _prune_stale(self) -> int:
-        """Prune memories not accessed in configured days.
+    async def _prune_stale(
+        self, doc_store, user_id: str, all_docs: list[dict]
+    ) -> int:
+        """Soft-delete documents not updated in stale_days.
 
-        Archives stale memories rather than deleting them.
+        Args:
+            doc_store: DocumentStore instance
+            user_id: User ID
+            all_docs: All user documents
 
         Returns:
-            Number of memories pruned
+            Number of documents pruned
         """
-        stale_ids = self.memory.get_stale_memories()
+        stale_days = self.config.stale_days
+        stale_docs = [d for d in all_docs if self._is_stale(d, stale_days)]
         pruned = 0
 
-        for mem_id in stale_ids:
-            self.memory.archive_memory(mem_id)
-            pruned += 1
+        for doc in stale_docs:
+            doc_id = doc.get("id")
+            if doc_id:
+                try:
+                    await doc_store.delete_document(doc_id, hard=False)
+                    pruned += 1
+                except Exception as e:
+                    logger.error(f"Failed to prune stale document {doc_id}: {e}")
 
         if pruned:
-            logger.info(f"Archived {pruned} stale memories")
+            logger.info(f"Soft-deleted {pruned} stale documents (>{stale_days} days)")
 
         return pruned
 
+    @staticmethod
+    def _is_stale(doc: dict, days: int) -> bool:
+        """Check if a document is stale (not updated in N days)."""
+        updated_at = doc.get("updated_at") or doc.get("created_at")
+        if not updated_at:
+            return False
+        if isinstance(updated_at, str):
+            updated_at = datetime.fromisoformat(updated_at)
+        if updated_at.tzinfo is None:
+            updated_at = updated_at.replace(tzinfo=UTC)
+        return updated_at < datetime.now(UTC) - timedelta(days=days)
 
-def compress_old_memories(memory: "CEMSMemory", older_than_days: int = 30) -> int:
-    """Standalone function to compress old memories.
-
-    Args:
-        memory: CEMSMemory instance
-        older_than_days: Age threshold for memories
-
-    Returns:
-        Number of categories updated
-    """
-    job = SummarizationJob(memory)
-    old_ids = memory.get_old_memories(days=older_than_days)
-    return job._compress_by_category(old_ids)
-
-
-def prune_stale(memory: "CEMSMemory", not_accessed_days: int = 90) -> int:
-    """Standalone function to prune stale memories.
-
-    Args:
-        memory: CEMSMemory instance
-        not_accessed_days: Days since last access
-
-    Returns:
-        Number of memories pruned
-    """
-    # Override threshold temporarily
-    original_days = memory.config.stale_days
-    memory.config.stale_days = not_accessed_days
-
-    try:
-        job = SummarizationJob(memory)
-        return job._prune_stale()
-    finally:
-        memory.config.stale_days = original_days
+    def run(self) -> dict[str, int]:
+        """Synchronous wrapper for run_async."""
+        loop = asyncio.new_event_loop()
+        try:
+            return loop.run_until_complete(self.run_async())
+        finally:
+            loop.close()

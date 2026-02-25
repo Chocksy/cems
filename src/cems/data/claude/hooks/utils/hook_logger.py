@@ -22,6 +22,7 @@ def log_hook_event(
     session_id: str,
     extra: dict | None = None,
     input_data: dict | None = None,
+    output_text: str | None = None,
 ) -> None:
     """Log a hook event to both the central log and verbose per-session file.
 
@@ -30,21 +31,29 @@ def log_hook_event(
         session_id: Claude Code session ID
         extra: Optional dict merged into the lean log entry
         input_data: Full stdin payload from Claude Code — written to verbose log
+        output_text: Hook output text (what Claude receives) — written to verbose log
     """
     try:
         LOG_DIR.mkdir(parents=True, exist_ok=True)
+        _rotate_if_needed()
         short_sid = session_id[:12] if session_id else ""
         ts = time.strftime("%Y-%m-%dT%H:%M:%S%z")
 
-        # --- Verbose per-session log (full payload) ---
+        # --- Verbose per-session log (full payload + output) ---
         verbose_ref = None
-        if input_data and short_sid:
+        has_verbose = (input_data or output_text) and short_sid
+        if has_verbose:
             VERBOSE_DIR.mkdir(parents=True, exist_ok=True)
             verbose_path = VERBOSE_DIR / f"{short_sid}.jsonl"
 
-            # Scrub large fields to keep files manageable
-            scrubbed = _scrub_payload(input_data)
-            verbose_entry = {"ts": ts, "event": event, **scrubbed}
+            verbose_entry: dict = {"ts": ts, "event": event}
+
+            if input_data:
+                scrubbed = _scrub_payload(input_data)
+                verbose_entry.update(scrubbed)
+
+            if output_text:
+                verbose_entry["output"] = output_text[:50000]  # Cap at 50KB
 
             with open(verbose_path, "a") as f:
                 f.write(json.dumps(verbose_entry, default=str) + "\n")
@@ -55,6 +64,8 @@ def log_hook_event(
         entry = {"ts": ts, "event": event, "session_id": short_sid}
         if extra:
             entry.update(extra)
+        if output_text:
+            entry["output_len"] = len(output_text)
         if verbose_ref:
             entry["verbose"] = verbose_ref
 
@@ -63,6 +74,29 @@ def log_hook_event(
 
     except Exception:
         pass  # Never break a hook because of logging
+
+
+def _rotate_if_needed() -> None:
+    """Rotate lean log at 10MB, clean verbose files older than 7 days."""
+    try:
+        # Lean log: rotate at 10MB
+        if LOG_FILE.exists() and LOG_FILE.stat().st_size > 10_000_000:
+            rotated = LOG_FILE.with_suffix(".jsonl.1")
+            if rotated.exists():
+                rotated.unlink()
+            LOG_FILE.rename(rotated)
+
+        # Verbose: delete files older than 7 days
+        if VERBOSE_DIR.exists():
+            cutoff = time.time() - 7 * 86400
+            for f in VERBOSE_DIR.glob("*.jsonl"):
+                try:
+                    if f.stat().st_mtime < cutoff:
+                        f.unlink()
+                except OSError:
+                    pass
+    except Exception:
+        pass  # Never break logging because of rotation
 
 
 def _scrub_payload(data: dict) -> dict:
@@ -77,8 +111,7 @@ def _scrub_payload(data: dict) -> dict:
             s = json.dumps(v, default=str) if not isinstance(v, str) else v
             scrubbed[k] = s[:2000] + "..." if len(s) > 2000 else v
         elif k == "prompt":
-            # Keep first 500 chars of user prompt
-            scrubbed[k] = v[:500] if isinstance(v, str) else v
+            scrubbed[k] = v
         elif k == "custom_instructions":
             # Skip — huge and not useful for debugging
             scrubbed[k] = f"[{len(v)} chars]" if isinstance(v, str) else v

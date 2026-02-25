@@ -1155,12 +1155,11 @@ def test_gate_cache_blocks_command() -> tuple[bool, str]:
 
 
 def test_intent_extraction_basic() -> tuple[bool, str]:
-    """Verify extract_intent strips meta-language (tested via hook behavior).
+    """Verify the hook handles prompts and sends them for memory search.
 
-    We verify indirectly: a prompt like "can you help me with Python async"
-    should search for "python async" related memories, not "can you help".
+    The hook sends the raw prompt to the server — no local processing.
+    This is a smoke test that the hook runs without error.
     """
-    # This is more of a smoke test that the hook handles prompts reasonably
     stdin = {
         "prompt": "Can you help me with Python async patterns and asyncio best practices?",
         "cwd": str(Path.cwd()),

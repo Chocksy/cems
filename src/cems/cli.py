@@ -11,6 +11,7 @@ import click
 
 from cems.cli_utils import setup_logging
 from cems.commands.admin import admin
+from cems.commands.debug import debug
 from cems.commands.env import env
 from cems.commands.index import index
 from cems.commands.maintenance import maintenance
@@ -88,6 +89,7 @@ main.add_command(rule)
 main.add_command(env)
 main.add_command(setup)
 main.add_command(uninstall)
+main.add_command(debug)
 
 
 if __name__ == "__main__":

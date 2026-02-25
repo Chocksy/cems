@@ -1319,6 +1319,170 @@ class DocumentStore:
         return results
 
 
+    # =========================================================================
+    # Conflict CRUD (memory_conflicts table)
+    # =========================================================================
+
+    async def add_conflict(
+        self,
+        user_id: str,
+        doc_a_id: str,
+        doc_b_id: str,
+        explanation: str,
+    ) -> str | None:
+        """Record a conflict between two documents.
+
+        Uses ON CONFLICT DO NOTHING to avoid duplicates.
+
+        Args:
+            user_id: Owner user ID
+            doc_a_id: First conflicting document ID
+            doc_b_id: Second conflicting document ID
+            explanation: LLM-generated explanation of the conflict
+
+        Returns:
+            Conflict ID if created, None if already exists
+        """
+        pool = await self._get_pool()
+        # Normalize order to prevent duplicate (a,b) vs (b,a)
+        id_a, id_b = sorted([doc_a_id, doc_b_id])
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                INSERT INTO memory_conflicts (user_id, doc_a_id, doc_b_id, explanation)
+                VALUES ($1, $2, $3, $4)
+                ON CONFLICT (doc_a_id, doc_b_id) DO NOTHING
+                RETURNING id
+                """,
+                UUID(user_id) if isinstance(user_id, str) else user_id,
+                UUID(id_a) if isinstance(id_a, str) else id_a,
+                UUID(id_b) if isinstance(id_b, str) else id_b,
+                explanation,
+            )
+            if row:
+                logger.info(f"Recorded conflict between {id_a[:8]} and {id_b[:8]}")
+                return str(row["id"])
+            return None
+
+    async def get_open_conflicts(
+        self,
+        user_id: str,
+        limit: int = 5,
+    ) -> list[dict[str, Any]]:
+        """Get unresolved conflicts for a user, with document content.
+
+        Args:
+            user_id: Owner user ID
+            limit: Max conflicts to return
+
+        Returns:
+            List of conflict dicts with doc_a_content and doc_b_content
+        """
+        pool = await self._get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT
+                    c.id, c.doc_a_id, c.doc_b_id, c.explanation,
+                    c.status, c.created_at,
+                    da.content AS doc_a_content,
+                    db.content AS doc_b_content
+                FROM memory_conflicts c
+                LEFT JOIN memory_documents da ON da.id = c.doc_a_id AND da.deleted_at IS NULL
+                LEFT JOIN memory_documents db ON db.id = c.doc_b_id AND db.deleted_at IS NULL
+                WHERE c.user_id = $1 AND c.status = 'open'
+                ORDER BY c.created_at DESC
+                LIMIT $2
+                """,
+                UUID(user_id) if isinstance(user_id, str) else user_id,
+                limit,
+            )
+            return [
+                {
+                    "id": str(r["id"]),
+                    "doc_a_id": str(r["doc_a_id"]),
+                    "doc_b_id": str(r["doc_b_id"]),
+                    "explanation": r["explanation"],
+                    "status": r["status"],
+                    "created_at": r["created_at"].isoformat() if r["created_at"] else None,
+                    "doc_a_content": r["doc_a_content"],
+                    "doc_b_content": r["doc_b_content"],
+                }
+                for r in rows
+            ]
+
+    async def get_conflict(
+        self,
+        conflict_id: str,
+        user_id: str,
+    ) -> dict[str, Any] | None:
+        """Get a single conflict by ID with authorization check.
+
+        Args:
+            conflict_id: Conflict UUID
+            user_id: Owner user ID (for authorization)
+
+        Returns:
+            Conflict dict with doc content, or None if not found/not authorized
+        """
+        pool = await self._get_pool()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                SELECT
+                    c.id, c.doc_a_id, c.doc_b_id, c.explanation,
+                    c.status, c.created_at,
+                    da.content AS doc_a_content,
+                    db.content AS doc_b_content
+                FROM memory_conflicts c
+                LEFT JOIN memory_documents da ON da.id = c.doc_a_id AND da.deleted_at IS NULL
+                LEFT JOIN memory_documents db ON db.id = c.doc_b_id AND db.deleted_at IS NULL
+                WHERE c.id = $1 AND c.user_id = $2 AND c.status = 'open'
+                """,
+                UUID(conflict_id) if isinstance(conflict_id, str) else conflict_id,
+                UUID(user_id) if isinstance(user_id, str) else user_id,
+            )
+            if not row:
+                return None
+            return {
+                "id": str(row["id"]),
+                "doc_a_id": str(row["doc_a_id"]),
+                "doc_b_id": str(row["doc_b_id"]),
+                "explanation": row["explanation"],
+                "status": row["status"],
+                "created_at": row["created_at"].isoformat() if row["created_at"] else None,
+                "doc_a_content": row["doc_a_content"],
+                "doc_b_content": row["doc_b_content"],
+            }
+
+    async def resolve_conflict(
+        self,
+        conflict_id: str,
+        resolution: str = "resolved",
+    ) -> bool:
+        """Mark a conflict as resolved or dismissed.
+
+        Args:
+            conflict_id: Conflict UUID
+            resolution: Status to set ("resolved" or "dismissed")
+
+        Returns:
+            True if conflict was found and updated
+        """
+        pool = await self._get_pool()
+        async with pool.acquire() as conn:
+            result = await conn.execute(
+                """
+                UPDATE memory_conflicts
+                SET status = $2, resolved_at = NOW()
+                WHERE id = $1 AND status = 'open'
+                """,
+                UUID(conflict_id) if isinstance(conflict_id, str) else conflict_id,
+                resolution,
+            )
+            return result == "UPDATE 1"
+
+
 # Module-level instance (lazy initialization)
 _store: DocumentStore | None = None
 

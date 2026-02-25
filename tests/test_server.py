@@ -300,11 +300,16 @@ class TestMaintenanceEndpoint:
     @patch.object(memory_handlers, "get_memory")
     def test_maintenance_consolidation(self, mock_get_memory, mock_db, mock_is_db, mock_user):
         """Test POST /api/memory/maintenance endpoint."""
-        # Mock memory instance with all methods needed by ConsolidationJob
+        from unittest.mock import AsyncMock
+
+        # Mock memory instance with async DocumentStore support
         mock_memory = MagicMock()
         mock_memory.config = CEMSConfig(user_id="a6e153f9-41c5-4cbc-9a50-74160af381dd")
-        mock_memory.get_recent_memories.return_value = []
-        mock_memory.get_hot_memories.return_value = []
+        mock_doc_store = AsyncMock()
+        mock_doc_store.get_recent_documents.return_value = []
+        mock_memory._ensure_document_store = AsyncMock(return_value=mock_doc_store)
+        mock_memory._ensure_initialized_async = AsyncMock()
+        mock_memory._async_embedder = AsyncMock()
         mock_get_memory.return_value = mock_memory
 
         mock_session = MagicMock()

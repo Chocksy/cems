@@ -330,6 +330,14 @@ These are foundational principles. Follow them throughout this session.
 
         context = "\n\n".join(context_parts)
 
+        # Log what we're injecting (for debug dashboard visibility)
+        log_hook_event("SessionStartOutput", session_id, {
+            "context_len": len(context),
+            "has_profile": bool(profile.get("context")),
+            "has_foundation": bool(foundation),
+            "context_preview": context[:2000],
+        })
+
         # SessionStart: use hookSpecificOutput for structured injection
         print(json.dumps({
             "hookSpecificOutput": {

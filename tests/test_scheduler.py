@@ -1,6 +1,6 @@
 """Tests for CEMS scheduler — multi-user job execution."""
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -9,6 +9,25 @@ from cems.config import CEMSConfig
 # Valid UUIDs for testing (matches production user format)
 TEST_UUID_1 = "a6e153f9-41c5-4cbc-9a50-74160af381dd"
 TEST_UUID_2 = "aca07e56-20c4-4748-81e5-10ce50c1bc87"
+
+
+def _make_async_memory(user_id: str) -> MagicMock:
+    """Create a mock CEMSMemory with async DocumentStore support."""
+    mock = MagicMock()
+    mock.config = CEMSConfig(user_id=user_id)
+
+    doc_store = AsyncMock()
+    doc_store.get_recent_documents.return_value = []
+    doc_store.get_all_documents.return_value = []
+    doc_store.get_documents_by_category.return_value = []
+
+    mock._ensure_document_store = AsyncMock(return_value=doc_store)
+    mock._ensure_initialized_async = AsyncMock()
+    mock._async_embedder = AsyncMock()
+    mock.update_async = AsyncMock(return_value={"success": True})
+    mock.add_async = AsyncMock(return_value={"id": "new", "success": True})
+
+    return mock
 
 
 @pytest.fixture
@@ -78,17 +97,8 @@ class TestSchedulerMultiUser:
         """Consolidation should run once per active user."""
         mock_get_ids.return_value = [TEST_UUID_1, TEST_UUID_2]
 
-        # Create mock memories for each user
-        mock_mem_1 = MagicMock()
-        mock_mem_1.config = CEMSConfig(user_id=TEST_UUID_1)
-        mock_mem_1.get_recent_memories.return_value = []
-        mock_mem_1.get_hot_memories.return_value = []
-
-        mock_mem_2 = MagicMock()
-        mock_mem_2.config = CEMSConfig(user_id=TEST_UUID_2)
-        mock_mem_2.get_recent_memories.return_value = []
-        mock_mem_2.get_hot_memories.return_value = []
-
+        mock_mem_1 = _make_async_memory(TEST_UUID_1)
+        mock_mem_2 = _make_async_memory(TEST_UUID_2)
         mock_create_mem.side_effect = [mock_mem_1, mock_mem_2]
 
         scheduler._run_consolidation()
@@ -98,9 +108,9 @@ class TestSchedulerMultiUser:
         mock_create_mem.assert_any_call(TEST_UUID_1)
         mock_create_mem.assert_any_call(TEST_UUID_2)
 
-        # Both memories should have had their jobs run
-        mock_mem_1.get_recent_memories.assert_called_once()
-        mock_mem_2.get_recent_memories.assert_called_once()
+        # Both memories should have had _ensure_document_store called
+        mock_mem_1._ensure_document_store.assert_awaited()
+        mock_mem_2._ensure_document_store.assert_awaited()
 
     @patch("cems.scheduler.CEMSScheduler._create_user_memory")
     @patch("cems.scheduler.CEMSScheduler._get_user_ids")
@@ -108,30 +118,10 @@ class TestSchedulerMultiUser:
         self, mock_get_ids, mock_create_mem, scheduler
     ):
         """Reflection should run once per active user."""
-        from unittest.mock import AsyncMock
-
         mock_get_ids.return_value = [TEST_UUID_1, TEST_UUID_2]
 
-        # Create mock memories with async support
-        for _ in range(2):
-            mock_mem = MagicMock()
-            mock_mem.config = CEMSConfig(user_id=TEST_UUID_1)
-            mock_doc_store = AsyncMock()
-            mock_doc_store.get_documents_by_category.return_value = []
-            mock_mem._ensure_document_store = AsyncMock(return_value=mock_doc_store)
-
-        mock_mem_1 = MagicMock()
-        mock_mem_1.config = CEMSConfig(user_id=TEST_UUID_1)
-        mock_doc_store_1 = AsyncMock()
-        mock_doc_store_1.get_documents_by_category.return_value = []
-        mock_mem_1._ensure_document_store = AsyncMock(return_value=mock_doc_store_1)
-
-        mock_mem_2 = MagicMock()
-        mock_mem_2.config = CEMSConfig(user_id=TEST_UUID_2)
-        mock_doc_store_2 = AsyncMock()
-        mock_doc_store_2.get_documents_by_category.return_value = []
-        mock_mem_2._ensure_document_store = AsyncMock(return_value=mock_doc_store_2)
-
+        mock_mem_1 = _make_async_memory(TEST_UUID_1)
+        mock_mem_2 = _make_async_memory(TEST_UUID_2)
         mock_create_mem.side_effect = [mock_mem_1, mock_mem_2]
 
         scheduler._run_reflection()
@@ -146,23 +136,15 @@ class TestSchedulerMultiUser:
         """Summarization should run once per active user."""
         mock_get_ids.return_value = [TEST_UUID_1, TEST_UUID_2]
 
-        mock_mem_1 = MagicMock()
-        mock_mem_1.config = CEMSConfig(user_id=TEST_UUID_1)
-        mock_mem_1.get_old_memories.return_value = []
-        mock_mem_1.get_stale_memories.return_value = []
-
-        mock_mem_2 = MagicMock()
-        mock_mem_2.config = CEMSConfig(user_id=TEST_UUID_2)
-        mock_mem_2.get_old_memories.return_value = []
-        mock_mem_2.get_stale_memories.return_value = []
-
+        mock_mem_1 = _make_async_memory(TEST_UUID_1)
+        mock_mem_2 = _make_async_memory(TEST_UUID_2)
         mock_create_mem.side_effect = [mock_mem_1, mock_mem_2]
 
         scheduler._run_summarization()
 
         assert mock_create_mem.call_count == 2
-        mock_mem_1.get_old_memories.assert_called_once()
-        mock_mem_2.get_old_memories.assert_called_once()
+        mock_mem_1._ensure_document_store.assert_awaited()
+        mock_mem_2._ensure_document_store.assert_awaited()
 
     @patch("cems.scheduler.CEMSScheduler._create_user_memory")
     @patch("cems.scheduler.CEMSScheduler._get_user_ids")
@@ -172,21 +154,15 @@ class TestSchedulerMultiUser:
         """Reindex should run once per active user."""
         mock_get_ids.return_value = [TEST_UUID_1, TEST_UUID_2]
 
-        mock_mem_1 = MagicMock()
-        mock_mem_1.config = CEMSConfig(user_id=TEST_UUID_1)
-        mock_mem_1.metadata_store.get_all_user_memories.return_value = []
-        mock_mem_1.metadata_store.get_stale_memories.return_value = []
-
-        mock_mem_2 = MagicMock()
-        mock_mem_2.config = CEMSConfig(user_id=TEST_UUID_2)
-        mock_mem_2.metadata_store.get_all_user_memories.return_value = []
-        mock_mem_2.metadata_store.get_stale_memories.return_value = []
-
+        mock_mem_1 = _make_async_memory(TEST_UUID_1)
+        mock_mem_2 = _make_async_memory(TEST_UUID_2)
         mock_create_mem.side_effect = [mock_mem_1, mock_mem_2]
 
         scheduler._run_reindex()
 
         assert mock_create_mem.call_count == 2
+        mock_mem_1._ensure_document_store.assert_awaited()
+        mock_mem_2._ensure_document_store.assert_awaited()
 
     @patch("cems.scheduler.CEMSScheduler._get_user_ids")
     def test_skips_when_no_active_users(self, mock_get_ids, scheduler):
@@ -207,19 +183,14 @@ class TestSchedulerMultiUser:
         """If one user's job fails, other users should still be processed."""
         mock_get_ids.return_value = [TEST_UUID_1, TEST_UUID_2]
 
-        # First user's memory creation fails
-        mock_mem_2 = MagicMock()
-        mock_mem_2.config = CEMSConfig(user_id=TEST_UUID_2)
-        mock_mem_2.get_recent_memories.return_value = []
-        mock_mem_2.get_hot_memories.return_value = []
-
+        mock_mem_2 = _make_async_memory(TEST_UUID_2)
         mock_create_mem.side_effect = [RuntimeError("DB connection failed"), mock_mem_2]
 
         # Should not raise — user 2 still runs
         scheduler._run_consolidation()
 
         # User 2's job still ran
-        mock_mem_2.get_recent_memories.assert_called_once()
+        mock_mem_2._ensure_document_store.assert_awaited()
 
 
 class TestSchedulerRunNow:
@@ -231,10 +202,7 @@ class TestSchedulerRunNow:
         self, mock_get_ids, mock_create_mem, scheduler
     ):
         """run_now(memory=...) should run for that specific user only."""
-        mock_memory = MagicMock()
-        mock_memory.config = CEMSConfig(user_id=TEST_UUID_1)
-        mock_memory.get_recent_memories.return_value = []
-        mock_memory.get_hot_memories.return_value = []
+        mock_memory = _make_async_memory(TEST_UUID_1)
 
         result = scheduler.run_now("consolidation", memory=mock_memory)
 
@@ -253,16 +221,8 @@ class TestSchedulerRunNow:
         """run_now() without memory should iterate all active users."""
         mock_get_ids.return_value = [TEST_UUID_1, TEST_UUID_2]
 
-        mock_mem_1 = MagicMock()
-        mock_mem_1.config = CEMSConfig(user_id=TEST_UUID_1)
-        mock_mem_1.get_recent_memories.return_value = []
-        mock_mem_1.get_hot_memories.return_value = []
-
-        mock_mem_2 = MagicMock()
-        mock_mem_2.config = CEMSConfig(user_id=TEST_UUID_2)
-        mock_mem_2.get_recent_memories.return_value = []
-        mock_mem_2.get_hot_memories.return_value = []
-
+        mock_mem_1 = _make_async_memory(TEST_UUID_1)
+        mock_mem_2 = _make_async_memory(TEST_UUID_2)
         mock_create_mem.side_effect = [mock_mem_1, mock_mem_2]
 
         result = scheduler.run_now("consolidation")
@@ -285,17 +245,9 @@ class TestSchedulerRunNow:
             scheduler.run_now("invalid_job")
 
     def test_run_now_valid_job_types(self, scheduler):
-        """run_now() should accept consolidation, summarization, reindex."""
-        mock_memory = MagicMock()
-        mock_memory.config = CEMSConfig(user_id=TEST_UUID_1)
-        mock_memory.get_recent_memories.return_value = []
-        mock_memory.get_hot_memories.return_value = []
-        mock_memory.get_old_memories.return_value = []
-        mock_memory.get_stale_memories.return_value = []
-        mock_memory.metadata_store.get_all_user_memories.return_value = []
-        mock_memory.metadata_store.get_stale_memories.return_value = []
-
-        for job_type in ["consolidation", "summarization", "reindex"]:
+        """run_now() should accept consolidation, summarization, reindex, reflect."""
+        for job_type in ["consolidation", "summarization", "reindex", "reflect"]:
+            mock_memory = _make_async_memory(TEST_UUID_1)
             result = scheduler.run_now(job_type, memory=mock_memory)
             assert isinstance(result, dict)
 
@@ -396,57 +348,12 @@ class TestCreateUserMemory:
 
 
 class TestMetadataStoreUserFiltering:
-    """Tests for MetadataStore user_id filtering (Phase 2 regression tests)."""
+    """Tests for MetadataStore user_id filtering (Phase 2 regression tests).
 
-    def test_get_stale_memories_requires_valid_uuid(self):
-        """get_stale_memories should fail with non-UUID user_id."""
-        from cems.db.metadata_store import PostgresMetadataStore
-
-        store = PostgresMetadataStore.__new__(PostgresMetadataStore)
-        store._db = MagicMock()
-
-        with pytest.raises(ValueError, match="badly formed"):
-            store.get_stale_memories("default", days=90)
-
-    def test_get_hot_memories_requires_valid_uuid(self):
-        """get_hot_memories should fail with non-UUID user_id."""
-        from cems.db.metadata_store import PostgresMetadataStore
-
-        store = PostgresMetadataStore.__new__(PostgresMetadataStore)
-        store._db = MagicMock()
-
-        with pytest.raises(ValueError, match="badly formed"):
-            store.get_hot_memories("default", threshold=5)
-
-    def test_get_recent_memories_requires_valid_uuid(self):
-        """get_recent_memories should fail with non-UUID user_id."""
-        from cems.db.metadata_store import PostgresMetadataStore
-
-        store = PostgresMetadataStore.__new__(PostgresMetadataStore)
-        store._db = MagicMock()
-
-        with pytest.raises(ValueError, match="badly formed"):
-            store.get_recent_memories("default", hours=24)
-
-    def test_get_old_memories_requires_valid_uuid(self):
-        """get_old_memories should fail with non-UUID user_id."""
-        from cems.db.metadata_store import PostgresMetadataStore
-
-        store = PostgresMetadataStore.__new__(PostgresMetadataStore)
-        store._db = MagicMock()
-
-        with pytest.raises(ValueError, match="badly formed"):
-            store.get_old_memories("default", days=30)
-
-    def test_get_all_user_memories_requires_valid_uuid(self):
-        """get_all_user_memories should fail with non-UUID user_id."""
-        from cems.db.metadata_store import PostgresMetadataStore
-
-        store = PostgresMetadataStore.__new__(PostgresMetadataStore)
-        store._db = MagicMock()
-
-        with pytest.raises(ValueError, match="badly formed"):
-            store.get_all_user_memories("default")
+    NOTE: Tests for removed methods (get_stale_memories, get_hot_memories,
+    get_recent_memories, get_old_memories, get_all_user_memories) were deleted
+    when those methods were removed from PostgresMetadataStore.
+    """
 
     def test_get_all_categories_requires_valid_uuid(self):
         """get_all_categories should fail with non-UUID user_id."""
@@ -531,28 +438,6 @@ class TestMetadataStoreUserFiltering:
         )
         # Should not raise — "unknown" is handled gracefully (user_uuid=None)
         store.save_metadata(metadata)
-
-    def test_save_category_summary_includes_scope_id(self):
-        """save_category_summary should include scope_id in the INSERT values."""
-        from datetime import UTC, datetime
-
-        from cems.db.metadata_store import PostgresMetadataStore
-        from cems.models import CategorySummary, MemoryScope
-
-        store = PostgresMetadataStore.__new__(PostgresMetadataStore)
-        mock_db = MagicMock()
-        store._db = mock_db
-
-        summary = CategorySummary(
-            user_id=TEST_UUID_1,
-            category="general",
-            scope=MemoryScope.PERSONAL,
-            summary="Test summary",
-            item_count=5,
-            last_updated=datetime.now(UTC),
-        )
-        # Should not raise — valid UUID gets converted to scope_id
-        store.save_category_summary(summary)
 
     def test_valid_uuid_does_not_raise(self):
         """Valid UUID user_id should not raise ValueError."""

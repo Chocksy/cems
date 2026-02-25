@@ -316,6 +316,12 @@ async def api_memory_search(request: Request):
         if not query:
             return JSONResponse({"error": "query is required"}, status_code=400)
 
+        # Server-side query cap: embedding models work best with focused text.
+        # text-embedding-3-small has 8191 token limit (~32K chars), but
+        # effectiveness degrades well before that. Cap at 2000 chars.
+        if len(query) > 2000:
+            query = query[:2000]
+
         limit = body.get("limit", 10)
         scope = body.get("scope", "both")
         max_tokens = body.get("max_tokens", 4000)
@@ -665,6 +671,23 @@ async def api_memory_profile(request: Request):
             proj_list = [f"- {m['content'][:100]}..." for m in components["project_context"][:3]]
             context_parts.append(f"## Project Context ({project})\n" + "\n".join(proj_list))
 
+        # 6. Memory conflicts (unresolved)
+        try:
+            conflicts = await doc_store.get_open_conflicts(user_id, limit=3)
+        except Exception:
+            conflicts = []  # Table may not exist yet
+        if conflicts:
+            conflict_lines = []
+            for c in conflicts:
+                conflict_lines.append(
+                    f"- **Conflict** (id: {c['id'][:8]}): {c['explanation']}"
+                )
+            context_parts.append(
+                "## Memory Conflicts Detected\n"
+                + "\n".join(conflict_lines)
+                + "\n\nResolve via: POST /api/memory/conflict/resolve"
+            )
+
         context = "\n\n".join(context_parts) if context_parts else ""
 
         # Estimate tokens (rough: 4 chars per token)
@@ -793,12 +816,10 @@ async def api_memory_maintenance(request: Request):
             from cems.maintenance.summarization import SummarizationJob
 
             results = {}
-            results["consolidation"] = ConsolidationJob(memory).run()
-            results["summarization"] = SummarizationJob(memory).run()
-            results["reindex"] = ReindexJob(memory).run()
-
-            reflector = ObservationReflector(memory)
-            results["reflect"] = await reflector.run_async()
+            results["consolidation"] = await ConsolidationJob(memory).run_async()
+            results["summarization"] = await SummarizationJob(memory).run_async()
+            results["reindex"] = await ReindexJob(memory).run_async()
+            results["reflect"] = await ObservationReflector(memory).run_async()
 
             return JSONResponse({
                 "success": True,
@@ -808,13 +829,15 @@ async def api_memory_maintenance(request: Request):
 
         # Single job type — run directly with user's memory
         from cems.maintenance.consolidation import ConsolidationJob
+        from cems.maintenance.observation_reflector import ObservationReflector
         from cems.maintenance.reindex import ReindexJob
         from cems.maintenance.summarization import SummarizationJob
 
         jobs = {
-            "consolidation": lambda: ConsolidationJob(memory).run(),
-            "summarization": lambda: SummarizationJob(memory).run(),
-            "reindex": lambda: ReindexJob(memory).run(),
+            "consolidation": ConsolidationJob(memory).run_async,
+            "summarization": SummarizationJob(memory).run_async,
+            "reindex": ReindexJob(memory).run_async,
+            "reflect": ObservationReflector(memory).run_async,
         }
 
         if job_type not in jobs:
@@ -823,7 +846,7 @@ async def api_memory_maintenance(request: Request):
                 "error": f"Unknown job type: {job_type}. Use: consolidation, summarization, reindex, reflect, all",
             }, status_code=400)
 
-        result = jobs[job_type]()
+        result = await jobs[job_type]()
         return JSONResponse({
             "success": True,
             "job_type": job_type,
@@ -836,6 +859,96 @@ async def api_memory_maintenance(request: Request):
             "job_type": body.get("job_type", "unknown") if "body" in dir() else "unknown",
             "error": str(e),
         }, status_code=500)
+
+
+async def api_memory_conflict_resolve(request: Request):
+    """REST API endpoint to resolve a memory conflict.
+
+    POST /api/memory/conflict/resolve
+    Body: {"conflict_id": "uuid", "resolution": "keep_a|keep_b|merge|dismiss"}
+
+    Actions:
+        keep_a: Soft-delete doc_b, resolve conflict
+        keep_b: Soft-delete doc_a, resolve conflict
+        merge: LLM merge both docs, update doc_a, soft-delete doc_b, resolve
+        dismiss: Mark conflict as dismissed (both docs stay)
+    """
+    try:
+        body = await request.json()
+        conflict_id = body.get("conflict_id")
+        resolution = body.get("resolution", "dismiss")
+
+        if not conflict_id:
+            return JSONResponse(
+                {"success": False, "error": "conflict_id required"}, status_code=400
+            )
+
+        valid_resolutions = {"keep_a", "keep_b", "merge", "dismiss"}
+        if resolution not in valid_resolutions:
+            return JSONResponse(
+                {"success": False, "error": f"Invalid resolution. Use: {sorted(valid_resolutions)}"},
+                status_code=400,
+            )
+
+        memory = get_memory()
+        doc_store = await memory._ensure_document_store()
+
+        # Direct lookup by ID with user authorization
+        conflict = await doc_store.get_conflict(conflict_id, memory.config.user_id)
+
+        if not conflict:
+            return JSONResponse(
+                {"success": False, "error": "Conflict not found or already resolved"},
+                status_code=404,
+            )
+
+        doc_a_id = conflict["doc_a_id"]
+        doc_b_id = conflict["doc_b_id"]
+
+        if resolution == "keep_a":
+            await doc_store.delete_document(doc_b_id, hard=False)
+            await doc_store.resolve_conflict(conflict_id, "resolved")
+
+        elif resolution == "keep_b":
+            await doc_store.delete_document(doc_a_id, hard=False)
+            await doc_store.resolve_conflict(conflict_id, "resolved")
+
+        elif resolution == "merge":
+            from cems.llm import merge_memory_contents
+
+            content_a = conflict.get("doc_a_content", "")
+            content_b = conflict.get("doc_b_content", "")
+
+            if content_a and content_b:
+                merged = merge_memory_contents(
+                    memories=[{"memory": content_a}, {"memory": content_b}],
+                    model=memory.config.llm_model,
+                )
+                if merged:
+                    await memory.update_async(doc_a_id, merged)
+                    await doc_store.delete_document(doc_b_id, hard=False)
+                    await doc_store.resolve_conflict(conflict_id, "resolved")
+                else:
+                    return JSONResponse(
+                        {"success": False, "error": "Merge failed — LLM returned empty result"},
+                        status_code=500,
+                    )
+            else:
+                # One or both documents already deleted — resolve as no-op
+                await doc_store.resolve_conflict(conflict_id, "resolved")
+
+        elif resolution == "dismiss":
+            await doc_store.resolve_conflict(conflict_id, "dismissed")
+
+        return JSONResponse({
+            "success": True,
+            "conflict_id": conflict_id,
+            "resolution": resolution,
+        })
+
+    except Exception as e:
+        logger.error(f"API conflict_resolve error: {e}")
+        return JSONResponse({"success": False, "error": str(e)}, status_code=500)
 
 
 async def api_memory_status(request: Request):

@@ -181,8 +181,7 @@ class CEMSMemory(WriteMixin, SearchMixin, CRUDMixin, AnalyticsMixin, MetadataMix
     # add() and add_async() are provided by WriteMixin
     # search(), search_async(), _search_raw(), _search_raw_async() are provided by SearchMixin
     # get(), get_all(), update(), update_async(), delete(), delete_async(), forget(), history() are provided by CRUDMixin
-    # get_stale_memories(), get_hot_memories(), get_recent_memories(), get_old_memories() are provided by AnalyticsMixin
-    # promote_memory(), archive_memory() are provided by AnalyticsMixin
+    # AnalyticsMixin is kept for future async analytics methods
     # get_metadata(), get_category_counts(), get_category_counts_async(), get_all_categories() are provided by MetadataMixin
     # get_recently_accessed(), get_category_summary(), get_all_category_summaries() are provided by MetadataMixin
     # metadata_store property is provided by MetadataMixin

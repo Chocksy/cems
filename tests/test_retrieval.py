@@ -376,28 +376,28 @@ class TestRelevanceScoring:
         assert 0.32 < score < 0.34  # Should be close to 0.33
 
     def test_apply_score_adjustments_priority_boost(self):
-        """Score should be multiplied by priority (then clamped)."""
+        """Score should be multiplied by priority (no upper clamp)."""
         result = self._create_result(score=1.0, priority=2.0, days_ago=0)
         score = apply_score_adjustments(result)
-        assert score == 1.0  # Clamped to [0, 1]
+        assert score == 2.0  # No upper clamp — 1.0 * 2.0 = 2.0
 
     def test_apply_score_adjustments_pinned_boost(self):
-        """Pinned memories should get a 10% boost (then clamped)."""
+        """Pinned memories should get a 10% boost (no upper clamp)."""
         unpinned_result = self._create_result(score=1.0, pinned=False, days_ago=0)
         pinned_result = self._create_result(score=1.0, pinned=True, days_ago=0)
 
         unpinned_score = apply_score_adjustments(unpinned_result)
         pinned_score = apply_score_adjustments(pinned_result)
 
-        assert pinned_score == 1.0  # Clamped to [0, 1]
+        assert pinned_score == 1.1  # No upper clamp — 1.0 * 1.1 = 1.1
 
     def test_apply_score_adjustments_combined_factors(self):
-        """Score should combine all factors correctly (with clamping)."""
+        """Score should combine all factors correctly (no upper clamp)."""
         result = self._create_result(score=0.8, priority=1.5, pinned=True, days_ago=60)
         score = apply_score_adjustments(result)
         # Expected: 0.8 * 0.5 (time decay at 60 days) * 1.5 (priority) * 1.1 (pinned)
         expected = 0.8 * 0.5 * 1.5 * 1.1
-        expected = min(1.0, expected)
+        # No upper clamp — expected is 0.66 which is already < 1.0
         assert abs(score - expected) < 0.01
 
     def test_apply_score_adjustments_no_category_penalty(self):
@@ -413,10 +413,10 @@ class TestRelevanceScoring:
         assert score == 1.0
 
     def test_apply_score_adjustments_project_boost(self):
-        """Same-project memories should get 30% boost (then clamped)."""
+        """Same-project memories should get 30% boost (no upper clamp)."""
         result = self._create_result(score=1.0, source_ref="project:acme/api", days_ago=0)
         score = apply_score_adjustments(result, project="acme/api")
-        assert score == 1.0
+        assert score == 1.3  # No upper clamp — 1.0 * 1.3 = 1.3
 
     def test_apply_score_adjustments_project_penalty(self):
         """Different-project memories should get 20% penalty."""
@@ -433,6 +433,33 @@ class TestRelevanceScoring:
             skip_category_penalty=True,
         )
         assert score == 1.0
+
+    # --- Phase 2: New scoring tests ---
+
+    def test_project_boost_above_one(self):
+        """Same-project item at 0.85 should boost to 1.105 (not clamped)."""
+        result = self._create_result(score=0.85, source_ref="project:acme/api", days_ago=0)
+        score = apply_score_adjustments(result, project="acme/api")
+        # 0.85 * 1.3 = 1.105 — should NOT be clamped to 1.0
+        assert abs(score - 1.105) < 0.001
+
+    def test_null_project_penalty(self):
+        """Items with no source_ref get 0.9x when project filter is active."""
+        result = self._create_result(score=1.0, source_ref=None, days_ago=0)
+        score = apply_score_adjustments(result, project="acme/api")
+        assert abs(score - 0.9) < 0.001
+
+    def test_no_project_filter_no_penalty(self):
+        """Items with no source_ref are unaffected when no project is set."""
+        result = self._create_result(score=1.0, source_ref=None, days_ago=0)
+        score = apply_score_adjustments(result)  # No project
+        assert score == 1.0  # No penalty
+
+    def test_clamp_still_floors_at_zero(self):
+        """Negative scores should still be clamped to 0.0."""
+        result = self._create_result(score=-0.5, days_ago=0)
+        score = apply_score_adjustments(result)
+        assert score == 0.0
 
 
 class TestLexicalSignal:

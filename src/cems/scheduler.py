@@ -1,5 +1,6 @@
 """APScheduler-based maintenance scheduler for CEMS."""
 
+import asyncio
 import logging
 from typing import TYPE_CHECKING
 
@@ -18,23 +19,26 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _run_async(coro):
+    """Run an async coroutine from a sync scheduler context."""
+    loop = asyncio.new_event_loop()
+    try:
+        return loop.run_until_complete(coro)
+    finally:
+        loop.close()
+
+
 class CEMSScheduler:
     """Background scheduler for CEMS maintenance jobs.
 
     Manages four scheduled maintenance jobs that run per-user:
-    - Nightly (3 AM): Consolidation - merge duplicates, promote hot memories
+    - Nightly (3 AM): Consolidation - merge duplicates
     - Nightly (3:30 AM): Reflection - consolidate overlapping observations
     - Weekly (Sunday 4 AM): Summarization - compress old memories, prune stale
     - Monthly (1st 5 AM): Re-indexing - rebuild embeddings, archive dead memories
     """
 
     def __init__(self, config: "CEMSConfig"):
-        """Initialize the scheduler.
-
-        Args:
-            config: Base CEMSConfig with API keys and DB URL.
-                    Per-user memory instances are created on each job run.
-        """
         self.config = config
         self._scheduler = BackgroundScheduler()
         self._setup_jobs()
@@ -57,7 +61,6 @@ class CEMSScheduler:
 
     def _setup_jobs(self) -> None:
         """Set up all scheduled jobs."""
-        # Nightly consolidation
         self._scheduler.add_job(
             self._run_consolidation,
             CronTrigger(hour=self.config.nightly_hour),
@@ -66,7 +69,6 @@ class CEMSScheduler:
             replace_existing=True,
         )
 
-        # Nightly observation reflection (runs 30 min after consolidation)
         reflect_hour = self.config.nightly_hour
         self._scheduler.add_job(
             self._run_reflection,
@@ -76,7 +78,6 @@ class CEMSScheduler:
             replace_existing=True,
         )
 
-        # Weekly summarization
         self._scheduler.add_job(
             self._run_summarization,
             CronTrigger(
@@ -88,7 +89,6 @@ class CEMSScheduler:
             replace_existing=True,
         )
 
-        # Monthly re-indexing
         self._scheduler.add_job(
             self._run_reindex,
             CronTrigger(
@@ -113,16 +113,13 @@ class CEMSScheduler:
         for user_id in user_ids:
             try:
                 memory = self._create_user_memory(user_id)
-                job = ConsolidationJob(memory)
-                result = job.run()
+                result = _run_async(ConsolidationJob(memory).run_async())
                 logger.info(f"Consolidation for user {user_id[:8]}: {result}")
             except Exception as e:
                 logger.error(f"Consolidation failed for user {user_id[:8]}: {e}")
 
     def _run_reflection(self) -> None:
         """Run the nightly observation reflection job for all users."""
-        import asyncio
-
         logger.info("Starting nightly observation reflection...")
         user_ids = self._get_user_ids()
         if not user_ids:
@@ -132,12 +129,7 @@ class CEMSScheduler:
         for user_id in user_ids:
             try:
                 memory = self._create_user_memory(user_id)
-                reflector = ObservationReflector(memory)
-                loop = asyncio.new_event_loop()
-                try:
-                    result = loop.run_until_complete(reflector.run_async())
-                finally:
-                    loop.close()
+                result = _run_async(ObservationReflector(memory).run_async())
                 logger.info(f"Reflection for user {user_id[:8]}: {result}")
             except Exception as e:
                 logger.error(f"Reflection failed for user {user_id[:8]}: {e}")
@@ -153,8 +145,7 @@ class CEMSScheduler:
         for user_id in user_ids:
             try:
                 memory = self._create_user_memory(user_id)
-                job = SummarizationJob(memory)
-                result = job.run()
+                result = _run_async(SummarizationJob(memory).run_async())
                 logger.info(f"Summarization for user {user_id[:8]}: {result}")
             except Exception as e:
                 logger.error(f"Summarization failed for user {user_id[:8]}: {e}")
@@ -170,8 +161,7 @@ class CEMSScheduler:
         for user_id in user_ids:
             try:
                 memory = self._create_user_memory(user_id)
-                job = ReindexJob(memory)
-                result = job.run()
+                result = _run_async(ReindexJob(memory).run_async())
                 logger.info(f"Re-indexing for user {user_id[:8]}: {result}")
             except Exception as e:
                 logger.error(f"Re-indexing failed for user {user_id[:8]}: {e}")
@@ -192,21 +182,20 @@ class CEMSScheduler:
         """Run a maintenance job immediately.
 
         Args:
-            job_type: One of "consolidation", "summarization", "reindex"
+            job_type: One of "consolidation", "summarization", "reindex", "reflect"
             memory: Optional per-user memory instance. If provided, runs for
                     that user only. If None, runs for all active users.
 
         Returns:
             Job result dict (single user) or dict of user_id -> result (all users)
         """
-        valid_jobs = {"consolidation", "summarization", "reindex"}
+        valid_jobs = {"consolidation", "summarization", "reindex", "reflect"}
         if job_type not in valid_jobs:
             raise ValueError(f"Unknown job type: {job_type}. Use: {sorted(valid_jobs)}")
 
         if memory:
             return self._run_job_for_memory(job_type, memory)
 
-        # Run for all users
         user_ids = self._get_user_ids()
         if not user_ids:
             return {"skipped": "no active users"}
@@ -223,20 +212,18 @@ class CEMSScheduler:
     def _run_job_for_memory(self, job_type: str, memory: "CEMSMemory") -> dict:
         """Run a specific job type with a given memory instance."""
         if job_type == "consolidation":
-            return ConsolidationJob(memory).run()
+            return _run_async(ConsolidationJob(memory).run_async())
         elif job_type == "summarization":
-            return SummarizationJob(memory).run()
+            return _run_async(SummarizationJob(memory).run_async())
         elif job_type == "reindex":
-            return ReindexJob(memory).run()
+            return _run_async(ReindexJob(memory).run_async())
+        elif job_type == "reflect":
+            return _run_async(ObservationReflector(memory).run_async())
         else:
             raise ValueError(f"Unknown job type: {job_type}")
 
     def get_jobs(self) -> list[dict]:
-        """Get list of scheduled jobs.
-
-        Returns:
-            List of job info dicts
-        """
+        """Get list of scheduled jobs."""
         jobs = []
         for job in self._scheduler.get_jobs():
             next_run = getattr(job, "next_run_time", None)
@@ -254,12 +241,5 @@ class CEMSScheduler:
 
 
 def create_scheduler(config: "CEMSConfig") -> CEMSScheduler:
-    """Create and return a CEMS scheduler.
-
-    Args:
-        config: Base CEMSConfig
-
-    Returns:
-        CEMSScheduler instance (not started)
-    """
+    """Create and return a CEMS scheduler."""
     return CEMSScheduler(config)

@@ -51,6 +51,11 @@ from cems.llm.observation_reflection import (
     reflect_observations,
 )
 
+# Deduplication exports
+from cems.llm.dedup import (
+    classify_memory_pair,
+)
+
 __all__ = [
     # Client
     "OpenRouterClient",
@@ -69,4 +74,6 @@ __all__ = [
     "extract_observations",
     # Observation reflection
     "reflect_observations",
+    # Deduplication
+    "classify_memory_pair",
 ]

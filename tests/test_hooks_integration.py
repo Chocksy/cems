@@ -715,12 +715,12 @@ class TestGateCachePopulation:
 
 
 # ---------------------------------------------------------------------------
-# OFFLINE TESTS: extract_intent and gate pattern helpers (unit tests)
+# OFFLINE TESTS: gate pattern helpers (unit tests)
 # ---------------------------------------------------------------------------
 
 
-class TestExtractIntent:
-    """Unit tests for the intent extraction logic in user_prompts_submit.
+class TestGatePatterns:
+    """Unit tests for gate pattern parsing in user_prompts_submit.
 
     These import the functions directly rather than running via subprocess.
     """
@@ -734,85 +734,8 @@ class TestExtractIntent:
         )
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)
-        self.extract_intent = mod.extract_intent
-        self.extract_keywords = mod.extract_keywords
         self.extract_gate_pattern = mod.extract_gate_pattern
         self.pattern_to_regex = mod.pattern_to_regex
-
-    def test_strips_leading_meta_phrase(self):
-        """A single leading meta-phrase at start of prompt should be stripped."""
-        # "can you" is at the start so it gets stripped
-        result = self.extract_intent("can you fix the authentication bug")
-        assert "can you" not in result
-        assert "authentication" in result
-
-    def test_strips_help_me_at_start(self):
-        """'help me' at start should be stripped."""
-        result = self.extract_intent("help me debug the login flow")
-        assert "help me" not in result
-        assert "login" in result
-
-    def test_nested_meta_phrases_partial_strip(self):
-        """Nested meta-phrases: only the outermost match is stripped per pass.
-
-        The patterns are applied sequentially, each once. So 'can you help me X'
-        strips 'can you' leaving 'help me X' (but 'help me' is not re-matched
-        by the same pattern since it already ran).
-        """
-        result = self.extract_intent("can you help me fix the authentication bug")
-        # "can you" gets stripped (first alternation in first pattern)
-        assert "can you" not in result
-        # "help me" remains because the first regex pattern already consumed
-        # its match with "can you" and the patterns are not re-applied
-        assert "help me" in result
-
-    def test_strips_ultrathink_flag(self):
-        """The -u flag should be stripped before processing."""
-        result = self.extract_intent("fix the auth module -u")
-        assert "-u" not in result
-        assert "auth" in result
-
-    def test_very_short_intent_uses_keywords(self):
-        """If intent is < 5 chars after stripping, fall back to keywords."""
-        result = self.extract_intent("please do it")
-        # "do it" strips to very short -> keyword extraction
-        assert isinstance(result, str)
-
-    def test_very_long_intent_uses_keywords(self):
-        """If intent > 200 chars, fall back to keyword extraction."""
-        long_prompt = "fix " + "the very important critical " * 30 + "bug"
-        result = self.extract_intent(long_prompt)
-        # Should be much shorter than 200 chars (keyword extraction caps at 5 words)
-        assert len(result) < 200
-
-    def test_strips_trailing_please(self):
-        """Trailing 'please' should be stripped."""
-        result = self.extract_intent("fix the login bug please")
-        assert not result.endswith("please")
-        assert "login" in result
-
-    def test_strips_question_mark(self):
-        """Trailing question mark should be stripped."""
-        result = self.extract_intent("what is the embedding dimension?")
-        assert not result.endswith("?")
-
-    def test_extract_keywords_filters_stop_words(self):
-        """Keywords extraction should filter out common stop words."""
-        result = self.extract_keywords("I want to use the authentication module for my project")
-        assert "authentication" in result
-        assert "module" in result
-        assert "project" in result
-        # Stop words should be filtered
-        assert " i " not in f" {result} "
-        assert " the " not in f" {result} "
-
-    def test_extract_keywords_caps_at_5(self):
-        """Keywords extraction should return at most 5 keywords."""
-        result = self.extract_keywords(
-            "authentication module project configuration deployment testing debugging"
-        )
-        words = result.split()
-        assert len(words) <= 5
 
     def test_gate_pattern_em_dash(self):
         """Gate rule with em dash separator should parse correctly."""
