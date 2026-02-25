@@ -43,7 +43,7 @@ class ConsolidationJob:
 
         Args:
             full_sweep: If True, process ALL documents (not just last 7 days).
-            limit: Override document limit (0 = use defaults: 100 nightly, 500 sweep).
+            limit: Override document limit (0 = use defaults: 5000 nightly, 500 sweep).
             offset: Skip first N documents (for paginated sweeps).
 
         Returns:
@@ -61,11 +61,11 @@ class ConsolidationJob:
                 f"Full sweep: {len(docs)} documents (offset={offset}, limit={effective_limit})"
             )
         else:
-            effective_limit = limit or 100
+            effective_limit = limit or 5000
             docs = await doc_store.get_recent_documents(
                 user_id, hours=168, limit=effective_limit
             )
-            logger.info(f"Found {len(docs)} recent documents to check")
+            logger.info(f"Nightly consolidation: {len(docs)} documents from last 7 days")
 
         result = await self._merge_duplicates(docs)
         result["memories_checked"] = len(docs)
