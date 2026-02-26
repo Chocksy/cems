@@ -961,3 +961,39 @@ class TestSnippetTruncation:
         assert serialized[1]["truncated"] is True
         assert serialized[1]["full_length"] == 800
         assert len(serialized[1]["content"]) < 800
+
+    def test_strips_segment_separators(self):
+        """Session summary segment separators (---) are removed."""
+        from cems.memory.retrieval import _make_snippet
+
+        text = "First segment about a topic.\n\n---\n\nSecond segment continues here."
+        snippet, _ = _make_snippet(text)
+        assert "---" not in snippet
+        assert "First segment" in snippet
+        assert "Second segment" in snippet
+
+    def test_trims_leading_partial_sentence(self):
+        """Content starting mid-sentence (leading comma/period) is cleaned."""
+        from cems.memory.retrieval import _make_snippet
+
+        text = ", including potential screenshots or videos. The user started a review."
+        snippet, _ = _make_snippet(text)
+        assert not snippet.startswith(",")
+        assert "including" in snippet
+
+    def test_trims_leading_whitespace_and_punctuation(self):
+        from cems.memory.retrieval import _make_snippet
+
+        text = "  . Some continuation text after a chunk boundary."
+        snippet, _ = _make_snippet(text)
+        assert snippet.startswith("Some")
+
+    def test_clean_content_with_bare_separator(self):
+        """Bare --- lines (without double newlines) are also stripped."""
+        from cems.memory.retrieval import _clean_content
+
+        text = "Line one.\n---\nLine two."
+        cleaned = _clean_content(text)
+        assert "---" not in cleaned
+        assert "Line one." in cleaned
+        assert "Line two." in cleaned

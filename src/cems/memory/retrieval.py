@@ -17,16 +17,46 @@ logger = logging.getLogger(__name__)
 # fetch the full document via GET /api/memory/get?id=<memory_id>.
 _SNIPPET_CHARS = 500
 
+# Session summary segments are joined with this separator.
+# Strip it before snippeting to avoid noise in results.
+_SEGMENT_SEP = "\n\n---\n\n"
+
+import re
+
+# Pattern to detect content that starts mid-sentence
+# (leading comma/period/semicolon, or lowercase after whitespace)
+_MID_SENTENCE_RE = re.compile(r"^[\s,;.!?)}\]]+")
+
+
+def _clean_content(content: str) -> str:
+    """Clean content for snippet display.
+
+    - Strips session summary segment separators (---)
+    - Trims leading partial sentence fragments from mid-chunk starts
+    """
+    # Replace segment separators with single newline
+    cleaned = content.replace(_SEGMENT_SEP, "\n\n")
+    # Also handle bare --- lines (with varying whitespace)
+    cleaned = re.sub(r"\n---\n", "\n", cleaned)
+
+    # If chunk starts mid-sentence, skip to next sentence start
+    match = _MID_SENTENCE_RE.match(cleaned)
+    if match:
+        cleaned = cleaned[match.end():]
+
+    return cleaned.strip()
+
 
 def _make_snippet(content: str) -> tuple[str, bool]:
     """Return (snippet, was_truncated)."""
-    if len(content) <= _SNIPPET_CHARS:
-        return content, False
-    cut = content[:_SNIPPET_CHARS]
+    cleaned = _clean_content(content)
+    if len(cleaned) <= _SNIPPET_CHARS:
+        return cleaned, len(cleaned) < len(content)
+    cut = cleaned[:_SNIPPET_CHARS]
     for sep in (". ", ".\n", "\n\n", "\n"):
         pos = cut.rfind(sep)
         if pos > _SNIPPET_CHARS // 2:
-            return content[: pos + len(sep)].rstrip(), True
+            return cleaned[: pos + len(sep)].rstrip(), True
     return cut.rstrip() + "...", True
 
 
