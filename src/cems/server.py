@@ -78,7 +78,6 @@ def create_http_app():
     """
     from starlette.applications import Starlette
     from starlette.middleware.base import BaseHTTPMiddleware
-    from starlette.middleware.trustedhost import TrustedHostMiddleware
     from starlette.requests import Request
     from starlette.responses import JSONResponse
     from starlette.routing import Route
@@ -143,8 +142,9 @@ def create_http_app():
                     # Get team from header (optional, to select team context)
                     team_id = request.headers.get("x-team-id")
             except Exception as e:
+                logger.error(f"Auth middleware database error: {e}")
                 return JSONResponse(
-                    {"error": f"Database error: {e}"},
+                    {"error": "Database unavailable"},
                     status_code=503,
                 )
 
@@ -216,8 +216,7 @@ def create_http_app():
     # Create Starlette app
     app = Starlette(routes=routes)
 
-    # Add middlewares (order: last added = first executed)
-    app.add_middleware(TrustedHostMiddleware, allowed_hosts=["*"])
+    # Add middlewares
     app.add_middleware(UserContextMiddleware)
 
     return app

@@ -401,15 +401,15 @@ class TestRelevanceScoring:
         assert abs(score - expected) < 0.01
 
     def test_apply_score_adjustments_no_category_penalty(self):
-        """Cross-category penalty is removed — category mismatch has no effect."""
+        """Cross-category penalty is removed — category has no effect on scoring."""
         result = self._create_result(score=1.0, category="deployment", days_ago=0)
-        score = apply_score_adjustments(result, inferred_category="development")
+        score = apply_score_adjustments(result)
         assert score == 1.0  # No penalty applied
 
     def test_apply_score_adjustments_same_category(self):
         """Same category — no special treatment (penalty removed)."""
         result = self._create_result(score=1.0, category="deployment", days_ago=0)
-        score = apply_score_adjustments(result, inferred_category="deployment")
+        score = apply_score_adjustments(result)
         assert score == 1.0
 
     def test_apply_score_adjustments_project_boost(self):
@@ -424,12 +424,11 @@ class TestRelevanceScoring:
         score = apply_score_adjustments(result, project="acme/api")
         assert score == 0.8
 
-    def test_apply_score_adjustments_skip_category_penalty_compat(self):
-        """skip_category_penalty param still accepted for compat (no-op)."""
+    def test_apply_score_adjustments_skip_category_penalty(self):
+        """skip_category_penalty param is accepted (no-op, category scoring removed)."""
         result = self._create_result(score=1.0, category="deployment", days_ago=0)
         score = apply_score_adjustments(
             result,
-            inferred_category="development",
             skip_category_penalty=True,
         )
         assert score == 1.0

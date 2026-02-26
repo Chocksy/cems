@@ -116,7 +116,7 @@ async def api_memory_add(request: Request):
         })
     except Exception as e:
         logger.error(f"API memory_add error: {e}")
-        return JSONResponse({"error": str(e)}, status_code=500)
+        return JSONResponse({"error": "Internal server error"}, status_code=500)
 
 
 async def api_memory_add_batch(request: Request):
@@ -276,7 +276,7 @@ async def api_memory_add_batch(request: Request):
 
     except Exception as e:
         logger.error(f"API memory_add_batch error: {e}", exc_info=True)
-        return JSONResponse({"error": str(e)}, status_code=500)
+        return JSONResponse({"error": "Internal server error"}, status_code=500)
 
 
 async def api_memory_search(request: Request):
@@ -394,7 +394,7 @@ async def api_memory_search(request: Request):
         })
     except Exception as e:
         logger.error(f"API memory_search error: {e}", exc_info=True)
-        return JSONResponse({"error": str(e)}, status_code=500)
+        return JSONResponse({"error": "Internal server error"}, status_code=500)
 
 
 async def api_memory_gate_rules(request: Request):
@@ -472,7 +472,7 @@ async def api_memory_gate_rules(request: Request):
         })
     except Exception as e:
         logger.error(f"API memory_gate_rules error: {e}", exc_info=True)
-        return JSONResponse({"error": str(e)}, status_code=500)
+        return JSONResponse({"error": "Internal server error"}, status_code=500)
 
 
 async def api_memory_foundation(request: Request):
@@ -548,7 +548,7 @@ async def api_memory_foundation(request: Request):
         })
     except Exception as e:
         logger.error(f"API memory_foundation error: {e}", exc_info=True)
-        return JSONResponse({"error": str(e)}, status_code=500)
+        return JSONResponse({"error": "Internal server error"}, status_code=500)
 
 
 async def api_memory_profile(request: Request):
@@ -730,7 +730,7 @@ async def api_memory_profile(request: Request):
 
     except Exception as e:
         logger.error(f"API memory_profile error: {e}", exc_info=True)
-        return JSONResponse({"error": str(e)}, status_code=500)
+        return JSONResponse({"error": "Internal server error"}, status_code=500)
 
 
 async def api_memory_forget(request: Request):
@@ -758,7 +758,7 @@ async def api_memory_forget(request: Request):
         })
     except Exception as e:
         logger.error(f"API memory_forget error: {e}")
-        return JSONResponse({"error": str(e)}, status_code=500)
+        return JSONResponse({"error": "Internal server error"}, status_code=500)
 
 
 async def api_memory_get(request: Request):
@@ -795,7 +795,7 @@ async def api_memory_get(request: Request):
         })
     except Exception as e:
         logger.error(f"API memory_get error: {e}")
-        return JSONResponse({"error": str(e)}, status_code=500)
+        return JSONResponse({"error": "Internal server error"}, status_code=500)
 
 
 async def api_memory_update(request: Request):
@@ -824,7 +824,7 @@ async def api_memory_update(request: Request):
         })
     except Exception as e:
         logger.error(f"API memory_update error: {e}")
-        return JSONResponse({"error": str(e)}, status_code=500)
+        return JSONResponse({"error": "Internal server error"}, status_code=500)
 
 
 async def api_memory_maintenance(request: Request):
@@ -914,8 +914,8 @@ async def api_memory_maintenance(request: Request):
         logger.error(f"API memory_maintenance error: {e}")
         return JSONResponse({
             "success": False,
-            "job_type": body.get("job_type", "unknown") if "body" in dir() else "unknown",
-            "error": str(e),
+            "job_type": "unknown",
+            "error": "Internal server error",
         }, status_code=500)
 
 
@@ -1006,7 +1006,7 @@ async def api_memory_conflict_resolve(request: Request):
 
     except Exception as e:
         logger.error(f"API conflict_resolve error: {e}")
-        return JSONResponse({"success": False, "error": str(e)}, status_code=500)
+        return JSONResponse({"success": False, "error": "Internal server error"}, status_code=500)
 
 
 async def api_memory_status(request: Request):
@@ -1050,7 +1050,7 @@ async def api_memory_status(request: Request):
         return JSONResponse(status)
     except Exception as e:
         logger.error(f"API memory_status error: {e}")
-        return JSONResponse({"error": str(e)}, status_code=500)
+        return JSONResponse({"error": "Internal server error"}, status_code=500)
 
 
 async def api_memory_summary_personal(request: Request):
@@ -1071,7 +1071,7 @@ async def api_memory_summary_personal(request: Request):
         })
     except Exception as e:
         logger.error(f"API memory_summary_personal error: {e}")
-        return JSONResponse({"error": str(e)}, status_code=500)
+        return JSONResponse({"error": "Internal server error"}, status_code=500)
 
 
 async def api_memory_log_shown(request: Request):
@@ -1105,7 +1105,7 @@ async def api_memory_log_shown(request: Request):
         })
     except Exception as e:
         logger.error(f"API memory_log_shown error: {e}")
-        return JSONResponse({"error": str(e)}, status_code=500)
+        return JSONResponse({"error": "Internal server error"}, status_code=500)
 
 
 async def api_memory_list(request: Request):
@@ -1195,7 +1195,7 @@ async def api_memory_list(request: Request):
         })
     except Exception as e:
         logger.error(f"API memory_list error: {e}", exc_info=True)
-        return JSONResponse({"error": str(e)}, status_code=500)
+        return JSONResponse({"error": "Internal server error"}, status_code=500)
 
 
 async def api_memory_summary_shared(request: Request):
@@ -1226,4 +1226,4 @@ async def api_memory_summary_shared(request: Request):
         })
     except Exception as e:
         logger.error(f"API memory_summary_shared error: {e}")
-        return JSONResponse({"error": str(e)}, status_code=500)
+        return JSONResponse({"error": "Internal server error"}, status_code=500)

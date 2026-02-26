@@ -1,12 +1,12 @@
 """APScheduler-based maintenance scheduler for CEMS."""
 
-import asyncio
 import logging
 from typing import TYPE_CHECKING
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 
+from cems.lib.async_utils import run_async_in_thread as _run_async
 from cems.maintenance.consolidation import ConsolidationJob
 from cems.maintenance.observation_reflector import ObservationReflector
 from cems.maintenance.reindex import ReindexJob
@@ -17,15 +17,6 @@ if TYPE_CHECKING:
     from cems.memory import CEMSMemory
 
 logger = logging.getLogger(__name__)
-
-
-def _run_async(coro):
-    """Run an async coroutine from a sync scheduler context."""
-    loop = asyncio.new_event_loop()
-    try:
-        return loop.run_until_complete(coro)
-    finally:
-        loop.close()
 
 
 class CEMSScheduler:

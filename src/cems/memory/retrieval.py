@@ -156,9 +156,6 @@ class RetrievalMixin:
             selected_mode = route_to_strategy(intent)
             log.info(f"[RETRIEVAL] Auto mode selected: {selected_mode}")
 
-        # Infer category from query for scoring
-        inferred_category = self._infer_category_from_query(query)
-
         # Detect query types - each needs different handling
         from cems.retrieval import _is_temporal_query, _is_preference_query, _is_aggregation_query
         is_temporal = _is_temporal_query(query)
@@ -345,7 +342,6 @@ class RetrievalMixin:
         for candidate in candidates:
             candidate.score = apply_score_adjustments(
                 candidate,
-                inferred_category=inferred_category,
                 project=project,
                 skip_category_penalty=skip_category_penalty,
                 config=self.config,
@@ -427,8 +423,6 @@ class RetrievalMixin:
             intent = extract_query_intent(query, client)
             selected_mode = route_to_strategy(intent)
             log.info(f"[RETRIEVAL] Auto mode selected: {selected_mode}")
-
-        inferred_category = self._infer_category_from_query(query)
 
         # Detect query types - each needs different handling
         from cems.retrieval import _is_temporal_query, _is_preference_query, _is_aggregation_query
@@ -675,7 +669,6 @@ class RetrievalMixin:
         for candidate in candidates:
             candidate.score = apply_score_adjustments(
                 candidate,
-                inferred_category=inferred_category,
                 project=project,
                 skip_category_penalty=skip_category_penalty,
                 config=self.config,

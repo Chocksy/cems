@@ -2,30 +2,15 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import TYPE_CHECKING, Any
+
+from cems.lib.async_utils import run_async as _run_async
 
 if TYPE_CHECKING:
     from cems.memory.core import CEMSMemory
 
 logger = logging.getLogger(__name__)
-
-
-def _run_async(coro):
-    """Run an async coroutine in a sync context."""
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        loop = None
-
-    if loop is not None:
-        raise RuntimeError(
-            "Cannot use sync method from async context. "
-            "Use the async version if available."
-        )
-    else:
-        return asyncio.run(coro)
 
 
 class RelationsMixin:

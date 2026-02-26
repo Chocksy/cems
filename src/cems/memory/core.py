@@ -15,14 +15,12 @@ Key features:
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, Literal
 
 from cems.config import CEMSConfig
-from cems.memory.analytics import AnalyticsMixin
 from cems.memory.crud import CRUDMixin
 from cems.memory.metadata import MetadataMixin
 from cems.memory.relations import RelationsMixin
@@ -43,29 +41,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def _run_async(coro):
-    """Run an async coroutine in a sync context.
-
-    NOTE: This is for sync contexts only (CLI, MCP stdio).
-    For async contexts (HTTP server), use the async methods directly.
-    """
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        loop = None
-
-    if loop is not None:
-        # Already in async context - caller should use async methods
-        raise RuntimeError(
-            "Cannot use sync method from async context. "
-            "Use the async version (e.g., add_async instead of add)."
-        )
-    else:
-        # No running loop - create one
-        return asyncio.run(coro)
-
-
-class CEMSMemory(WriteMixin, SearchMixin, CRUDMixin, AnalyticsMixin, MetadataMixin, RelationsMixin, RetrievalMixin):
+class CEMSMemory(WriteMixin, SearchMixin, CRUDMixin, MetadataMixin, RelationsMixin, RetrievalMixin):
     """Memory system with personal/shared namespace isolation.
 
     Built on PostgreSQL + pgvector, this class provides:
@@ -168,20 +144,9 @@ class CEMSMemory(WriteMixin, SearchMixin, CRUDMixin, AnalyticsMixin, MetadataMix
         self._initialized = True
         self._async_initialized = True
 
-    def _infer_category_from_query(self, query: str) -> str | None:
-        """Deprecated — returns None. Category inference removed.
-
-        Cross-category penalty was removed because it caused more false
-        penalties than correct ones (e.g., "deploy cems" penalized cems-category
-        memories). Only 6 functional categories exist and they're set by code,
-        not inferred from queries.
-        """
-        return None
-
     # add() and add_async() are provided by WriteMixin
     # search(), search_async(), _search_raw(), _search_raw_async() are provided by SearchMixin
     # get(), get_all(), update(), update_async(), delete(), delete_async(), forget(), history() are provided by CRUDMixin
-    # AnalyticsMixin is kept for future async analytics methods
     # get_metadata(), get_category_counts(), get_category_counts_async(), get_all_categories() are provided by MetadataMixin
     # get_recently_accessed(), get_category_summary(), get_all_category_summaries() are provided by MetadataMixin
     # metadata_store property is provided by MetadataMixin

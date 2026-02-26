@@ -182,4 +182,4 @@ async def api_session_summarize(request: Request):
 
     except Exception as e:
         logger.error(f"API session_summarize error: {e}", exc_info=True)
-        return JSONResponse({"error": str(e)}, status_code=500)
+        return JSONResponse({"error": "Internal server error"}, status_code=500)

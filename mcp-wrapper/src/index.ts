@@ -165,6 +165,39 @@ function createMcpServer(authHeaders: { authorization?: string; teamId?: string 
   );
 
   server.registerTool(
+    "memory_get",
+      {
+        title: "Get Memory",
+        description: "Retrieve a full memory document by ID. Use this after search returns truncated results to get the complete content.",
+        inputSchema: {
+          memory_id: z.string().describe("ID of the memory to retrieve"),
+        },
+      },
+      async (args) => {
+        const auth = getAuthHeaders();
+        const response = await fetch(
+          `${PYTHON_API_URL}/api/memory/get?id=${encodeURIComponent(args.memory_id)}`,
+          {
+            method: "GET",
+            headers: {
+              ...(auth.authorization && { Authorization: auth.authorization }),
+            },
+          }
+        );
+
+        if (!response.ok) {
+          const error = await response.text();
+          throw new Error(`Python API error: ${error}`);
+        }
+
+        const result = await response.json();
+        return {
+          content: [{ type: "text", text: JSON.stringify(result) }],
+        };
+      }
+  );
+
+  server.registerTool(
     "memory_forget",
       {
         title: "Forget Memory",

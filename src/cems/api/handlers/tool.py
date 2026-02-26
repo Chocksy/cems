@@ -154,4 +154,4 @@ async def api_tool_learning(request: Request):
 
     except Exception as e:
         logger.error(f"API tool_learning error: {e}", exc_info=True)
-        return JSONResponse({"error": str(e)}, status_code=500)
+        return JSONResponse({"error": "Internal server error"}, status_code=500)

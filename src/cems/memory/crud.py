@@ -5,30 +5,15 @@ Uses DocumentStore (memory_documents/memory_chunks) exclusively.
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import TYPE_CHECKING, Any, Literal
+
+from cems.lib.async_utils import run_async as _run_async
 
 if TYPE_CHECKING:
     from cems.memory.core import CEMSMemory
 
 logger = logging.getLogger(__name__)
-
-
-def _run_async(coro):
-    """Run an async coroutine in a sync context."""
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        loop = None
-
-    if loop is not None:
-        raise RuntimeError(
-            "Cannot use sync method from async context. "
-            "Use the async version (e.g., delete_async instead of delete)."
-        )
-    else:
-        return asyncio.run(coro)
 
 
 def _doc_to_api_format(doc: dict[str, Any]) -> dict[str, Any]:

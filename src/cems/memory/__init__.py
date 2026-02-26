@@ -11,6 +11,6 @@ Usage:
     results = memory.search("coding preferences")
 """
 
-from cems.memory.core import CEMSMemory, _run_async
+from cems.memory.core import CEMSMemory
 
-__all__ = ["CEMSMemory", "_run_async"]
+__all__ = ["CEMSMemory"]

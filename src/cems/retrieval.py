@@ -17,7 +17,6 @@ memory_search tool.
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import time
@@ -36,21 +35,6 @@ logger = logging.getLogger(__name__)
 
 # Default token encoding for context budgeting
 DEFAULT_ENCODING = "cl100k_base"
-
-
-def _run_async(coro):
-    """Run an async coroutine in a sync context."""
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        loop = None
-
-    if loop is not None:
-        raise RuntimeError(
-            "Cannot use sync method from async context. "
-            "Use the async version instead."
-        )
-    return asyncio.run(coro)
 
 
 def normalize_lexical_score(score: float) -> float:
@@ -592,8 +576,6 @@ def apply_score_adjustments(
     result: "SearchResult",
     project: str | None = None,
     config: "CEMSConfig | None" = None,
-    # Deprecated — kept for call-site compatibility, ignored
-    inferred_category: str | None = None,
     skip_category_penalty: bool = False,
 ) -> float:
     """Apply all score adjustments in a single, consolidated function.

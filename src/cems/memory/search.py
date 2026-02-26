@@ -6,34 +6,17 @@ This avoids truncation issues and provides better recall with snippet-level matc
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Literal
 
+from cems.lib.async_utils import run_async as _run_async
 from cems.models import MemoryMetadata, MemoryScope, SearchResult
 
 if TYPE_CHECKING:
-    from cems.db.document_store import DocumentStore
     from cems.memory.core import CEMSMemory
 
 logger = logging.getLogger(__name__)
-
-
-def _run_async(coro):
-    """Run an async coroutine in a sync context."""
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        loop = None
-
-    if loop is not None:
-        raise RuntimeError(
-            "Cannot use sync method from async context. "
-            "Use the async version (e.g., search_async instead of search)."
-        )
-    else:
-        return asyncio.run(coro)
 
 
 def _make_search_result_from_chunk(chunk: dict, user_id: str) -> SearchResult:
@@ -87,7 +70,7 @@ def _dedupe_by_document(results: list[SearchResult]) -> list[SearchResult]:
     return list(seen_docs.values())
 
 
-def _apply_score_adjustments(results: list[SearchResult], inferred_category: str | None) -> None:
+def _apply_score_adjustments(results: list[SearchResult]) -> None:
     """Apply priority boost and time decay to scores in-place."""
     now = datetime.now(UTC)
     for result in results:
@@ -108,20 +91,6 @@ class SearchMixin:
     - Returns best chunk per document (deduplication)
     - Chunk content is returned as the searchable snippet
     """
-
-    _document_store: "DocumentStore | None" = None
-
-    async def _ensure_document_store_search(self: "CEMSMemory") -> "DocumentStore":
-        """Ensure document store is initialized for search."""
-        if self._document_store is None:
-            from cems.db.document_store import DocumentStore
-
-            self._document_store = DocumentStore(
-                database_url=self.config.database_url,
-                embedding_dim=self.config.embedding_dimension,
-            )
-            await self._document_store.connect()
-        return self._document_store
 
     def search(
         self: "CEMSMemory",
@@ -144,7 +113,7 @@ class SearchMixin:
         await self._ensure_initialized_async()
         assert self._async_embedder is not None
 
-        doc_store = await self._ensure_document_store_search()
+        doc_store = await self._ensure_document_store()
         query_embedding = await self._async_embedder.embed(query)
         user_id = self.config.user_id
         team_id = self.config.team_id if scope in ("shared", "both") else None
@@ -163,8 +132,7 @@ class SearchMixin:
         results = [_make_search_result_from_chunk(chunk, user_id) for chunk in raw_results]
         results = _dedupe_by_document(results)
 
-        inferred_category = self._infer_category_from_query(query)
-        _apply_score_adjustments(results, inferred_category)
+        _apply_score_adjustments(results)
 
         results.sort(key=lambda x: x.score, reverse=True)
         return results[:limit]
@@ -203,7 +171,7 @@ class SearchMixin:
         await self._ensure_initialized_async()
         assert self._async_embedder is not None
 
-        doc_store = await self._ensure_document_store_search()
+        doc_store = await self._ensure_document_store()
 
         if query_embedding is None:
             query_embedding = await self._async_embedder.embed(query)
@@ -239,7 +207,7 @@ class SearchMixin:
         """
         await self._ensure_initialized_async()
 
-        doc_store = await self._ensure_document_store_search()
+        doc_store = await self._ensure_document_store()
         user_id = self.config.user_id
         team_id = self.config.team_id if scope in ("shared", "both") else None
 

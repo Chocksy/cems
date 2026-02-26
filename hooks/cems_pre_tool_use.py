@@ -21,12 +21,12 @@ from __future__ import annotations
 import json
 import os
 import re
-import subprocess
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 from utils.hook_logger import log_hook_event
+from utils.project import get_project_id
 
 
 # =============================================================================
@@ -34,31 +34,6 @@ from utils.hook_logger import log_hook_event
 # =============================================================================
 
 GATE_CACHE_DIR = Path.home() / ".cems" / "cache" / "gate_rules"
-
-
-def get_project_id(cwd: str) -> str | None:
-    """Extract project ID from git remote (e.g., 'org/repo')."""
-    if not cwd:
-        return None
-
-    try:
-        result = subprocess.run(
-            ["git", "-C", cwd, "remote", "get-url", "origin"],
-            capture_output=True, text=True, timeout=2
-        )
-        if result.returncode == 0:
-            url = result.stdout.strip()
-            # SSH: git@github.com:org/repo.git → org/repo
-            if url.startswith("git@"):
-                match = re.search(r":(.+?)(?:\.git)?$", url)
-            else:
-                # HTTPS: https://github.com/org/repo.git → org/repo
-                match = re.search(r"[:/]([^/]+/[^/]+?)(?:\.git)?$", url)
-            if match:
-                return match.group(1).removesuffix('.git')
-    except (subprocess.TimeoutExpired, FileNotFoundError):
-        pass
-    return None
 
 
 def get_cache_path(project: str | None) -> Path:

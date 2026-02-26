@@ -1,460 +1,248 @@
 # CEMS Server Deployment Guide
 
-This guide covers deploying CEMS for company-wide use with shared memory.
+Deploy CEMS for individual or team use with persistent memory across coding sessions.
 
-## Architecture Overview
+## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│                         Your Infrastructure                          │
-├─────────────────────────────────────────────────────────────────────┤
-│                                                                      │
-│   ┌──────────────┐  ┌──────────────┐  ┌──────────────────────────┐  │
-│   │  PostgreSQL  │  │    Qdrant    │  │   CEMS MCP Server        │  │
-│   │  (metadata)  │  │  (vectors)   │  │   (port 8765)            │  │
-│   └──────────────┘  └──────────────┘  └────────────┬─────────────┘  │
-│          │                │                        │                 │
-│          └────────────────┼────────────────────────┘                 │
-│                           │                                          │
-│   ┌───────────────────────┼───────────────────────────────────────┐ │
-│   │               CEMS Background Worker                           │ │
-│   │   • Nightly consolidation (3 AM)                              │ │
-│   │   • Weekly summarization (Sunday)                             │ │
-│   │   • Monthly re-indexing (1st of month)                        │ │
-│   └───────────────────────────────────────────────────────────────┘ │
-└─────────────────────────────────────────────────────────────────────┘
-                                │
-                                │ HTTPS/WSS
-                                ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│                         Developer Machines                           │
-├──────────────────┬──────────────────┬──────────────────────────────┤
-│   Developer 1    │   Developer 2    │   Developer N                │
-│   Claude Code    │   Cursor IDE     │   VS Code                    │
-│   + MCP Client   │   + MCP Client   │   + MCP Client               │
-└──────────────────┴──────────────────┴──────────────────────────────┘
+┌─────────────────────────────────────────────────────────┐
+│                    Docker Compose                        │
+│                                                          │
+│  ┌─────────────┐   ┌─────────────────────────────────┐  │
+│  │  PostgreSQL  │   │  CEMS Python Server (port 8765) │  │
+│  │  + pgvector  │◄──│  • REST API (Starlette)         │  │
+│  │  (vectors +  │   │  • APScheduler (in-process)     │  │
+│  │   metadata)  │   │  • Embeddings via OpenRouter     │  │
+│  └─────────────┘   └──────────────┬──────────────────┘  │
+│                                    │                     │
+│                    ┌───────────────┘                     │
+│                    ▼                                     │
+│  ┌──────────────────────────────────────────────────┐   │
+│  │  MCP Wrapper (port 8766) — optional              │   │
+│  │  Express.js, StreamableHTTP, stateless           │   │
+│  └──────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────┘
+                         │ HTTPS
+                         ▼
+┌─────────────────────────────────────────────────────────┐
+│                    Developer Machines                     │
+│  ┌──────────┐  ┌──────────┐  ┌──────────┐              │
+│  │  Claude   │  │  Cursor  │  │  Codex   │              │
+│  │  Code     │  │  IDE     │  │  CLI     │              │
+│  │  + Hooks  │  │          │  │          │              │
+│  └──────────┘  └──────────┘  └──────────┘              │
+└─────────────────────────────────────────────────────────┘
 ```
+
+**Key points:**
+- Single PostgreSQL with pgvector handles vectors AND metadata (no Qdrant/Redis)
+- Maintenance scheduler runs in-process via APScheduler (no separate worker)
+- MCP wrapper is optional (Claude Code hooks talk directly to REST API)
+- Embeddings via OpenRouter `text-embedding-3-small` (1536-dim)
 
 ## Prerequisites
 
 - Docker and Docker Compose
-- A server with at least 4GB RAM, 20GB disk
-- OpenRouter API key (single key for all LLM and embedding operations)
-- Domain name (optional, for HTTPS)
+- 2GB+ RAM, 10GB disk
+- OpenRouter API key
 
-## Environment Variables Reference
-
-### Required Variables
-
-| Variable | Description | Example |
-|----------|-------------|---------|
-| `OPENROUTER_API_KEY` | OpenRouter API key (for LLM + embeddings) | `sk-or-your-key` |
-| `POSTGRES_PASSWORD` | PostgreSQL password | `secure_password_123` |
-| `CEMS_ADMIN_KEY` | Admin API key for user management | `cems_admin_your_key_here` |
-
-### LLM Configuration
-
-CEMS uses **OpenRouter** for all LLM and embedding operations:
-
-```bash
-# Required: Single API key for everything
-OPENROUTER_API_KEY=sk-or-your-openrouter-key
-
-# Optional: Model configuration (defaults shown)
-CEMS_EMBEDDING_MODEL=openai/text-embedding-3-small  # Embeddings
-CEMS_LLM_MODEL=anthropic/claude-3-haiku      # Maintenance
-
-# Optional: Attribution for OpenRouter dashboard
-CEMS_OPENROUTER_SITE_URL=https://your-company.com
-CEMS_OPENROUTER_SITE_NAME=YourCompany CEMS
-```
-
-**Why OpenRouter?**
-- **Single API key** for all LLM and embedding operations
-- Centralized billing across all providers
-- Easy model switching without code changes
-- Enterprise SSO (SAML) support
-- Team management with role-based permissions
-- BYOK (Bring Your Own Key) - use existing provider keys
-- Automatic failover/fallbacks
-- No platform-level rate limits
-
-### Optional Configuration
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `CEMS_EMBEDDING_MODEL` | `text-embedding-3-small` | Model for vector embeddings |
-| `CEMS_STALE_DAYS` | `90` | Days before memory considered stale |
-| `CEMS_ARCHIVE_DAYS` | `180` | Days before memory archived |
-| `CEMS_NIGHTLY_HOUR` | `3` | Hour for nightly consolidation (0-23) |
-| `CEMS_WEEKLY_DAY` | `sun` | Day for weekly summarization |
-| `CEMS_WEEKLY_HOUR` | `4` | Hour for weekly summarization |
-| `CEMS_MONTHLY_DAY` | `1` | Day of month for monthly reindex |
-| `CEMS_MONTHLY_HOUR` | `5` | Hour for monthly reindex |
-
-## Quick Start (Docker Compose)
+## Quick Start
 
 ### 1. Clone and Configure
 
 ```bash
-# Clone the repository
-git clone https://github.com/yourusername/llm-memory.git
-cd llm-memory
+git clone https://github.com/yourusername/cems.git
+cd cems
 
 # Create environment file
 cp deploy/.env.example .env
 ```
 
-### 2. Edit Environment Variables
+### 2. Set Environment Variables
 
 ```bash
-# .env file
-POSTGRES_PASSWORD=your_secure_password_here
-OPENROUTER_API_KEY=sk-or-your-openrouter-key
-CEMS_ADMIN_KEY=cems_admin_your_secure_key_here
+# .env — required
+POSTGRES_PASSWORD=your_secure_password
+OPENROUTER_API_KEY=sk-or-your-key
+CEMS_ADMIN_KEY=cems_admin_your_key_here
 ```
 
 ### 3. Start Services
 
 ```bash
-# Build and start
-docker-compose up -d
+docker compose up -d postgres cems-server
 
-# Check status
-docker-compose ps
-
-# View logs
-docker-compose logs -f cems-server
-```
-
-### 4. Verify Deployment
-
-```bash
-# Health check
+# Check health
 curl http://localhost:8765/health
-
-# Should return: {"status": "healthy"}
+# → {"status": "healthy", ...}
 ```
 
-## Local Development Setup
-
-For local development without Docker:
-
-### 1. Install Dependencies
+### 4. Create a User
 
 ```bash
-# Using uv (recommended)
-uv pip install -e ".[dev]"
-
-# Or using pip
-pip install -e ".[dev]"
-```
-
-### 2. Set Environment Variables
-
-```bash
-# Create a local .env file
-cat > .env << 'EOF'
-CEMS_USER_ID=developer
-CEMS_STORAGE_DIR=~/.cems
-
-# OpenRouter API key (single key for all operations)
-OPENROUTER_API_KEY=sk-or-your-openrouter-key
-EOF
-```
-
-### 3. Run the Server
-
-```bash
-# Start the MCP server (stdio mode for local use)
-python -m cems.server
-
-# Or run in HTTP mode for remote clients
-CEMS_MODE=http python -m cems.server
-```
-
-### 4. Configure Your IDE
-
-For Claude Code (stdio mode), add to `~/.claude.json` in the `mcpServers` section:
-
-```json
-{
-  "mcpServers": {
-    "cems": {
-      "command": "python",
-      "args": ["-m", "cems.server"],
-      "env": {
-        "CEMS_USER_ID": "your-username",
-        "OPENROUTER_API_KEY": "sk-or-your-openrouter-key"
-      }
-    }
-  }
-}
-```
-
-For HTTP mode (Docker/server deployment), first get a user API key:
-
-```bash
-# Admin creates a user
 curl -X POST http://localhost:8765/admin/users \
   -H "Authorization: Bearer $CEMS_ADMIN_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"username": "your-username"}'
-# Returns: {"api_key": "cems_usr_abc123..."}
+  -d '{"username": "yourname"}'
+# → {"api_key": "YOUR_KEY_HERE..."}
 ```
 
-Then configure the client:
-
-```json
-{
-  "mcpServers": {
-    "cems": {
-      "type": "http",
-      "url": "http://localhost:8765/mcp",
-      "headers": {
-        "Authorization": "Bearer cems_usr_your_api_key",
-        "X-Team-ID": "your-team"
-      }
-    }
-  }
-}
-```
-
-For Cursor, add to `~/.cursor/mcp.json`:
-
-```json
-{
-  "mcpServers": {
-    "cems": {
-      "command": "python",
-      "args": ["-m", "cems.server"],
-      "env": {
-        "CEMS_USER_ID": "your-username",
-        "OPENROUTER_API_KEY": "sk-or-your-openrouter-key"
-      }
-    }
-  }
-}
-```
-
-## Production Deployment
-
-### With Kubernetes
-
-```yaml
-# k8s/cems-deployment.yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: cems-server
-spec:
-  replicas: 2
-  selector:
-    matchLabels:
-      app: cems
-  template:
-    metadata:
-      labels:
-        app: cems
-    spec:
-      containers:
-      - name: cems
-        image: your-registry/cems:latest
-        ports:
-        - containerPort: 8765
-        env:
-        - name: CEMS_DATABASE_URL
-          valueFrom:
-            secretKeyRef:
-              name: cems-secrets
-              key: database-url
-        - name: OPENROUTER_API_KEY
-          valueFrom:
-            secretKeyRef:
-              name: cems-secrets
-              key: openrouter-api-key
-```
-
-### With Coolify
-
-If you use Coolify for deployments:
+### 5. Install Client Hooks
 
 ```bash
-# Add context
-coolify context add cems --url https://your-coolify.com --token YOUR_TOKEN
-
-# Deploy
-coolify app deploy cems
+# Install CEMS CLI + hooks on each developer machine
+pip install cems
+cems setup --claude --api-url https://your-server:8765 --api-key YOUR_KEY_HERE
 ```
 
-### SSL/TLS Configuration
-
-For production, put CEMS behind a reverse proxy (nginx, Traefik):
-
-```nginx
-# nginx.conf
-server {
-    listen 443 ssl;
-    server_name cems.yourcompany.com;
-
-    ssl_certificate /etc/ssl/certs/cems.crt;
-    ssl_certificate_key /etc/ssl/private/cems.key;
-
-    location / {
-        proxy_pass http://localhost:8765;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
-        proxy_set_header Host $host;
-    }
-}
-```
-
-## Team Setup
-
-### 1. Create Team
+Or for non-interactive install:
 
 ```bash
-# Using the CLI (run on server)
-docker exec -it cems-server cems-admin create-team \
-    --name "engineering" \
-    --company "your-company"
+export CEMS_API_KEY=YOUR_KEY_HERE
+curl -sSf https://your-server/install.sh | bash
 ```
 
-### 2. Generate API Keys for Users
+## Environment Variables
+
+### Required
+
+| Variable | Description | Example |
+|----------|-------------|---------|
+| `OPENROUTER_API_KEY` | OpenRouter API key | `sk-or-your-key` |
+| `POSTGRES_PASSWORD` | PostgreSQL password | `secure_password_123` |
+| `CEMS_ADMIN_KEY` | Admin API key for user/team management | `cems_admin_xxx` |
+
+### Optional
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CEMS_EMBEDDING_BACKEND` | `openrouter` | Embedding provider |
+| `CEMS_EMBEDDING_DIMENSION` | `1536` | Embedding vector dimension |
+| `CEMS_EMBEDDING_MODEL` | `text-embedding-3-small` | Embedding model |
+| `CEMS_RERANKER_BACKEND` | `disabled` | Reranker (disabled recommended) |
+| `CEMS_NIGHTLY_HOUR` | `3` | Hour for nightly consolidation |
+| `CEMS_WEEKLY_DAY` | `sun` | Day for weekly summarization |
+| `CEMS_WEEKLY_HOUR` | `4` | Hour for weekly summarization |
+| `CEMS_MONTHLY_DAY` | `1` | Day for monthly reindex |
+| `CEMS_MONTHLY_HOUR` | `5` | Hour for monthly reindex |
+
+## API Endpoints
+
+### Memory (authenticated — `Authorization: Bearer cems_usr_xxx`)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/api/memory/add` | Store a memory |
+| POST | `/api/memory/search` | Search memories |
+| POST | `/api/memory/forget` | Soft-delete a memory |
+| POST | `/api/memory/update` | Update memory content |
+| POST | `/api/memory/maintenance` | Run maintenance job |
+| GET | `/api/memory/get?id=X` | Get full document |
+| GET | `/api/memory/list` | List memories |
+| GET | `/api/memory/status` | Memory stats |
+| GET | `/api/memory/profile` | Profile context |
+| GET | `/api/memory/foundation` | Foundation guidelines |
+| GET | `/api/memory/gate-rules` | Gate rules |
+| POST | `/api/memory/log-shown` | Log shown memories |
+
+### Session & Tools
+
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/api/session/summarize` | Summarize a session |
+| POST | `/api/tool/learning` | Submit tool learning |
+
+### Admin (requires `CEMS_ADMIN_KEY`)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/admin/users` | Create user |
+| GET | `/admin/users` | List users |
+| POST | `/admin/teams` | Create team |
+| GET | `/admin/db/stats` | Database statistics |
+
+### Index
+
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/api/index/repo` | Index a git repo |
+| POST | `/api/index/path` | Index a local path |
+
+## Maintenance Schedule
+
+The scheduler runs in-process (APScheduler). No separate worker needed.
+
+| Job | Schedule | Description |
+|-----|----------|-------------|
+| Consolidation | Nightly 3 AM | Merge duplicate memories |
+| Reflection | Nightly 3:30 AM | Consolidate overlapping observations |
+| Summarization | Weekly Sun 4 AM | Compress old memories, prune stale |
+| Re-indexing | Monthly 1st 5 AM | Rebuild embeddings, archive dead |
+
+Run manually via API:
 
 ```bash
-# Generate key for each developer
-docker exec -it cems-server cems-admin create-user \
-    --username "jane.doe" \
-    --email "jane@company.com" \
-    --team "engineering"
-
-# Output:
-# User created!
-# Username: jane.doe
-# API Key: cems_usr_abc123...
-# Team: engineering
+curl -X POST http://localhost:8765/api/memory/maintenance \
+  -H "Authorization: Bearer $CEMS_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"job_type": "consolidation"}'
 ```
 
-### 3. Index Company Repositories
+## Database Migrations
+
+After initial setup, run migrations in order:
 
 ```bash
-# Index your main backend repo
-docker exec -it cems-server cems index git \
-    https://github.com/company/backend.git \
-    --team engineering \
-    --scope shared
+# 1. Base schema (auto-runs via init.sql in Docker)
+# 2. Document+chunk model
+docker exec -i cems-postgres psql -U cems cems < deploy/migrate_docs_schema.sql
 
-# Index frontend repo
-docker exec -it cems-server cems index git \
-    https://github.com/company/frontend.git \
-    --team engineering \
-    --scope shared
+# 3. Soft-delete + feedback columns
+docker exec -i cems-postgres psql -U cems cems < scripts/migrate_soft_delete_feedback.sql
 ```
 
 ## Backup and Restore
 
-### Backup
-
 ```bash
-# Backup PostgreSQL
-docker exec cems-postgres pg_dump -U cems cems > backup.sql
+# Backup PostgreSQL (includes vectors — no separate backup needed)
+docker exec cems-postgres pg_dump -U cems cems > backup_$(date +%Y%m%d).sql
 
-# Backup Qdrant
-docker exec cems-qdrant tar -czf /qdrant/storage/backup.tar.gz /qdrant/storage/
-
-# Copy backup
-docker cp cems-qdrant:/qdrant/storage/backup.tar.gz ./qdrant-backup.tar.gz
-```
-
-### Restore
-
-```bash
-# Restore PostgreSQL
+# Restore
 cat backup.sql | docker exec -i cems-postgres psql -U cems cems
-
-# Restore Qdrant
-docker cp qdrant-backup.tar.gz cems-qdrant:/qdrant/storage/
-docker exec cems-qdrant tar -xzf /qdrant/storage/backup.tar.gz -C /
 ```
 
-## Monitoring
+## Production Deployment
 
-### Health Endpoints
-
-- `GET /health` - Basic health check
-- `GET /metrics` - Prometheus metrics (if enabled)
-
-### Logging
+### With Coolify
 
 ```bash
-# View all logs
-docker-compose logs -f
-
-# Just the server
-docker-compose logs -f cems-server
-
-# Worker logs
-docker-compose logs -f cems-worker
+coolify context use production
+coolify app deploy cems
 ```
 
-### Alerts (with Prometheus/Alertmanager)
+### SSL/TLS
 
-```yaml
-# prometheus/alerts.yml
-groups:
-  - name: cems
-    rules:
-      - alert: CEMSServerDown
-        expr: up{job="cems"} == 0
-        for: 1m
-        labels:
-          severity: critical
-        annotations:
-          summary: "CEMS server is down"
+Put CEMS behind a reverse proxy (Caddy, nginx, Traefik):
 
-      - alert: CEMSHighMemoryUsage
-        expr: container_memory_usage_bytes{name="cems-server"} > 3e9
-        for: 5m
-        labels:
-          severity: warning
+```nginx
+server {
+    listen 443 ssl;
+    server_name cems.yourcompany.com;
+
+    location / {
+        proxy_pass http://localhost:8765;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_read_timeout 120s;
+    }
+}
 ```
 
-## Security Considerations
+### Health Check
 
-1. **API Keys**: Rotate regularly, never commit to git
-2. **Network**: Keep PostgreSQL and Qdrant internal (not exposed)
-3. **HTTPS**: Always use TLS in production
-4. **Audit Log**: Enable for compliance (`CEMS_ENABLE_AUDIT=true`)
-5. **Backups**: Automate daily backups
-6. **LLM Keys**: Use OpenRouter for centralized key management in enterprise
-
-## Scaling
-
-### Horizontal Scaling
-
-```yaml
-# docker-compose.scale.yml
-services:
-  cems-server:
-    deploy:
-      replicas: 3
-```
-
-### Qdrant Cluster
-
-For high availability, run Qdrant in cluster mode:
-
-```yaml
-# qdrant-cluster.yml
-services:
-  qdrant-1:
-    image: qdrant/qdrant
-    environment:
-      QDRANT__CLUSTER__ENABLED: true
-      QDRANT__CLUSTER__P2P__PORT: 6335
-    # ... additional config
+```bash
+curl http://localhost:8765/health
+# → {"status": "healthy", "database": "connected", ...}
 ```
 
 ## Troubleshooting
@@ -462,71 +250,25 @@ services:
 ### Server won't start
 
 ```bash
-# Check logs
-docker-compose logs cems-server
+docker compose logs cems-server --tail 50
 
 # Common issues:
 # - Missing OPENROUTER_API_KEY
-# - PostgreSQL not ready (wait for health check)
-# - Port 8765 already in use
+# - PostgreSQL not ready (wait for healthcheck)
+# - Port 8765 in use
 ```
 
-### LLM errors
+### Rebuild after code changes
 
 ```bash
-# Check OpenRouter configuration
-docker exec cems-server printenv | grep -E "OPENROUTER|CEMS_.*MODEL"
-
-# Common issues:
-# - Wrong API key format (should start with sk-or-)
-# - Invalid model name (use provider/model format, e.g., openai/gpt-4o-mini)
-# - Rate limiting (check OpenRouter dashboard)
+docker compose build cems-server
+docker compose up -d cems-server
 ```
 
-### Memory errors
+## Security
 
-```bash
-# Increase memory limits
-docker-compose up -d --scale cems-server=1 \
-    -e CEMS_MAX_MEMORY=4g
-```
-
-### Slow queries
-
-```bash
-# Check Qdrant status
-curl http://localhost:6333/collections
-
-# Rebuild indexes
-docker exec cems-server cems maintenance run reindex
-```
-
-## OpenRouter Configuration
-
-### Getting an API Key
-
-1. Sign up at https://openrouter.ai
-2. Go to https://openrouter.ai/keys
-3. Create a new API key (starts with `sk-or-`)
-4. Set it as `OPENROUTER_API_KEY` environment variable
-
-### Using BYOK (Bring Your Own Key)
-
-OpenRouter supports BYOK for direct provider access with centralized billing:
-
-1. Log into OpenRouter dashboard
-2. Go to Settings → Keys
-3. Add your existing OpenAI or Anthropic keys
-4. Requests will use your keys directly while being billed through OpenRouter
-
-### Model Selection
-
-Use OpenRouter format for model names: `provider/model`
-
-| Use Case | Recommended Model |
-|----------|-------------------|
-| Fact extraction | `openai/gpt-4o-mini` |
-| Embeddings | `openai/text-embedding-3-small` |
-| Maintenance | `anthropic/claude-3-haiku` |
-
-See all available models at https://openrouter.ai/models
+- Keep PostgreSQL internal (don't expose port 5432 externally)
+- Use TLS in production
+- Rotate API keys regularly
+- Admin key should not be shared with developers
+- User API keys are per-developer; revoke via `DELETE /admin/users/{id}`

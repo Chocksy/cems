@@ -14,30 +14,13 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any, Literal
 
 from cems.chunking import Chunk, chunk_document, content_hash
+from cems.lib.async_utils import run_async as _run_async
 
 if TYPE_CHECKING:
     from cems.db.document_store import DocumentStore
     from cems.memory.core import CEMSMemory
 
 logger = logging.getLogger(__name__)
-
-
-def _run_async(coro):
-    """Run an async coroutine in a sync context."""
-    import asyncio
-
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        loop = None
-
-    if loop is not None:
-        raise RuntimeError(
-            "Cannot use sync method from async context. "
-            "Use the async version (e.g., add_async instead of add)."
-        )
-    else:
-        return asyncio.run(coro)
 
 
 class WriteMixin:

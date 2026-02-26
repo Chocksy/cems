@@ -22,11 +22,27 @@ CLAUDE_HOOK_FILES = [
 
 CLAUDE_UTIL_FILES = [
     "constants.py", "credentials.py", "hook_logger.py",
-    "observer_manager.py", "transcript.py",
+    "observer_manager.py", "project.py", "transcript.py",
+]
+
+CLAUDE_COMMAND_FILES = [
+    "recall.md", "remember.md",
 ]
 
 CURSOR_HOOK_FILES = [
     "cems_session_start.py", "cems_agent_response.py", "cems_stop.py",
+]
+
+CURSOR_SKILL_DIRS = [
+    "cems-recall", "cems-remember", "cems-forget", "cems-share", "cems-context",
+]
+
+CODEX_COMMAND_FILES = [
+    "recall.md", "remember.md", "foundation.md",
+]
+
+CODEX_SKILL_DIRS = [
+    "recall", "remember",
 ]
 
 
@@ -62,6 +78,14 @@ def _remove_claude_hooks() -> int:
             f.unlink()
             removed += 1
         skills_dir.rmdir()
+
+    # Remove commands
+    commands_dir = claude_dir / "commands"
+    for f in CLAUDE_COMMAND_FILES:
+        path = commands_dir / f
+        if path.exists():
+            path.unlink()
+            removed += 1
 
     # Clean CEMS hooks from settings.json
     settings_file = claude_dir / "settings.json"
@@ -109,16 +133,92 @@ def _remove_claude_hooks() -> int:
 
 
 def _remove_cursor_hooks() -> int:
-    """Remove CEMS hooks from ~/.cursor/. Returns count of removed files."""
+    """Remove CEMS hooks, skills, and MCP config from ~/.cursor/. Returns count of removed files."""
     cursor_dir = Path.home() / ".cursor"
     hooks_dir = cursor_dir / "hooks"
     removed = 0
 
+    # Remove hook files
     for f in CURSOR_HOOK_FILES:
         path = hooks_dir / f
         if path.exists():
             path.unlink()
             removed += 1
+
+    # Remove skill directories
+    for d in CURSOR_SKILL_DIRS:
+        skill_dir = cursor_dir / "skills" / d
+        if skill_dir.exists():
+            for f in skill_dir.iterdir():
+                f.unlink()
+                removed += 1
+            skill_dir.rmdir()
+
+    # Clean CEMS MCP entry from mcp.json
+    mcp_file = cursor_dir / "mcp.json"
+    if mcp_file.exists():
+        try:
+            config = json.loads(mcp_file.read_text())
+            if "cems" in config.get("mcpServers", {}):
+                del config["mcpServers"]["cems"]
+                if not config["mcpServers"]:
+                    del config["mcpServers"]
+                mcp_file.write_text(json.dumps(config, indent=2) + "\n")
+                console.print("  Cleaned CEMS MCP entry from mcp.json")
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    return removed
+
+
+def _remove_codex() -> int:
+    """Remove CEMS commands, skills, and MCP config from ~/.codex/. Returns count of removed files."""
+    codex_dir = Path.home() / ".codex"
+    removed = 0
+
+    # Remove commands
+    for f in CODEX_COMMAND_FILES:
+        path = codex_dir / "commands" / f
+        if path.exists():
+            path.unlink()
+            removed += 1
+
+    # Remove skill directories
+    for d in CODEX_SKILL_DIRS:
+        skill_dir = codex_dir / "skills" / d
+        if skill_dir.exists():
+            for f in skill_dir.iterdir():
+                f.unlink()
+                removed += 1
+            skill_dir.rmdir()
+
+    # Clean CEMS MCP entry from config.toml
+    config_file = codex_dir / "config.toml"
+    if config_file.exists():
+        try:
+            content = config_file.read_text()
+            if "mcp_servers.cems" in content:
+                # Remove the [mcp_servers.cems] block
+                lines = content.split("\n")
+                new_lines = []
+                skip = False
+                for line in lines:
+                    if line.strip() == "[mcp_servers.cems]":
+                        skip = True
+                        continue
+                    # Stop skipping at next section header
+                    if skip and line.strip().startswith("["):
+                        skip = False
+                    if skip:
+                        continue
+                    new_lines.append(line)
+                # Remove trailing blank lines
+                while new_lines and not new_lines[-1].strip():
+                    new_lines.pop()
+                config_file.write_text("\n".join(new_lines) + "\n")
+                console.print("  Cleaned CEMS MCP entry from config.toml")
+        except OSError:
+            pass
 
     return removed
 
@@ -219,6 +319,13 @@ def uninstall(remove_all: bool, yes: bool) -> None:
         console.print(f"  [red]Removed {cursor_removed} Cursor files[/red]")
     else:
         console.print("  No Cursor hooks found")
+
+    # Codex
+    codex_removed = _remove_codex()
+    if codex_removed:
+        console.print(f"  [red]Removed {codex_removed} Codex files[/red]")
+    else:
+        console.print("  No Codex files found")
 
     # Goose
     if _remove_goose_config():

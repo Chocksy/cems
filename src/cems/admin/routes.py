@@ -154,7 +154,7 @@ async def create_user(request: Request) -> JSONResponse:
                 return JSONResponse({"error": str(e)}, status_code=400)
     except Exception as e:
         logger.exception("Failed to create user")
-        return JSONResponse({"error": f"Database error: {e}"}, status_code=500)
+        return JSONResponse({"error": "Database error"}, status_code=500)
 
 
 async def get_user(request: Request) -> JSONResponse:
@@ -688,7 +688,7 @@ async def cleanup_eval_data(request: Request) -> JSONResponse:
 
     except Exception as e:
         logger.error(f"Eval cleanup failed: {e}")
-        return JSONResponse({"error": str(e)}, status_code=500)
+        return JSONResponse({"error": "Internal server error"}, status_code=500)
 
 
 async def database_stats(request: Request) -> JSONResponse:
@@ -731,7 +731,7 @@ async def database_stats(request: Request) -> JSONResponse:
 
     except Exception as e:
         logger.error(f"Database stats failed: {e}")
-        return JSONResponse({"error": str(e)}, status_code=500)
+        return JSONResponse({"error": "Internal server error"}, status_code=500)
 
 
 # =============================================================================

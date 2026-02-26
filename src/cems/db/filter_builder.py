@@ -89,39 +89,6 @@ class FilterBuilder:
             self.add_param(condition_template, value)
         return self
 
-    def add_not_archived(self) -> "FilterBuilder":
-        """Add standard conditions for excluding archived/expired memories."""
-        self.add("archived = FALSE")
-        self.add("(expires_at IS NULL OR expires_at > NOW())")
-        return self
-
-    def add_scope_filter(
-        self,
-        scope: str | Literal["both"],
-        user_id: str | None = None,
-        team_id: str | None = None,
-    ) -> "FilterBuilder":
-        """Add scope-based filtering conditions.
-
-        Args:
-            scope: Memory scope filter ("personal", "shared", "both")
-            user_id: User ID to filter by
-            team_id: Team ID to filter by (used for shared scope)
-
-        Returns:
-            Self for chaining
-        """
-        if user_id:
-            self.add_param("user_id = ${}", UUID(user_id))
-
-        if team_id and scope in ("shared", "both"):
-            self.add_param("team_id = ${}", UUID(team_id))
-
-        if scope != "both":
-            self.add_param("scope = ${}", scope)
-
-        return self
-
     def add_ownership_filter(
         self,
         user_id: str | None,

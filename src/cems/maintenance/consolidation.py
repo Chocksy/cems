@@ -103,6 +103,28 @@ class ConsolidationJob:
         llm_classifications = 0
         processed: set[str] = set()
 
+        # Pre-embed all document contents in batches to avoid N API round-trips.
+        # Each doc gets one embedding for its full content (used for similarity search).
+        contents = []
+        content_doc_ids = []
+        for doc in docs:
+            c = doc.get("content", "")
+            if c:
+                contents.append(c)
+                content_doc_ids.append(doc["id"])
+
+        embedding_cache: dict[str, list[float]] = {}
+        if contents:
+            BATCH_SIZE = 100
+            for batch_start in range(0, len(contents), BATCH_SIZE):
+                batch_texts = contents[batch_start : batch_start + BATCH_SIZE]
+                batch_ids = content_doc_ids[batch_start : batch_start + BATCH_SIZE]
+                batch_embeddings = await self.memory._async_embedder.embed_batch(batch_texts)
+                for did, emb in zip(batch_ids, batch_embeddings):
+                    if emb:
+                        embedding_cache[did] = emb
+            logger.info(f"Pre-embedded {len(embedding_cache)} documents for dedup")
+
         for doc in docs:
             doc_id = doc["id"]
             if doc_id in processed:
@@ -112,14 +134,13 @@ class ConsolidationJob:
             if not content:
                 continue
 
-            # Embed content to search for similar documents
-            embeddings = await self.memory._async_embedder.embed_batch([content])
-            if not embeddings or not embeddings[0]:
+            embedding = embedding_cache.get(doc_id)
+            if not embedding:
                 continue
 
             # Search for similar chunks
             similar_chunks = await doc_store.search_chunks(
-                query_embedding=embeddings[0],
+                query_embedding=embedding,
                 user_id=self.config.user_id,
                 scope="personal",
                 limit=10,

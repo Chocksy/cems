@@ -38,6 +38,7 @@ import httpx
 sys.path.insert(0, str(Path(__file__).parent))
 from utils.credentials import get_cems_key, get_cems_url
 from utils.hook_logger import log_hook_event
+from utils.project import get_project_id
 
 CEMS_API_URL = get_cems_url()
 CEMS_API_KEY = get_cems_key()
@@ -172,30 +173,6 @@ def extract_tool_output_summary(tool_response: dict) -> str:
         return str(tool_response["content"]).strip()[:500]
 
     return ""
-
-
-def get_project_id(cwd: str) -> str | None:
-    """Extract project ID from git remote (e.g., 'org/repo')."""
-    if not cwd:
-        return None
-    try:
-        import subprocess
-        result = subprocess.run(
-            ["git", "-C", cwd, "remote", "get-url", "origin"],
-            capture_output=True, text=True, timeout=2
-        )
-        if result.returncode == 0:
-            import re
-            url = result.stdout.strip()
-            if url.startswith("git@"):
-                match = re.search(r":(.+?)(?:\.git)?$", url)
-            else:
-                match = re.search(r"[:/]([^/]+/[^/]+?)(?:\.git)?$", url)
-            if match:
-                return match.group(1).removesuffix('.git')
-    except Exception:
-        pass
-    return None
 
 
 def send_to_cems(

@@ -207,79 +207,94 @@ class DocumentStore:
         doc_bytes = len(content.encode("utf-8"))
 
         async with pool.acquire() as conn:
-            # Check for existing document with same hash for this user (non-deleted only)
-            existing = await conn.fetchrow(
-                """
-                SELECT id FROM memory_documents
-                WHERE content_hash = $1 AND user_id = $2 AND deleted_at IS NULL
-                """,
-                doc_hash,
-                user_uuid,
-            )
-
-            if existing:
-                logger.debug(f"Document already exists with hash {doc_hash[:8]}...")
-                return str(existing["id"]), False
-
-            # Semantic dedup: check if very similar content already exists
-            # Uses first chunk's embedding to find near-duplicates (cosine > 0.92)
-            if embeddings:
-                semantic_dup = await conn.fetchrow(
-                    """
-                    SELECT d.id FROM memory_chunks c
-                    JOIN memory_documents d ON c.document_id = d.id
-                    WHERE d.user_id = $1 AND d.deleted_at IS NULL AND c.seq = 0
-                      AND 1 - (c.embedding <=> $2) > 0.92
-                    LIMIT 1
-                    """,
-                    user_uuid,
-                    embeddings[0],
-                )
-                if semantic_dup:
-                    logger.debug(f"Semantic duplicate found (>{0.92} similarity)")
-                    return str(semantic_dup["id"]), False
-
-            # Insert new document
+            # All dedup checks + insert run inside a single transaction to
+            # prevent TOCTOU races (two concurrent adds both passing dedup).
             doc_id = uuid4()
-            async with conn.transaction():
-                await conn.execute(
-                    """
-                    INSERT INTO memory_documents (
-                        id, user_id, team_id, scope, category, title,
-                        source, source_ref, tags, content, content_hash, content_bytes
-                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-                    """,
-                    doc_id,
-                    user_uuid,
-                    team_uuid,
-                    scope,
-                    category,
-                    title,
-                    source,
-                    source_ref,
-                    tags or [],
-                    content,
-                    doc_hash,
-                    doc_bytes,
-                )
+            try:
+                async with conn.transaction():
+                    # Check for existing document with same hash (with row lock)
+                    existing = await conn.fetchrow(
+                        """
+                        SELECT id FROM memory_documents
+                        WHERE content_hash = $1 AND user_id = $2 AND deleted_at IS NULL
+                        FOR UPDATE
+                        """,
+                        doc_hash,
+                        user_uuid,
+                    )
 
-                # Insert chunks
-                for chunk, embedding in zip(chunks, embeddings):
+                    if existing:
+                        logger.debug(f"Document already exists with hash {doc_hash[:8]}...")
+                        return str(existing["id"]), False
+
+                    # Semantic dedup: check if very similar content already exists
+                    # Uses first chunk's embedding to find near-duplicates (cosine > 0.92)
+                    if embeddings:
+                        semantic_dup = await conn.fetchrow(
+                            """
+                            SELECT d.id FROM memory_chunks c
+                            JOIN memory_documents d ON c.document_id = d.id
+                            WHERE d.user_id = $1 AND d.deleted_at IS NULL AND c.seq = 0
+                              AND 1 - (c.embedding <=> $2) > 0.92
+                            LIMIT 1
+                            """,
+                            user_uuid,
+                            embeddings[0],
+                        )
+                        if semantic_dup:
+                            logger.debug(f"Semantic duplicate found (>{0.92} similarity)")
+                            return str(semantic_dup["id"]), False
+
+                    # Insert new document
                     await conn.execute(
+                        """
+                        INSERT INTO memory_documents (
+                            id, user_id, team_id, scope, category, title,
+                            source, source_ref, tags, content, content_hash, content_bytes
+                        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+                        """,
+                        doc_id,
+                        user_uuid,
+                        team_uuid,
+                        scope,
+                        category,
+                        title,
+                        source,
+                        source_ref,
+                        tags or [],
+                        content,
+                        doc_hash,
+                        doc_bytes,
+                    )
+
+                    # Insert chunks in a single batch call
+                    chunk_rows = [
+                        (uuid4(), doc_id, chunk.seq, chunk.pos,
+                         chunk.content, embedding, chunk.tokens, chunk.bytes)
+                        for chunk, embedding in zip(chunks, embeddings)
+                    ]
+                    await conn.executemany(
                         """
                         INSERT INTO memory_chunks (
                             id, document_id, seq, pos, content, embedding, tokens, bytes
                         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
                         """,
-                        uuid4(),
-                        doc_id,
-                        chunk.seq,
-                        chunk.pos,
-                        chunk.content,
-                        embedding,
-                        chunk.tokens,
-                        chunk.bytes,
+                        chunk_rows,
                     )
+            except asyncpg.UniqueViolationError:
+                # Concurrent insert won the race — fetch the existing doc
+                existing = await conn.fetchrow(
+                    """
+                    SELECT id FROM memory_documents
+                    WHERE content_hash = $1 AND user_id = $2 AND deleted_at IS NULL
+                    """,
+                    doc_hash,
+                    user_uuid,
+                )
+                if existing:
+                    logger.debug(f"Concurrent duplicate detected for hash {doc_hash[:8]}...")
+                    return str(existing["id"]), False
+                raise  # Unexpected — re-raise if we can't find it
 
         logger.debug(f"Added document {doc_id} with {len(chunks)} chunks")
         return str(doc_id), True

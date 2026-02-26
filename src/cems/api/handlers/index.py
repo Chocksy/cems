@@ -63,7 +63,7 @@ async def api_index_repo(request: Request):
         return JSONResponse({"error": str(e)}, status_code=400)
     except Exception as e:
         logger.error(f"API index_repo error: {e}")
-        return JSONResponse({"error": str(e)}, status_code=500)
+        return JSONResponse({"error": "Internal server error"}, status_code=500)
 
 
 async def api_index_path(request: Request):
@@ -107,7 +107,7 @@ async def api_index_path(request: Request):
         return JSONResponse({"error": str(e)}, status_code=400)
     except Exception as e:
         logger.error(f"API index_path error: {e}")
-        return JSONResponse({"error": str(e)}, status_code=500)
+        return JSONResponse({"error": "Internal server error"}, status_code=500)
 
 
 async def api_index_patterns(request: Request):
@@ -128,4 +128,4 @@ async def api_index_patterns(request: Request):
         })
     except Exception as e:
         logger.error(f"API index_patterns error: {e}")
-        return JSONResponse({"error": str(e)}, status_code=500)
+        return JSONResponse({"error": "Internal server error"}, status_code=500)

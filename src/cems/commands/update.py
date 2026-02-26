@@ -88,28 +88,48 @@ def _upgrade_package() -> bool:
 
 
 def _redeploy_hooks() -> None:
-    """Re-run setup to copy latest hooks/skills."""
+    """Re-run setup to copy latest hooks/skills.
+
+    Reads saved IDE preferences from ~/.cems/install.conf (written by `cems setup`).
+    Falls back to filesystem detection for installs that predate install.conf.
+    """
     cems_bin = shutil.which("cems")
     if not cems_bin:
         console.print("[yellow]cems not found on PATH — skipping hook re-deploy[/yellow]")
         console.print("Run manually: [cyan]cems setup[/cyan]")
         return
 
-    has_claude = (Path.home() / ".claude" / "hooks" / "cems_session_start.py").exists()
-    has_cursor = (Path.home() / ".cursor" / "hooks" / "cems_session_start.py").exists()
+    # Try saved preferences first (written by cems setup)
+    from cems.commands.setup import get_install_preferences
+    targets = get_install_preferences()
 
-    if not has_claude and not has_cursor:
-        console.print("[yellow]No existing hooks found — run [cyan]cems setup[/cyan] to configure[/yellow]")
+    if not targets:
+        # Fallback: detect from filesystem (for old installs without install.conf)
+        if (Path.home() / ".claude" / "hooks" / "cems_session_start.py").exists():
+            targets.append("claude")
+        if (Path.home() / ".cursor" / "hooks" / "cems_session_start.py").exists():
+            targets.append("cursor")
+        if (Path.home() / ".codex" / "skills" / "recall").exists():
+            targets.append("codex")
+        # Goose detection: check config.yaml for CEMS block
+        goose_cfg = Path.home() / ".config" / "goose" / "config.yaml"
+        if goose_cfg.exists():
+            try:
+                if "cems" in goose_cfg.read_text().lower():
+                    targets.append("goose")
+            except OSError:
+                pass
+
+    if not targets:
+        console.print("[yellow]No existing install found — run [cyan]cems setup[/cyan] to configure[/yellow]")
         return
+
+    console.print(f"  Targets: {', '.join(targets)}")
 
     # Use the NEW cems binary (just installed) to redeploy
     args = [cems_bin, "setup"]
-    if has_claude and not has_cursor:
-        args.append("--claude")
-    elif has_cursor and not has_claude:
-        args.append("--cursor")
-    else:
-        args.extend(["--claude", "--cursor"])
+    for target in targets:
+        args.append(f"--{target}")
 
     # Pass existing credentials so setup doesn't prompt
     creds_file = Path.home() / ".cems" / "credentials"
