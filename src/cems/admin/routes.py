@@ -126,35 +126,31 @@ async def create_user(request: Request) -> JSONResponse:
     settings = data.get("settings", {})
 
     db = get_database()
-    try:
-        with db.session() as session:
-            service = UserService(session)
-            try:
-                result = service.create_user(
-                    username=username,
-                    email=email,
-                    is_admin=is_admin,
-                    settings=settings,
-                )
-                return JSONResponse(
-                    {
-                        "user": {
-                            "id": str(result.user.id),
-                            "username": result.user.username,
-                            "email": result.user.email,
-                            "is_admin": result.user.is_admin,
-                            "api_key_prefix": result.user.api_key_prefix,
-                        },
-                        "api_key": result.api_key,  # Show only once!
-                        "message": "User created. Save the API key - it will not be shown again.",
+    with db.session() as session:
+        service = UserService(session)
+        try:
+            result = service.create_user(
+                username=username,
+                email=email,
+                is_admin=is_admin,
+                settings=settings,
+            )
+            return JSONResponse(
+                {
+                    "user": {
+                        "id": str(result.user.id),
+                        "username": result.user.username,
+                        "email": result.user.email,
+                        "is_admin": result.user.is_admin,
+                        "api_key_prefix": result.user.api_key_prefix,
                     },
-                    status_code=201,
-                )
-            except ValueError as e:
-                return JSONResponse({"error": str(e)}, status_code=400)
-    except Exception as e:
-        logger.exception("Failed to create user")
-        return JSONResponse({"error": "Database error"}, status_code=500)
+                    "api_key": result.api_key,  # Show only once!
+                    "message": "User created. Save the API key - it will not be shown again.",
+                },
+                status_code=201,
+            )
+        except ValueError as e:
+            return JSONResponse({"error": str(e)}, status_code=400)
 
 
 async def get_user(request: Request) -> JSONResponse:
@@ -452,7 +448,7 @@ def _resolve_team_id(service: TeamService, team_id_or_name: str) -> uuid.UUID | 
 
 
 def _resolve_user_id(
-    user_service: "UserService", user_id_or_name: str
+    user_service: UserService, user_id_or_name: str
 ) -> uuid.UUID | None:
     """Resolve a username or UUID string to a UUID."""
     try:
@@ -497,19 +493,17 @@ async def add_team_member(request: Request) -> JSONResponse:
 
         try:
             member = team_service.add_member(team_id=team_id, user_id=user_id, role=role)
-            if member:
-                return JSONResponse(
-                    {
-                        "member": {
-                            "team_id": str(member.team_id),
-                            "user_id": str(member.user_id),
-                            "role": member.role,
-                        },
-                        "message": "Member added",
+            return JSONResponse(
+                {
+                    "member": {
+                        "team_id": str(member.team_id),
+                        "user_id": str(member.user_id),
+                        "role": member.role,
                     },
-                    status_code=201,
-                )
-            return JSONResponse({"error": "Team or user not found"}, status_code=404)
+                    "message": "Member added",
+                },
+                status_code=201,
+            )
         except ValueError as e:
             return JSONResponse({"error": str(e)}, status_code=400)
 
@@ -570,8 +564,6 @@ async def debug_config(request: Request) -> JSONResponse:
     """Debug endpoint to check configuration (admin only)."""
     if err := require_admin_auth(request):
         return err
-
-    import os
 
     # Check which LLM-related env vars are set (values masked for security)
     # Note: Only OPENROUTER_API_KEY is required - it handles both LLM and embeddings
@@ -645,13 +637,13 @@ async def cleanup_eval_data(request: Request) -> JSONResponse:
     """
     if err := require_admin_auth(request):
         return err
+    if err := require_database(request):
+        return err
 
     source_prefix = request.query_params.get("source_prefix", "project:longmemeval")
 
     try:
         db = get_database()
-        if not db:
-            return JSONResponse({"error": "Database not initialized"}, status_code=500)
 
         async with db.async_session() as session:
             # Delete chunks first (foreign key constraint)
@@ -700,11 +692,11 @@ async def database_stats(request: Request) -> JSONResponse:
     """
     if err := require_admin_auth(request):
         return err
+    if err := require_database(request):
+        return err
 
     try:
         db = get_database()
-        if not db:
-            return JSONResponse({"error": "Database not initialized"}, status_code=500)
 
         stats = {}
 

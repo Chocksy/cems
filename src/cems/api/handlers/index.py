@@ -8,7 +8,6 @@ REST API endpoints for repository indexing:
 
 import asyncio
 import logging
-from functools import partial
 
 from starlette.requests import Request
 from starlette.responses import JSONResponse

@@ -94,7 +94,7 @@ class TestClaudeAdapter:
             tool="claude",
         )
 
-        with patch("cems.observer.adapters.claude._get_project_id", return_value="test/project"):
+        with patch("cems.observer.session._get_project_id", return_value="test/project"):
             adapter = ClaudeAdapter()
             adapter.enrich_metadata(session)
 
@@ -689,7 +689,6 @@ class TestCursorPathReconstruction:
     def test_enrich_with_valid_path(self, tmp_path):
         """Should reconstruct path when it exists on disk."""
         from cems.observer.adapters.cursor import CursorAdapter
-        import os
 
         # Create a real directory that matches the reconstructed path
         real_dir = tmp_path / "project"
@@ -703,8 +702,9 @@ class TestCursorPathReconstruction:
         )
 
         adapter = CursorAdapter()
-        # Patch os.path.isdir to simulate the path existing
-        with patch("os.path.isdir", side_effect=lambda p: p == "/project"):
+        # Patch Path.is_dir to simulate the reconstructed path existing
+        orig_is_dir = Path.is_dir
+        with patch.object(Path, "is_dir", lambda self: str(self) == "/project" or orig_is_dir(self)):
             adapter.enrich_metadata(session)
 
         assert session.cwd == "/project"

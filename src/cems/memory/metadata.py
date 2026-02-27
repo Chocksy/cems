@@ -74,12 +74,12 @@ class MetadataMixin:
         )
 
     def get_category_counts(
-        self: "CEMSMemory", scope: Literal["personal", "shared"] | None = None
+        self: "CEMSMemory", scope: Literal["personal", "shared", "both"] | None = None
     ) -> dict[str, int]:
         """Get document counts grouped by category.
 
         Args:
-            scope: Optional filter by scope
+            scope: Optional filter by scope ("personal", "shared", "both", or None)
 
         Returns:
             Dict mapping category name to count

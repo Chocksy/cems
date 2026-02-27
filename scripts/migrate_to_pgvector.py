@@ -50,15 +50,9 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-async def get_memory_metadata_count(conn: asyncpg.Connection) -> int:
-    """Get count of entries in memory_metadata table."""
-    result = await conn.fetchval("SELECT COUNT(*) FROM memory_metadata")
-    return result or 0
-
-
-async def get_memories_count(conn: asyncpg.Connection) -> int:
-    """Get count of entries in new memories table."""
-    result = await conn.fetchval("SELECT COUNT(*) FROM memories")
+async def _count(conn: asyncpg.Connection, table: str) -> int:
+    """Get row count for a table."""
+    result = await conn.fetchval(f"SELECT COUNT(*) FROM {table}")  # noqa: S608
     return result or 0
 
 
@@ -182,26 +176,13 @@ async def migrate_from_metadata_only(
     Returns:
         Tuple of (migrated count, skipped count)
     """
-    from cems.embedding import EmbeddingClient
-
-    migrated = 0
-    skipped = 0
-
-    embedder = EmbeddingClient()
-
-    for i, metadata in enumerate(metadata_list):
-        memory_id = metadata.get("memory_id", str(metadata["id"]))
-
-        # We don't have the original content, so we can't migrate properly
-        # This path is mainly for testing the migration flow
-        logger.warning(
-            f"[{i+1}/{len(metadata_list)}] Memory {memory_id}: "
-            "No content available without Qdrant access. Skipping."
-        )
-        skipped += 1
-        continue
-
-    return migrated, skipped
+    # Without Qdrant access, this path cannot retrieve original content.
+    # All memories are skipped. Use migrate_from_qdrant() instead.
+    logger.warning(
+        f"metadata-only migration: {len(metadata_list)} memories skipped "
+        "(no content available without Qdrant)"
+    )
+    return 0, len(metadata_list)
 
 
 async def migrate_from_qdrant(
@@ -302,8 +283,8 @@ async def main(
             return
 
         # Get counts
-        metadata_count = await get_memory_metadata_count(conn)
-        memories_count = await get_memories_count(conn)
+        metadata_count = await _count(conn, "memory_metadata")
+        memories_count = await _count(conn, "memories")
 
         logger.info(f"Source: memory_metadata table has {metadata_count} entries")
         logger.info(f"Target: memories table has {memories_count} entries")
@@ -347,7 +328,7 @@ async def main(
         logger.info(f"Skipped: {skipped}")
 
         if not dry_run:
-            final_count = await get_memories_count(conn)
+            final_count = await _count(conn, "memories")
             logger.info(f"Final memories count: {final_count}")
 
     finally:

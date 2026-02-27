@@ -116,7 +116,10 @@ def _set_cooldown() -> None:
 def _should_check() -> bool:
     """Rate-limit health checks using PID file mtime.
 
-    Returns True if enough time has passed since last check.
+    Pure predicate: returns True if enough time has passed since last check.
+    The caller (ensure_daemon_running) is responsible for touching the PID
+    file to reset the timer after a successful check.
+
     Called from user_prompts_submit to avoid overhead on every prompt.
     """
     try:
@@ -124,8 +127,6 @@ def _should_check() -> bool:
             age = time.time() - PID_FILE.stat().st_mtime
             if age < HEALTH_CHECK_INTERVAL:
                 return False
-        # Touch PID file to reset the timer (even if daemon isn't running)
-        # We'll create/update it properly when spawning
         return True
     except OSError:
         return True

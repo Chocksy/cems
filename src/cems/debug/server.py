@@ -76,6 +76,26 @@ class DebugHandler(SimpleHTTPRequestHandler):
             data = self.index.get_status()
             self._json_response(data)
 
+        elif path == "/api/observer/sessions":
+            limit = _parse_int(params.get("limit", [100])[0], 100)
+            data = self.index.get_observer_sessions(limit=limit)
+            self._json_response(data)
+
+        elif path.startswith("/api/observer/sessions/"):
+            sid = path.split("/api/observer/sessions/")[1]
+            if "/" in sid or "\\" in sid or ".." in sid:
+                self._json_response({"error": "Invalid session ID"}, 400)
+                return
+            data = self.index.get_observer_session_detail(sid)
+            if data is None:
+                self._json_response({"error": "Observer session not found"}, 404)
+            else:
+                self._json_response(data)
+
+        elif path == "/api/observer/stats":
+            data = self.index.get_observer_stats()
+            self._json_response(data)
+
         else:
             self._json_response({"error": "Not found"}, 404)
 

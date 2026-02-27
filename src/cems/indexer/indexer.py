@@ -57,7 +57,8 @@ class RepositoryIndexer:
             patterns: Optional list of pattern names to use (uses all if None)
 
         Returns:
-            Dict with indexing results
+            Dict with keys: files_scanned (int), knowledge_extracted (int),
+            memories_created (int), errors (list[str])
         """
         repo_path = Path(repo_path).resolve()
         if not repo_path.is_dir():
@@ -88,7 +89,6 @@ class RepositoryIndexer:
                     results["knowledge_extracted"] += len(knowledge_items)
 
                     for item in knowledge_items:
-                        # Store as pinned memory
                         mem_result = self.memory.add(
                             content=item.content,
                             scope=scope,  # type: ignore
@@ -97,21 +97,9 @@ class RepositoryIndexer:
                             tags=item.tags or [],
                         )
 
-                        # Pin the memory
                         if mem_result and "results" in mem_result:
                             for r in mem_result["results"]:
                                 if r.get("id") and r.get("event") in ("ADD", "UPDATE"):
-                                    memory_id = r["id"]
-                                    # Update metadata to pin it
-                                    metadata = self.memory.get_metadata(memory_id)
-                                    if metadata:
-                                        metadata.pinned = True
-                                        metadata.pin_reason = f"Indexed from {file_path.name}"
-                                        metadata.pin_category = pattern.pin_category
-                                        metadata.source = "indexer"
-                                        metadata.source_ref = f"repo:{repo_path.name}:{file_path.relative_to(repo_path)}"
-                                        metadata.priority = pattern.priority
-                                        self.memory.metadata_store.save_metadata(metadata)
                                     results["memories_created"] += 1
 
                 except Exception as e:
@@ -137,7 +125,8 @@ class RepositoryIndexer:
             patterns: Optional list of pattern names to use
 
         Returns:
-            Dict with indexing results
+            Dict with keys: files_scanned (int), knowledge_extracted (int),
+            memories_created (int), errors (list[str])
         """
         with tempfile.TemporaryDirectory() as tmpdir:
             # Clone the repository

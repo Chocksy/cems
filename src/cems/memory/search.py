@@ -31,6 +31,7 @@ def _make_search_result_from_chunk(chunk: dict, user_id: str) -> SearchResult:
     """
     memory_scope = MemoryScope(chunk.get("scope", "personal"))
     memory_id = chunk.get("document_id", chunk.get("chunk_id", ""))
+    created_at = chunk.get("created_at", datetime.now(UTC))
 
     metadata = MemoryMetadata(
         memory_id=memory_id,
@@ -45,9 +46,9 @@ def _make_search_result_from_chunk(chunk: dict, user_id: str) -> SearchResult:
         pin_reason=None,
         archived=False,
         access_count=0,
-        created_at=chunk.get("created_at", datetime.now(UTC)),
-        updated_at=chunk.get("created_at", datetime.now(UTC)),
-        last_accessed=chunk.get("created_at", datetime.now(UTC)),
+        created_at=created_at,
+        updated_at=created_at,
+        last_accessed=created_at,
         expires_at=None,
     )
 
@@ -70,8 +71,11 @@ def _dedupe_by_document(results: list[SearchResult]) -> list[SearchResult]:
     return list(seen_docs.values())
 
 
-def _apply_score_adjustments(results: list[SearchResult]) -> None:
-    """Apply priority boost and time decay to scores in-place."""
+def _apply_score_adjustments(results: list[SearchResult]) -> list[SearchResult]:
+    """Apply priority boost and time decay to scores in-place.
+
+    Mutates scores on each result and returns the same list for chaining.
+    """
     now = datetime.now(UTC)
     for result in results:
         if result.metadata:
@@ -81,6 +85,7 @@ def _apply_score_adjustments(results: list[SearchResult]) -> None:
             result.score *= time_decay
             if result.metadata.pinned:
                 result.score *= 1.1
+    return results
 
 
 class SearchMixin:

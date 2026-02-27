@@ -84,8 +84,9 @@ class ObservationReflector:
                 f"Reflecting {len(project_obs)} observations for {project_context}"
             )
 
-            # Call LLM to consolidate
-            consolidated = reflect_observations(
+            # Call LLM to consolidate (sync function, run in executor to avoid blocking)
+            consolidated = await asyncio.to_thread(
+                reflect_observations,
                 observations=project_obs,
                 project_context=project_context,
             )

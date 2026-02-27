@@ -68,7 +68,7 @@ class GooseAdapter:
                         modified_at=modified_ts,
                         extra={
                             "working_dir": row["working_dir"] or "",
-                            "max_message_id": row["max_message_id"] or 0,
+                            "db_max_message_id": row["max_message_id"] or 0,
                         },
                     )
                 )
@@ -82,11 +82,14 @@ class GooseAdapter:
         sessions.sort(key=lambda s: s.modified_at, reverse=True)
         return sessions
 
-    def extract_text(self, session: SessionInfo, from_byte: int) -> str | None:
+    def extract_text(self, session: SessionInfo, from_byte: int) -> str | None:  # noqa: ARG002
         """Extract transcript text from Goose SQLite DB using message-ID watermark.
 
-        The from_byte parameter is part of the protocol but ignored for Goose.
-        We use session.extra["last_observed_message_id"] as the watermark instead.
+        Args:
+            session: Session to read from.
+            from_byte: Required by SessionAdapter protocol but unused. Goose uses
+                message-ID watermarking via session.extra["last_observed_message_id"]
+                instead of byte offsets, since messages live in SQLite not flat files.
         """
         watermark = session.extra.get("last_observed_message_id", 0)
 
@@ -163,8 +166,8 @@ class GooseAdapter:
                             result_str = result_str[:1000] + "..."
                         lines.append(f"[TOOL RESULT]: {result_str}")
 
-            # Update max message ID in session.extra for the daemon to persist
-            session.extra["max_message_id"] = max_id
+            # Update watermark in session.extra for the daemon to persist
+            session.extra["last_observed_message_id"] = max_id
 
             return "\n".join(lines) if lines else None
 

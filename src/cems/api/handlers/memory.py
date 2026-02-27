@@ -52,17 +52,11 @@ async def api_memory_add(request: Request):
         "scope": "personal|shared",
         "source_ref": "project:org/repo"  (optional, for project-scoped recall),
         "tags": ["tag1", "tag2"]  (optional),
-        "ttl_hours": 24  (optional, memory expires after this many hours),
-        "pinned": true/false  (optional, default false - pinned memories never auto-prune),
-        "pin_reason": "..."  (optional, reason for pinning),
         "timestamp": "2023-04-10T17:50:00Z"  (optional, ISO format for historical imports)
     }
 
     Content is stored as-is using the document+chunk model (no LLM fact extraction).
     The "infer" parameter is accepted but ignored (kept for API backwards compatibility).
-
-    Use ttl_hours for short-term session memories that should auto-expire.
-    Use pinned=true for important memories like gate rules or guidelines.
     Use timestamp for historical imports (e.g., eval benchmarks with event dates).
     """
     try:
@@ -82,11 +76,8 @@ async def api_memory_add(request: Request):
         # Gate rules must preserve exact pattern format, so disable LLM inference
         default_infer = category != "gate-rules"
         infer = body.get("infer", default_infer)
-        source_ref = body.get("source_ref")  # e.g., "project:org/repo"
-        ttl_hours = body.get("ttl_hours")  # Optional: memory expires after N hours
-        pinned = body.get("pinned", False)  # Optional: pin memory (never auto-prune)
-        pin_reason = body.get("pin_reason")  # Optional: reason for pinning
-        timestamp_str = body.get("timestamp")  # Optional: historical timestamp (ISO format)
+        source_ref = body.get("source_ref")
+        timestamp_str = body.get("timestamp")
 
         # Parse timestamp if provided
         timestamp = None
@@ -104,9 +95,6 @@ async def api_memory_add(request: Request):
             tags=tags,
             infer=infer,
             source_ref=source_ref,
-            ttl_hours=ttl_hours,
-            pinned=pinned,
-            pin_reason=pin_reason,
             timestamp=timestamp,
         )
 
@@ -128,7 +116,6 @@ async def api_memory_add_batch(request: Request):
             {
                 "content": "...",
                 "category": "...",
-                "scope": "personal|shared",
                 "source_ref": "project:org/repo:id",
                 "tags": ["tag1", "tag2"],
                 "timestamp": "2023-04-10T17:50:00Z"  (optional)
@@ -136,6 +123,9 @@ async def api_memory_add_batch(request: Request):
             ...
         ]
     }
+
+    Scope is determined by the first memory's "scope" field (default: "personal")
+    and applied uniformly to the entire batch.
 
     This endpoint is optimized for bulk ingestion (e.g., eval benchmarks):
     - Single HTTP request for many memories
@@ -331,13 +321,12 @@ async def api_memory_search(request: Request):
         scope = body.get("scope", "both")
         max_tokens = body.get("max_tokens", 4000)
         enable_graph = body.get("enable_graph", True)
-        enable_query_synthesis = body.get("enable_query_synthesis", False)  # DISABLED: Was making results worse by adding noise
+        enable_query_synthesis = body.get("enable_query_synthesis", False)
         raw_mode = body.get("raw", False)
-        project = body.get("project")  # e.g., "org/repo"
-        # NEW parameters - EXPERIMENT: enable reranking for better Recall@All
-        mode = body.get("mode", "vector")  # Skip auto mode (requires LLM intent analysis)
-        enable_hyde = body.get("enable_hyde", False)  # Skip HyDE (LLM call)
-        enable_rerank = body.get("enable_rerank", True)  # Re-enabled with improved JSON parsing
+        project = body.get("project")
+        mode = body.get("mode", "vector")
+        enable_hyde = body.get("enable_hyde", False)
+        enable_rerank = body.get("enable_rerank", True)
 
         logger.info(f"[API] Search request: query='{query[:50]}...', mode={mode}, raw={raw_mode}")
 
@@ -587,7 +576,7 @@ async def api_memory_profile(request: Request):
         components = {
             "preferences": [],
             "foundation_guidelines": [],
-            "guidelines": [],
+            "all_guidelines": [],  # Foundation + non-foundation combined
             "recent_memories": [],
             "gate_rules_count": 0,
             "project_context": [],
@@ -610,7 +599,7 @@ async def api_memory_profile(request: Request):
         foundation_guidelines = [g for g in guidelines if _is_foundation_guideline(g)]
         non_foundation_guidelines = [g for g in guidelines if not _is_foundation_guideline(g)]
         components["foundation_guidelines"] = foundation_guidelines[:10]
-        components["guidelines"] = (foundation_guidelines + non_foundation_guidelines)[:10]
+        components["all_guidelines"] = (foundation_guidelines + non_foundation_guidelines)[:10]
 
         # 3. Fetch recent memories (last 24h, excluding certain categories)
         recent = await doc_store.get_recent_documents(
@@ -650,9 +639,9 @@ async def api_memory_profile(request: Request):
             foundation_list = [f"- {m['content']}" for m in components["foundation_guidelines"][:5]]
             context_parts.append("## Foundational Principles\n" + "\n".join(foundation_list))
 
-        if components["guidelines"]:
+        if components["all_guidelines"]:
             regular_guidelines = [
-                m for m in components["guidelines"] if not _is_foundation_guideline(m)
+                m for m in components["all_guidelines"] if not _is_foundation_guideline(m)
             ]
             if regular_guidelines:
                 guide_list = [f"- {m['content']}" for m in regular_guidelines[:5]]
@@ -708,7 +697,7 @@ async def api_memory_profile(request: Request):
         logger.info(
             f"[API] Profile: {len(components['preferences'])} prefs, "
             f"{len(components['foundation_guidelines'])} foundation guidelines, "
-            f"{len(components['guidelines'])} guidelines, "
+            f"{len(components['all_guidelines'])} guidelines, "
             f"{len(components['recent_memories'])} recent, "
             f"{components['gate_rules_count']} rules, "
             f"~{token_estimate} tokens"
@@ -720,7 +709,7 @@ async def api_memory_profile(request: Request):
             "components": {
                 "preferences": len(components["preferences"]),
                 "foundation_guidelines": len(components["foundation_guidelines"]),
-                "guidelines": len(components["guidelines"]),
+                "guidelines": len(components["all_guidelines"]),
                 "recent_memories": len(components["recent_memories"]),
                 "gate_rules_count": components["gate_rules_count"],
                 "project_context": len(components["project_context"]),
@@ -750,7 +739,7 @@ async def api_memory_forget(request: Request):
         memory = get_memory()
         await memory.delete_async(memory_id, hard=hard_delete)
 
-        action = "deleted" if hard_delete else "archived"
+        action = "deleted" if hard_delete else "soft-deleted"
         return JSONResponse({
             "success": True,
             "message": f"Memory {memory_id} {action}",
@@ -878,7 +867,6 @@ async def api_memory_maintenance(request: Request):
 
         # Single job type — run directly with user's memory
         from cems.maintenance.consolidation import ConsolidationJob
-        from cems.maintenance.observation_reflector import ObservationReflector
         from cems.maintenance.reindex import ReindexJob
         from cems.maintenance.summarization import SummarizationJob
 
@@ -895,7 +883,6 @@ async def api_memory_maintenance(request: Request):
         jobs = {
             "summarization": SummarizationJob(memory).run_async,
             "reindex": ReindexJob(memory).run_async,
-            "reflect": ObservationReflector(memory).run_async,
         }
 
         if job_type not in jobs:

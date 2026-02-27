@@ -227,7 +227,7 @@ class TestMemoryAPI:
             assert response.status_code == 200
             data = response.json()
             assert data["success"] is True
-            assert "archived" in data["message"]
+            assert "soft-deleted" in data["message"]
 
     @patch("cems.db.database.is_database_initialized", return_value=True)
     @patch("cems.db.database.get_database")
@@ -939,7 +939,7 @@ class TestSoftDelete:
             assert response.status_code == 200
             data = response.json()
             assert data["success"] is True
-            assert "archived" in data["message"]
+            assert "soft-deleted" in data["message"]
             # Verify delete_async was called with hard=False
             mock_memory.delete_async.assert_called_once_with("mem-123", hard=False)
 

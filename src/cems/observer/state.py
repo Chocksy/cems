@@ -19,6 +19,7 @@ OBSERVER_STATE_DIR = Path.home() / ".cems" / "observer"
 class ObservationState:
     """Tracks observation progress for a single session."""
     session_id: str
+    tool: str = ""
     project_id: str | None = None
     source_ref: str | None = None
     last_observed_bytes: int = 0

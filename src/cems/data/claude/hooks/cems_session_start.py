@@ -10,9 +10,6 @@ CEMS SessionStart Hook - Profile + Foundation Injection
 Injects user context at session start:
 1. User preferences and guidelines (via /api/memory/profile)
 2. Foundation guidelines (via /api/memory/foundation, cached 15min)
-3. Recent relevant memories (last 24h)
-4. Gate rules summary
-5. Project-specific context
 
 Configuration:
   CEMS_API_URL - CEMS server URL (required)
@@ -108,8 +105,8 @@ def fetch_foundation(project: str | None = None) -> list[dict]:
     # Return cached if fresh
     if cache_path.exists():
         try:
-            age = cache_path.stat().st_mtime
-            if time.time() - age < FOUNDATION_CACHE_TTL:
+            mtime = cache_path.stat().st_mtime
+            if time.time() - mtime < FOUNDATION_CACHE_TTL:
                 return json.loads(cache_path.read_text())
         except (OSError, json.JSONDecodeError):
             pass

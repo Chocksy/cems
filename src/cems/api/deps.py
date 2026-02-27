@@ -35,6 +35,24 @@ def get_base_config() -> CEMSConfig:
     return _base_config
 
 
+def _config_for_user(user_id: str, team_id: str | None = None) -> CEMSConfig:
+    """Build a CEMSConfig for a specific user, inheriting base settings."""
+    base = get_base_config()
+    return CEMSConfig(
+        user_id=user_id,
+        team_id=team_id,
+        database_url=base.database_url,
+        storage_dir=base.storage_dir,
+        embedding_model=base.embedding_model,
+        llm_model=base.llm_model,
+        enable_graph=base.enable_graph,
+        enable_scheduler=False,  # Scheduler runs separately
+        enable_query_synthesis=base.enable_query_synthesis,
+        relevance_threshold=base.relevance_threshold,
+        default_max_tokens=base.default_max_tokens,
+    )
+
+
 def get_memory() -> CEMSMemory:
     """Get or create the memory instance for the current request.
 
@@ -49,23 +67,7 @@ def get_memory() -> CEMSMemory:
         # HTTP mode: Create per-user memory instance
         cache_key = f"{user_id}:{team_id or 'none'}"
         if cache_key not in _memory_cache:
-            # Create config with header values but inherit settings from base
-            base = get_base_config()
-            # Override user/team via environment for this instance
-            config = CEMSConfig(
-                user_id=user_id,
-                team_id=team_id,
-                # Inherit all other settings from base config
-                database_url=base.database_url,
-                storage_dir=base.storage_dir,
-                embedding_model=base.embedding_model,
-                llm_model=base.llm_model,
-                enable_graph=base.enable_graph,
-                enable_scheduler=False,  # Scheduler runs separately
-                enable_query_synthesis=base.enable_query_synthesis,
-                relevance_threshold=base.relevance_threshold,
-                default_max_tokens=base.default_max_tokens,
-            )
+            config = _config_for_user(user_id, team_id)
             _memory_cache[cache_key] = CEMSMemory(config)
             logger.info(f"Created memory instance for user: {user_id}, team: {team_id}")
         return _memory_cache[cache_key]
@@ -106,19 +108,7 @@ def create_user_memory(user_id: str) -> CEMSMemory:
     Uses the base config (API keys, DB URL, etc.) with the given user_id.
     Used by the scheduler to create per-user memory instances.
     """
-    base = get_base_config()
-    config = CEMSConfig(
-        user_id=user_id,
-        database_url=base.database_url,
-        storage_dir=base.storage_dir,
-        embedding_model=base.embedding_model,
-        llm_model=base.llm_model,
-        enable_graph=base.enable_graph,
-        enable_scheduler=False,
-        enable_query_synthesis=base.enable_query_synthesis,
-        relevance_threshold=base.relevance_threshold,
-        default_max_tokens=base.default_max_tokens,
-    )
+    config = _config_for_user(user_id)
     return CEMSMemory(config)
 
 

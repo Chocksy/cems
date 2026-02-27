@@ -4,14 +4,12 @@ Discovers and extracts from Claude Code JSONL session files at:
     ~/.claude/projects/{project-dir}/{session-uuid}.jsonl
 """
 
-import json
 import logging
-import re
-import subprocess
 import time
 from pathlib import Path
 
 from cems.observer.adapters.base import SessionInfo
+from cems.observer.session import populate_session_metadata
 
 logger = logging.getLogger(__name__)
 
@@ -76,44 +74,4 @@ class ClaudeAdapter:
 
     def enrich_metadata(self, session: SessionInfo) -> SessionInfo:
         """Read the first JSONL entry to extract cwd, git_branch, project_id."""
-        try:
-            with open(session.path, "r") as f:
-                first_line = f.readline().strip()
-                if not first_line:
-                    return session
-                entry = json.loads(first_line)
-
-            session.cwd = entry.get("cwd", "")
-            session.git_branch = entry.get("gitBranch", "")
-
-            if session.cwd:
-                session.project_id = _get_project_id(session.cwd)
-                if session.project_id:
-                    session.source_ref = f"project:{session.project_id}"
-
-        except (json.JSONDecodeError, OSError, KeyError) as e:
-            logger.debug(f"Could not read metadata from {session.path}: {e}")
-
-        return session
-
-
-def _get_project_id(cwd: str) -> str | None:
-    """Extract project ID from git remote (e.g., 'org/repo')."""
-    if not cwd:
-        return None
-    try:
-        result = subprocess.run(
-            ["git", "-C", cwd, "remote", "get-url", "origin"],
-            capture_output=True, text=True, timeout=2
-        )
-        if result.returncode == 0:
-            url = result.stdout.strip()
-            if url.startswith("git@"):
-                match = re.search(r":(.+?)(?:\.git)?$", url)
-            else:
-                match = re.search(r"[:/]([^/]+/[^/]+?)(?:\.git)?$", url)
-            if match:
-                return match.group(1).removesuffix('.git')
-    except (subprocess.TimeoutExpired, FileNotFoundError):
-        pass
-    return None
+        return populate_session_metadata(session)

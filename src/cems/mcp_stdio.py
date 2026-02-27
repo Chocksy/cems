@@ -10,10 +10,12 @@ Entry point: cems-mcp (defined in pyproject.toml)
 from __future__ import annotations
 
 import json
+import logging
 import os
 import urllib.request
 from pathlib import Path
-from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 from mcp.server.fastmcp import FastMCP
 
@@ -74,8 +76,8 @@ def _fetch_profile() -> str:
         result = _request("GET", "/api/memory/profile")
         if result.get("success") and result.get("context"):
             return result["context"]
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug(f"Failed to fetch profile: {e}")
     return ""
 
 
@@ -101,7 +103,7 @@ def memory_search(
     enable_graph: bool = True,
     enable_query_synthesis: bool = True,
     raw: bool = False,
-    project: Optional[str] = None,
+    project: str | None = None,
 ) -> str:
     """Search memories using unified retrieval pipeline: query synthesis, vector+graph search, relevance filtering, temporal ranking, and token budgeting."""
     payload: dict = {
@@ -123,9 +125,9 @@ def memory_add(
     content: str,
     scope: str = "personal",
     category: str = "general",
-    tags: Optional[list[str]] = None,
+    tags: list[str] | None = None,
     infer: bool = True,
-    source_ref: Optional[str] = None,
+    source_ref: str | None = None,
 ) -> str:
     """Store a memory. Set infer=false for bulk imports (faster)."""
     payload: dict = {

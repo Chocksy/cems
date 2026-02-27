@@ -129,9 +129,9 @@ def _extract_project_from_url(url: str) -> str | None:
     if url.startswith("git@"):
         match = re.search(r":(.+?)(?:\.git)?$", url)
         if match:
-            return match.group(1).removesuffix(".git")
+            return match.group(1)
     # https://github.com/org/repo.git
     match = re.search(r"[:/]([^/]+/[^/]+?)(?:\.git)?$", url)
     if match:
-        return match.group(1).removesuffix(".git")
+        return match.group(1)
     return None

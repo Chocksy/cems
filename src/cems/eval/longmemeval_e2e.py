@@ -289,17 +289,7 @@ def generate_answer(
     context: str,
     model: str = DEFAULT_READER_MODEL,
 ) -> str:
-    """Generate an answer using retrieved context.
-
-    Args:
-        llm: LLM client
-        question: The question to answer
-        context: Formatted context from search results
-        model: Model to use for generation
-
-    Returns:
-        Generated answer string
-    """
+    """Generate an answer using retrieved context."""
     prompt = (
         f"Here is relevant context from past conversations:\n\n"
         f"{context}\n\n"
@@ -325,14 +315,6 @@ def judge_answer(
     model: str = DEFAULT_JUDGE_MODEL,
 ) -> tuple[bool, str]:
     """Judge whether the generated answer is correct.
-
-    Args:
-        llm: LLM client
-        question: Original question
-        correct_answer: Ground truth answer
-        generated_answer: Model's generated answer
-        question_type: Question type for selecting appropriate judge prompt
-        model: Model to use for judging
 
     Returns:
         Tuple of (verdict: bool, explanation: str)
@@ -523,12 +505,12 @@ def run_e2e_eval(
         ingest_start = time.time()
 
         memories_to_add = list(all_sessions.values())
-        result_map = cems_client.add_memories_batch(memories_to_add)
+        cems_client.add_memories_batch(memories_to_add)
 
         ingest_elapsed = time.time() - ingest_start
         per_session_ms = ingest_elapsed / len(memories_to_add) * 1000 if memories_to_add else 0
         print(
-            f"  Ingested {len(result_map)} sessions in {ingest_elapsed:.1f}s "
+            f"  Ingested {len(memories_to_add)} sessions in {ingest_elapsed:.1f}s "
             f"({per_session_ms:.0f}ms/session)"
         )
 

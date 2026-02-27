@@ -28,14 +28,12 @@ class RelationsMixin:
     def get_related_memories(
         self: "CEMSMemory",
         memory_id: str,
-        max_depth: int = 2,
         limit: int = 10,
     ) -> list[dict]:
         """Find memories related to a given memory via relations.
 
         Args:
             memory_id: Starting memory ID
-            max_depth: Maximum path length (not used with PostgreSQL relations)
             limit: Maximum results
 
         Returns:
@@ -69,14 +67,12 @@ class RelationsMixin:
     def get_memories_by_entity(
         self: "CEMSMemory",
         entity_name: str,
-        entity_type: str = "tool",
         limit: int = 20,
     ) -> list[dict]:
         """Find memories that mention a specific entity via full-text search.
 
         Args:
             entity_name: Entity name (e.g., "Python", "Docker")
-            entity_type: Entity type (ignored)
             limit: Maximum results
 
         Returns:
@@ -113,6 +109,7 @@ class RelationsMixin:
         """Get statistics about the memory relations.
 
         Returns:
-            Dict with counts (empty since Kuzu is removed)
+            Stub — always returns zeros. Kuzu graph store was removed;
+            relation stats not yet implemented via PostgreSQL.
         """
         return {"nodes": 0, "edges": 0}

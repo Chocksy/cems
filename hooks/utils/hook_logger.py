@@ -111,7 +111,7 @@ def _scrub_payload(data: dict) -> dict:
             s = json.dumps(v, default=str) if not isinstance(v, str) else v
             scrubbed[k] = s[:2000] + "..." if len(s) > 2000 else v
         elif k == "prompt":
-            scrubbed[k] = v
+            scrubbed[k] = v[:5000] + "..." if isinstance(v, str) and len(v) > 5000 else v
         elif k == "custom_instructions":
             # Skip — huge and not useful for debugging
             scrubbed[k] = f"[{len(v)} chars]" if isinstance(v, str) else v

@@ -226,7 +226,7 @@ def _parse_observations(response: str) -> list[dict]:
         if not content:
             continue
 
-        # Validate content length (80-200 chars target, allow some flexibility)
+        # Minimum content length filter (observations should be substantive)
         if len(content) < 30:
             logger.debug(f"Observation too short ({len(content)} chars), skipping: {content}")
             continue

@@ -15,8 +15,7 @@ The document+chunk model replaces the flat memory model to:
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Literal
+from typing import Any, Literal
 from uuid import UUID, uuid4
 
 import asyncpg
@@ -24,9 +23,6 @@ from pgvector.asyncpg import register_vector
 
 from cems.chunking import Chunk, content_hash
 from cems.db.filter_builder import FilterBuilder
-
-if TYPE_CHECKING:
-    pass
 
 logger = logging.getLogger(__name__)
 
@@ -48,30 +44,6 @@ CHUNK_WITH_DOC_COLUMNS = f"""
     d.user_id, d.team_id, d.scope, d.category, d.title, d.source, d.source_ref,
     d.tags, d.created_at AS document_created_at
 """
-
-
-@dataclass
-class ChunkSearchResult:
-    """Result from chunk search with document metadata."""
-
-    chunk_id: str
-    document_id: str
-    seq: int
-    pos: int
-    chunk_content: str
-    score: float
-    tokens: int | None
-    bytes: int
-    # Document metadata
-    user_id: str | None
-    team_id: str | None
-    scope: str
-    category: str
-    title: str | None
-    source: str | None
-    source_ref: str | None
-    tags: list[str]
-    document_created_at: Any
 
 
 def chunk_row_to_result(row: asyncpg.Record, include_score: bool = False) -> dict[str, Any]:
@@ -115,18 +87,15 @@ class DocumentStore:
         self,
         database_url: str,
         pool_size: int = 10,
-        embedding_dim: int = 768,
     ):
         """Initialize the document store.
 
         Args:
             database_url: PostgreSQL connection URL
             pool_size: Connection pool size
-            embedding_dim: Embedding dimension (768 for llama.cpp)
         """
         self.database_url = database_url
         self.pool_size = pool_size
-        self.embedding_dim = embedding_dim
         self._pool: asyncpg.Pool | None = None
 
     async def connect(self) -> None:
@@ -359,9 +328,11 @@ class DocumentStore:
                 return result == "UPDATE 1"
 
     async def delete_by_source_ref(self, source_ref: str, user_id: str) -> int:
-        """Delete all documents with a given source_ref for a user.
+        """Hard-delete all documents with a given source_ref for a user.
 
-        Useful for eval cleanup.
+        Intentionally uses hard delete (not soft-delete) because this is
+        used for eval cleanup where we need complete removal of test data,
+        including chunks (via CASCADE).
         """
         pool = await self._get_pool()
 
@@ -377,9 +348,11 @@ class DocumentStore:
         return count
 
     async def delete_by_tag(self, tag: str, user_id: str) -> int:
-        """Delete all documents containing a specific tag for a user.
+        """Hard-delete all documents containing a specific tag for a user.
 
-        Useful for eval cleanup.
+        Intentionally uses hard delete (not soft-delete) because this is
+        used for eval cleanup where we need complete removal of test data,
+        including chunks (via CASCADE).
         """
         pool = await self._get_pool()
 
@@ -521,7 +494,7 @@ class DocumentStore:
         chunks: list[Chunk],
         embeddings: list[list[float]],
         category: str,
-        mode: str = "replace",
+        mode: Literal["append", "replace", "skip"] = "replace",
         scope: str = "personal",
         title: str | None = None,
         source_ref: str | None = None,
@@ -595,14 +568,6 @@ class DocumentStore:
                         # "replace" or "finalize" — overwrite
                         final_content = content
                         action = "finalized" if mode == "finalize" else "replaced"
-
-                    # Re-chunk and re-embed the final content for append mode
-                    if mode == "append" and final_content != content:
-                        # For append, we need chunks/embeddings of the FULL content
-                        # Caller should provide these for the new content only;
-                        # we'll use them as-is since the handler will re-chunk
-                        # the merged content before calling us.
-                        pass
 
                     final_hash = content_hash(final_content)
                     final_bytes = len(final_content.encode("utf-8"))
@@ -807,9 +772,7 @@ class DocumentStore:
         if category:
             fb.add_param("category = ${}", category)
 
-        limit_idx = fb.next_idx
-        offset_idx = limit_idx + 1
-        fb._values.extend([limit, offset])
+        limit_idx, offset_idx = fb.add_raw_values(limit, offset)
 
         query = f"""
             SELECT {DOCUMENT_COLUMNS} FROM memory_documents

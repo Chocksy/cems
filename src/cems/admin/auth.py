@@ -1,8 +1,11 @@
 """Authentication utilities for CEMS admin API."""
 
+import logging
 import secrets
 
 import bcrypt
+
+logger = logging.getLogger(__name__)
 
 
 def generate_api_key(prefix: str = "cems_ak") -> tuple[str, str, str]:
@@ -55,6 +58,7 @@ def verify_api_key(api_key: str, key_hash: str) -> bool:
     try:
         return bcrypt.checkpw(api_key.encode("utf-8"), key_hash.encode("utf-8"))
     except Exception:
+        logger.debug("API key verification failed (invalid hash or encoding)", exc_info=True)
         return False
 
 

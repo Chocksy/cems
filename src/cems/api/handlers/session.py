@@ -89,10 +89,11 @@ async def api_session_summarize(request: Request):
             })
 
         # Build a descriptive title
+        today = date.today().isoformat()
         project_name = project_context.split(" ")[0] if project_context else "session"
-        title = summary.get("title") or f"Session {date.today().isoformat()}"
+        title = summary.get("title") or f"Session {today}"
         epoch_suffix = f" (epoch {epoch})" if epoch > 0 else ""
-        full_title = f"Session: {date.today().isoformat()} - {project_name} - {title}{epoch_suffix}"
+        full_title = f"Session: {today} - {project_name} - {title}{epoch_suffix}"
 
         # Build tags
         tags = ["session-summary", summary.get("priority", "medium")]
@@ -121,7 +122,7 @@ async def api_session_summarize(request: Request):
                 existing_content = existing.get("content", "")
                 if existing_content:
                     upsert_content = f"{existing_content}\n\n---\n\n{summary['content']}"
-                upsert_mode = "replace"  # handler pre-merges; upsert just stores
+                # upsert_mode stays "replace" — handler pre-merges; upsert just stores
         elif mode == "finalize":
             upsert_mode = "finalize"
 

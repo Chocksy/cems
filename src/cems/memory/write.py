@@ -57,9 +57,6 @@ class WriteMixin:
         tags: list[str] | None = None,
         infer: bool = True,  # Ignored - kept for API compatibility
         source_ref: str | None = None,
-        ttl_hours: int | None = None,
-        pinned: bool = False,
-        pin_reason: str | None = None,
     ) -> dict[str, Any]:
         """Add a memory to the specified namespace (sync version).
 
@@ -71,9 +68,6 @@ class WriteMixin:
             tags: Optional tags for organization
             infer: Ignored (kept for API compatibility)
             source_ref: Optional project reference for scoped recall
-            ttl_hours: Optional TTL in hours (not yet implemented for documents)
-            pinned: If True, memory is pinned (not yet implemented for documents)
-            pin_reason: Optional reason for pinning the memory
 
         Returns:
             Dict with memory operation results
@@ -87,9 +81,6 @@ class WriteMixin:
                 tags=tags,
                 infer=infer,
                 source_ref=source_ref,
-                ttl_hours=ttl_hours,
-                pinned=pinned,
-                pin_reason=pin_reason,
             )
         )
 
@@ -102,9 +93,6 @@ class WriteMixin:
         tags: list[str] | None = None,
         infer: bool = True,  # Ignored - kept for API compatibility
         source_ref: str | None = None,
-        ttl_hours: int | None = None,
-        pinned: bool = False,
-        pin_reason: str | None = None,
         timestamp: datetime | None = None,  # For historical imports
         title: str | None = None,
     ) -> dict[str, Any]:
@@ -123,9 +111,6 @@ class WriteMixin:
             tags: Optional tags for organization
             infer: Ignored (kept for API compatibility, fact extraction disabled)
             source_ref: Optional project reference for scoped recall
-            ttl_hours: Optional TTL in hours (not yet implemented for documents)
-            pinned: If True, memory is pinned (not yet implemented for documents)
-            pin_reason: Optional reason for pinning
             timestamp: Optional historical timestamp for the memory (for imports/evals)
 
         Returns:

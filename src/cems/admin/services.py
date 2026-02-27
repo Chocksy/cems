@@ -14,6 +14,23 @@ from cems.db.models import AuditLog, Team, TeamMember, User
 logger = logging.getLogger(__name__)
 
 
+def _record_audit(
+    session: Session,
+    action: str,
+    resource_type: str,
+    resource_id: str,
+    details: dict | None = None,
+) -> None:
+    """Record an audit log entry to the given session."""
+    log = AuditLog(
+        action=action,
+        resource_type=resource_type,
+        resource_id=resource_id,
+        details=details,
+    )
+    session.add(log)
+
+
 @dataclass
 class UserCreateResult:
     """Result of user creation."""
@@ -109,6 +126,8 @@ class UserService:
     def get_user_by_api_key(self, api_key: str) -> User | None:
         """Get user by API key (validates the key).
 
+        Side effect: Updates user.last_active to now on successful match.
+
         Args:
             api_key: Plain API key to validate.
 
@@ -176,16 +195,21 @@ class UserService:
         if not user:
             return None
 
+        changed_fields = []
         if email is not None:
             user.email = email
+            changed_fields.append("email")
         if is_active is not None:
             user.is_active = is_active
+            changed_fields.append("is_active")
         if is_admin is not None:
             user.is_admin = is_admin
+            changed_fields.append("is_admin")
         if settings is not None:
             user.settings = settings
+            changed_fields.append("settings")
 
-        self._audit("user_updated", "user", str(user_id), {"changes": "updated"})
+        self._audit("user_updated", "user", str(user_id), {"changed_fields": changed_fields})
         return user
 
     def delete_user(self, user_id: uuid.UUID) -> bool:
@@ -249,13 +273,7 @@ class UserService:
         details: dict | None = None,
     ) -> None:
         """Record an audit log entry."""
-        log = AuditLog(
-            action=action,
-            resource_type=resource_type,
-            resource_id=resource_id,
-            details=details,
-        )
-        self.session.add(log)
+        _record_audit(self.session, action, resource_type, resource_id, details)
 
 
 class TeamService:
@@ -484,10 +502,4 @@ class TeamService:
         details: dict | None = None,
     ) -> None:
         """Record an audit log entry."""
-        log = AuditLog(
-            action=action,
-            resource_type=resource_type,
-            resource_id=resource_id,
-            details=details,
-        )
-        self.session.add(log)
+        _record_audit(self.session, action, resource_type, resource_id, details)

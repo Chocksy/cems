@@ -178,7 +178,7 @@ class _FakeAcquire:
 @pytest.fixture
 def doc_store():
     """Create a DocumentStore with mocked pool."""
-    store = DocumentStore("postgresql://test/test", embedding_dim=1536)
+    store = DocumentStore("postgresql://test/test")
     # Create mock connection
     mock_conn = AsyncMock()
     mock_conn.fetch = AsyncMock(return_value=[])

@@ -86,7 +86,7 @@ def read_recent_context(transcript_path: str, max_chars: int = 1500) -> str:
                     entry = json.loads(line)
                     entry_type = entry.get("type", "")
 
-                    if entry_type == "user":
+                    if entry_type in ("user", "assistant"):
                         msg = entry.get("message", {})
                         content = msg.get("content", "")
                         if isinstance(content, list):
@@ -97,20 +97,8 @@ def read_recent_context(transcript_path: str, max_chars: int = 1500) -> str:
                             ]
                             content = "\n".join(text_parts)
                         if content:
-                            messages.append(f"User: {content[:500]}")
-
-                    elif entry_type == "assistant":
-                        msg = entry.get("message", {})
-                        content = msg.get("content", "")
-                        if isinstance(content, list):
-                            text_parts = [
-                                p.get("text", "")
-                                for p in content
-                                if isinstance(p, dict) and p.get("type") == "text"
-                            ]
-                            content = "\n".join(text_parts)
-                        if content:
-                            messages.append(f"Assistant: {content[:500]}")
+                            label = entry_type.capitalize()
+                            messages.append(f"{label}: {content[:500]}")
 
                 except json.JSONDecodeError:
                     continue
@@ -120,7 +108,8 @@ def read_recent_context(transcript_path: str, max_chars: int = 1500) -> str:
         context = "\n---\n".join(recent)
         return context[:max_chars]
 
-    except Exception:
+    except Exception as e:
+        print(f"CEMS read_recent_context error: {e}", file=sys.stderr)
         return ""
 
 
@@ -151,10 +140,7 @@ def should_process_tool(tool_name: str, tool_input: dict) -> bool:
         return True
 
     # Task completions are interesting
-    if tool_name == "Task":
-        return True
-
-    return False
+    return tool_name == "Task"
 
 
 def extract_tool_output_summary(tool_response: dict) -> str:

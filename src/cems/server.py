@@ -40,7 +40,7 @@ from cems.api.handlers import (
     api_memory_foundation,
     api_memory_gate_rules,
     api_memory_get,
-    config_setup,
+    config_discovery,
     api_memory_list,
     api_memory_log_shown,
     api_memory_maintenance,
@@ -73,7 +73,7 @@ def create_http_app():
     2. Validates Authorization: Bearer <token> header
     3. Extracts user context from headers or API key lookup
     4. Sets them in contextvars for the request
-    5. Routes to the MCP server
+    5. Routes to the REST API handlers
     6. Provides /admin/* endpoints for user management (if DATABASE_URL set)
     """
     from starlette.applications import Starlette
@@ -153,10 +153,7 @@ def create_http_app():
             team_token = request_team_id.set(team_id)
 
             try:
-                response = await call_next(request)
-                return response
-            except Exception as e:
-                raise
+                return await call_next(request)
             finally:
                 # Reset context variables
                 request_user_id.reset(user_token)
@@ -168,7 +165,7 @@ def create_http_app():
         Route("/ping", ping, methods=["GET"]),
         Route("/health", health_check, methods=["GET"]),
         # Setup discovery (unauthenticated)
-        Route("/api/config/setup", config_setup, methods=["GET"]),
+        Route("/api/config/setup", config_discovery, methods=["GET"]),
         # REST API routes - Memory
         Route("/api/memory/add", api_memory_add, methods=["POST"]),
         Route("/api/memory/add_batch", api_memory_add_batch, methods=["POST"]),

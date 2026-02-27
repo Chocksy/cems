@@ -49,7 +49,7 @@ CONFIRMATORY = re.compile(
 
 def is_confirmatory(prompt: str) -> bool:
     """Check if prompt is a short confirmatory response like 'yes' or 'go ahead'."""
-    clean = prompt.strip().rstrip('-u').strip()
+    clean = prompt.strip().removesuffix('-u').strip()
     if CONFIRMATORY.match(clean):
         return True
     # Very short non-question, non-slash prompts are also confirmatory
@@ -111,7 +111,7 @@ def search_cems(query: str, project: str | None = None) -> tuple[str | None, lis
             session_tag = next((t for t in tags if t.startswith("session:")), None)
             if session_tag:
                 # Extract base session ID (strip epoch suffix like ":e1")
-                base_session = session_tag.split(":")[0] + ":" + session_tag.split(":")[1] if ":" in session_tag else session_tag
+                base_session = session_tag.split(":")[0] + ":" + session_tag.split(":")[1]
                 existing = seen_sessions.get(base_session)
                 if existing is None or r.get("score", 0) > existing.get("score", 0):
                     if existing is not None:
@@ -138,7 +138,7 @@ def search_cems(query: str, project: str | None = None) -> tuple[str | None, lis
             short_id = mem_id[:8] if mem_id else ""
             score = r.get("score", 0.0)
             truncated = r.get("truncated", False)
-            suffix = f" [truncated — full doc: {r['full_length']} chars]" if truncated else ""
+            suffix = f" [truncated — full doc: {r.get('full_length', '?')} chars]" if truncated else ""
             formatted.append(f"{i}. [{category}] (score: {score:.2f}) {content}{suffix} (id: {short_id})")
             if truncated:
                 has_truncated = True
@@ -349,9 +349,9 @@ def populate_gate_cache(project: str | None = None) -> int:
     # Skip if cache exists and is fresh (< 5 minutes old)
     if cache_path.exists():
         try:
-            age = cache_path.stat().st_mtime
+            mtime = cache_path.stat().st_mtime
             import time
-            if time.time() - age < 300:  # 5 minute TTL
+            if time.time() - mtime < 300:  # 5 minute TTL
                 return -1  # Cache is fresh, skip
         except OSError:
             pass

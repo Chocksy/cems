@@ -151,7 +151,7 @@ class OpenRouterClient:
             # Route through fast providers (Cerebras ~3000 t/s, Groq ~900 t/s)
             kwargs["extra_body"] = {
                 "provider": {
-                    "order": FAST_PROVIDERS,  # ["cerebras", "groq", "sambanova"]
+                    "order": FAST_PROVIDERS,
                     "allow_fallbacks": True,
                 }
             }
@@ -193,7 +193,7 @@ def get_client() -> OpenRouterClient:
 
 
 # Backwards compatibility functions
-def get_llm_client(provider: str = "openrouter"):
+def get_llm_client(provider: str = "openrouter") -> OpenAI:
     """Get the LLM client.
 
     DEPRECATED: Use get_client() instead. This function is kept for backwards
@@ -214,7 +214,12 @@ def get_llm_client(provider: str = "openrouter"):
 def _resolve_openrouter_model(model: str | None) -> str:
     """Resolve a model name to OpenRouter format.
 
-    DEPRECATED: Use OpenRouterClient._resolve_model() instead.
+    DEPRECATED: Unused — use OpenRouterClient._resolve_model() instead.
     """
-    client = OpenRouterClient.__new__(OpenRouterClient)
-    return client._resolve_model(model)
+    if model is None:
+        return OPENROUTER_MODELS["default"]
+    if "/" in model:
+        return model
+    if model in OPENROUTER_MODELS:
+        return OPENROUTER_MODELS[model]
+    return model

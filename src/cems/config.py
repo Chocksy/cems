@@ -252,17 +252,9 @@ class CEMSConfig(BaseSettings):
     # These penalties help prioritize memories from the same category/project.
     # They're designed for multi-project, multi-category production usage.
     # Set to False for benchmarks with uniform categories (e.g., LongMemEval).
-    enable_cross_category_penalty: bool = Field(
-        default=False,
-        description="Deprecated — cross-category penalty removed. Kept for config compat.",
-    )
     enable_project_penalty: bool = Field(
         default=True,
         description="Apply 0.8x penalty for different-project memories (1.3x boost for same-project)",
-    )
-    cross_category_penalty_factor: float = Field(
-        default=0.8,
-        description="Multiplier for cross-category memories (lower = more penalty)",
     )
     project_penalty_factor: float = Field(
         default=0.8,

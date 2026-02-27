@@ -48,7 +48,6 @@ def main():
         input_data = json.load(sys.stdin)
 
         session_id = input_data.get("session_id", "")
-        transcript_path = input_data.get("transcript_path", "")
         trigger = input_data.get("trigger", "unknown")
         cwd = input_data.get("cwd", os.getcwd())
 

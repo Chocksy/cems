@@ -13,6 +13,23 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+def _format_line(label: str, text: str, min_len: int, max_len: int) -> str | None:
+    """Format a transcript line if text meets minimum length, truncating to max.
+
+    Returns formatted "[LABEL]: text" or None if text is too short.
+    """
+    if text and len(text) > min_len:
+        return f"[{label}]: {text[:max_len]}"
+    return None
+
+
+def _truncate(text: str, max_len: int) -> str:
+    """Truncate text with ellipsis if it exceeds max_len."""
+    if len(text) > max_len:
+        return text[:max_len] + "..."
+    return text
+
+
 def detect_format(first_line: dict) -> str:
     """Detect Codex JSONL format version from the first record.
 
@@ -56,14 +73,12 @@ def _extract_new_format(record: dict) -> list[str]:
         event_type = payload.get("type", "")
 
         if event_type == "user_message":
-            text = payload.get("message", "").strip()
-            if text and len(text) > 5:
-                return [f"[USER]: {text[:2000]}"]
+            line = _format_line("USER", payload.get("message", "").strip(), 5, 2000)
+            return [line] if line else []
 
         if event_type == "agent_message":
-            text = payload.get("message", "").strip()
-            if text and len(text) > 20:
-                return [f"[ASSISTANT]: {text[:1000]}"]
+            line = _format_line("ASSISTANT", payload.get("message", "").strip(), 20, 1000)
+            return [line] if line else []
 
         # Skip agent_reasoning, token_count
         return []
@@ -85,31 +100,30 @@ def _extract_response_item(payload: dict) -> list[str]:
         if role == "user":
             for block in (content if isinstance(content, list) else []):
                 if isinstance(block, dict):
-                    text = block.get("text", "").strip()
-                    if text and len(text) > 5:
-                        lines.append(f"[USER]: {text[:2000]}")
+                    line = _format_line("USER", block.get("text", "").strip(), 5, 2000)
+                    if line:
+                        lines.append(line)
         elif role == "assistant":
             for block in (content if isinstance(content, list) else []):
                 if isinstance(block, dict):
                     block_type = block.get("type", "")
                     if block_type in ("text", "output_text"):
-                        text = block.get("text", "").strip()
-                        if text and len(text) > 20:
-                            lines.append(f"[ASSISTANT]: {text[:1000]}")
+                        line = _format_line("ASSISTANT", block.get("text", "").strip(), 20, 1000)
+                        if line:
+                            lines.append(line)
         # Skip developer role (system instructions)
 
     elif item_type == "function_call":
         name = payload.get("name", "unknown")
         args = payload.get("arguments", "")
-        # Truncate long arguments
-        if isinstance(args, str) and len(args) > 200:
-            args = args[:200] + "..."
+        if isinstance(args, str):
+            args = _truncate(args, 200)
         lines.append(f"[TOOL] {name}: {args}")
 
     elif item_type == "function_call_output":
         output = payload.get("output", "")
-        if isinstance(output, str) and len(output) > 200:
-            output = output[:200] + "..."
+        if isinstance(output, str):
+            output = _truncate(output, 200)
         if output:
             lines.append(f"[TOOL RESULT]: {output}")
 
@@ -125,26 +139,26 @@ def _extract_old_format(record: dict) -> list[str]:
     lines = []
 
     if record_type == "user_message":
-        text = record.get("text", "").strip()
-        if text and len(text) > 5:
-            lines.append(f"[USER]: {text[:2000]}")
+        line = _format_line("USER", record.get("text", "").strip(), 5, 2000)
+        if line:
+            lines.append(line)
 
     elif record_type == "assistant_message":
-        text = record.get("text", "").strip()
-        if text and len(text) > 20:
-            lines.append(f"[ASSISTANT]: {text[:1000]}")
+        line = _format_line("ASSISTANT", record.get("text", "").strip(), 20, 1000)
+        if line:
+            lines.append(line)
 
     elif record_type == "tool_call":
         name = record.get("name", "unknown")
         args = record.get("arguments", "")
-        if isinstance(args, str) and len(args) > 200:
-            args = args[:200] + "..."
+        if isinstance(args, str):
+            args = _truncate(args, 200)
         lines.append(f"[TOOL] {name}: {args}")
 
     elif record_type == "tool_result":
         output = record.get("output", "")
-        if isinstance(output, str) and len(output) > 200:
-            output = output[:200] + "..."
+        if isinstance(output, str):
+            output = _truncate(output, 200)
         if output:
             lines.append(f"[TOOL RESULT]: {output}")
 

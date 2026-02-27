@@ -25,16 +25,19 @@ async def health_check(request: Request):
     except Exception as e:
         db_status = f"error: {e}"
 
+    overall = "healthy" if db_status in ("healthy", "not_configured") else "unhealthy"
+    status_code = 200 if overall == "healthy" else 503
+
     return JSONResponse({
-        "status": "healthy",
+        "status": overall,
         "service": "cems-mcp-server",
         "mode": "http",
         "auth": "database",
         "database": db_status,
-    })
+    }, status_code=status_code)
 
 
-async def config_setup(request: Request):
+async def config_discovery(request: Request):
     """Client setup discovery endpoint (unauthenticated).
 
     GET /api/config/setup

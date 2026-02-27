@@ -173,7 +173,7 @@ def main():
         # Check gate rules for Bash commands
         if tool_name == "Bash":
             command = tool_input.get("command", "")
-            result = check_gate_rules("bash", command, project)
+            result = check_gate_rules(tool_name, command, project)
 
             if not result["allowed"]:
                 rule = result["rule"]
@@ -216,7 +216,7 @@ def main():
                     }))
                     sys.exit(0)
 
-        # Log tool use (regardless of gate check result)
+        # Log tool use (for allowed commands; blocked calls exit above)
         log_tool_use(input_data, session_id)
 
         sys.exit(0)

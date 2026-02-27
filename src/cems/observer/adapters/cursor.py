@@ -94,15 +94,13 @@ class CursorAdapter:
         (e.g., "my-project") will be misinterpreted. We validate by
         checking if the reconstructed path exists on disk.
         """
-        import os
-
         project_dir_name = session.extra.get("project_dir", "")
         if project_dir_name:
             # Try to reconstruct path: "Users-razvan-Development-cems" → "/Users/razvan/Development/cems"
-            candidate = "/" + project_dir_name.replace("-", "/")
-            if os.path.isdir(candidate):
-                session.cwd = candidate
-                session.project_id = os.path.basename(candidate)
+            candidate = Path("/" + project_dir_name.replace("-", "/"))
+            if candidate.is_dir():
+                session.cwd = str(candidate)
+                session.project_id = candidate.name
             else:
                 # Fallback: use the raw directory name as-is
                 session.cwd = project_dir_name

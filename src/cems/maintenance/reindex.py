@@ -64,7 +64,7 @@ class ReindexJob:
         """
         refreshed = 0
         failed = 0
-        batch_size = 10
+        log_interval = 10
         total = len(docs)
 
         for doc in docs:
@@ -80,7 +80,7 @@ class ReindexJob:
                 else:
                     failed += 1
 
-                if refreshed % batch_size == 0:
+                if refreshed % log_interval == 0:
                     logger.info(f"Re-indexing progress: {refreshed}/{total} documents")
             except Exception as e:
                 logger.warning(f"Failed to re-index document {doc_id}: {e}")

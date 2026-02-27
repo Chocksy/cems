@@ -1,14 +1,14 @@
 """Inference retrieval pipeline for CEMS.
 
 Implements the enhanced retrieval pipeline:
-1. Query Understanding - Extract intent, domains, entities (NEW)
+1. Query Understanding - Extract intent, domains, entities
 2. Query Synthesis - LLM expands query for better retrieval
-3. HyDE - Hypothetical Document Embeddings for better vector match (NEW)
+3. HyDE - Hypothetical Document Embeddings for better vector match
 4. Candidate Retrieval - Vector search + graph traversal
-5. RRF Fusion - Combine results from multiple retrievers (NEW)
-6. LLM Re-ranking - Use LLM to re-rank by actual relevance (NEW)
+5. RRF Fusion - Combine results from multiple retrievers
+6. LLM Re-ranking - Use LLM to re-rank by actual relevance
 7. Relevance Filtering - Filter candidates below threshold
-8. Temporal Ranking - Time decay + priority scoring
+8. Score Adjustments - Time decay + priority + project scoring
 9. Token-Budgeted Assembly - Select results within token budget
 
 This module provides the core retrieval logic that powers the unified
@@ -24,12 +24,12 @@ from collections import defaultdict
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
-from cems.lib.json_parsing import extract_json_from_response, parse_json_dict, parse_json_list
+from cems.lib.json_parsing import parse_json_dict, parse_json_list
 
 if TYPE_CHECKING:
     from cems.config import CEMSConfig
     from cems.llm import OpenRouterClient
-    from cems.models import MemoryMetadata, SearchResult
+    from cems.models import SearchResult
 
 logger = logging.getLogger(__name__)
 
@@ -163,7 +163,7 @@ def synthesize_query(
     is_preference: bool = False,
     profile_context: list[str] | None = None,
 ) -> list[str]:
-    """Stage 1: Generate better search terms from user query.
+    """Generate better search terms from user query (Stage 2: Query Synthesis).
 
     Uses LLM to expand the user's query into multiple search terms
     that might help find relevant memories. Has special handling for
@@ -314,7 +314,6 @@ def assemble_context_diverse(
             return len(text) // 4
 
     # Group by source_ref (session identifier)
-    from collections import defaultdict
     sessions: dict[str, list["SearchResult"]] = defaultdict(list)
     for result in results:
         source_ref = result.metadata.source_ref if result.metadata else "unknown"
@@ -447,7 +446,7 @@ def assemble_context(
     results: list["SearchResult"],
     max_tokens: int = 2000,
 ) -> tuple[list["SearchResult"], int]:
-    """Stage 5: Select results within token budget.
+    """Select results within token budget (Stage 9: Assembly).
 
     Greedily selects results in score order until the token budget
     is exhausted.
@@ -568,7 +567,7 @@ def deduplicate_results(results: list["SearchResult"]) -> list["SearchResult"]:
 
 
 # =============================================================================
-# NEW: Unified Scoring Function (consolidates duplicate logic)
+# Unified Scoring Function
 # =============================================================================
 
 
@@ -576,7 +575,6 @@ def apply_score_adjustments(
     result: "SearchResult",
     project: str | None = None,
     config: "CEMSConfig | None" = None,
-    skip_category_penalty: bool = False,
 ) -> float:
     """Apply all score adjustments in a single, consolidated function.
 
@@ -637,7 +635,7 @@ def apply_score_adjustments(
 
 
 # =============================================================================
-# NEW: HyDE (Hypothetical Document Embeddings)
+# HyDE (Hypothetical Document Embeddings)
 # =============================================================================
 
 
@@ -880,15 +878,19 @@ Include relevant technical details, file paths, commands, or preferences that wo
 
 Hypothetical memory:"""
 
-    start = time.perf_counter()
-    result = client.complete(prompt, temperature=0.3)
-    elapsed_ms = (time.perf_counter() - start) * 1000
-    logger.info(f"[TIMING] generate_hypothetical_memory (HyDE) LLM call: {elapsed_ms:.0f}ms")
-    return result.strip()
+    try:
+        start = time.perf_counter()
+        result = client.complete(prompt, temperature=0.3)
+        elapsed_ms = (time.perf_counter() - start) * 1000
+        logger.info(f"[TIMING] generate_hypothetical_memory (HyDE) LLM call: {elapsed_ms:.0f}ms")
+        return result.strip()
+    except Exception as e:
+        logger.warning(f"[RETRIEVAL] HyDE generation failed: {e}")
+        return ""
 
 
 # =============================================================================
-# NEW: Reciprocal Rank Fusion (RRF)
+# Reciprocal Rank Fusion (RRF)
 # =============================================================================
 
 
@@ -968,7 +970,7 @@ def reciprocal_rank_fusion(
 
 
 # =============================================================================
-# NEW: LLM Re-ranking
+# LLM Re-ranking
 # =============================================================================
 
 
@@ -1026,40 +1028,44 @@ Example: [3, 1, 7] means candidate 3 is most relevant, then 1, then 7.
 
 JSON array:"""
 
-    start = time.perf_counter()
-    response = client.complete(prompt, temperature=0.1)
-    elapsed_ms = (time.perf_counter() - start) * 1000
-    logger.info(f"[TIMING] rerank_with_llm LLM call: {elapsed_ms:.0f}ms")
+    try:
+        start = time.perf_counter()
+        response = client.complete(prompt, temperature=0.1)
+        elapsed_ms = (time.perf_counter() - start) * 1000
+        logger.info(f"[TIMING] rerank_with_llm LLM call: {elapsed_ms:.0f}ms")
 
-    # Parse JSON response using shared utility
-    indices = parse_json_list(response, fallback=None)
+        # Parse JSON response using shared utility
+        indices = parse_json_list(response, fallback=None)
 
-    if indices is None:
-        logger.warning(f"LLM rerank JSON parse failed: {response[:200]}")
+        if indices is None:
+            logger.warning(f"LLM rerank JSON parse failed: {response[:200]}")
+            return candidates[:top_k]
+
+        # Reorder candidates based on LLM ranking
+        reranked = []
+        for rank, idx in enumerate(indices[:top_k]):
+            if isinstance(idx, int) and 1 <= idx <= len(candidates_to_rank):
+                result = candidates_to_rank[idx - 1]
+                # Assign new score based on LLM rank
+                llm_score = 1.0 / (1 + rank)
+                # Blend: 70% LLM rank, 30% original score
+                result.score = 0.7 * llm_score + 0.3 * result.score
+                reranked.append(result)
+
+        # Fallback if LLM returned empty or invalid indices
+        if not reranked:
+            logger.warning(f"LLM rerank produced no valid results, falling back to original order")
+            return candidates[:top_k]
+
+        logger.info(f"[TIMING] rerank_with_llm total: {len(candidates_to_rank)} -> {len(reranked)} results")
+        return reranked
+    except Exception as e:
+        logger.warning(f"[RETRIEVAL] LLM reranking failed: {e}")
         return candidates[:top_k]
-
-    # Reorder candidates based on LLM ranking
-    reranked = []
-    for rank, idx in enumerate(indices[:top_k]):
-        if isinstance(idx, int) and 1 <= idx <= len(candidates_to_rank):
-            result = candidates_to_rank[idx - 1]
-            # Assign new score based on LLM rank
-            llm_score = 1.0 / (1 + rank)
-            # Blend: 70% LLM rank, 30% original score
-            result.score = 0.7 * llm_score + 0.3 * result.score
-            reranked.append(result)
-
-    # Fallback if LLM returned empty or invalid indices
-    if not reranked:
-        logger.warning(f"LLM rerank produced no valid results, falling back to original order")
-        return candidates[:top_k]
-
-    logger.info(f"[TIMING] rerank_with_llm total: {len(candidates_to_rank)} -> {len(reranked)} results")
-    return reranked
 
 
 # =============================================================================
-# NEW: Query Understanding
+# Query Understanding
 # =============================================================================
 
 
@@ -1098,12 +1104,6 @@ Examples:
 
 JSON:"""
 
-    start = time.perf_counter()
-    response = client.complete(prompt, temperature=0.1)
-    elapsed_ms = (time.perf_counter() - start) * 1000
-    logger.info(f"[TIMING] extract_query_intent LLM call: {elapsed_ms:.0f}ms")
-
-    # Parse JSON using shared utility
     default_intent = {
         "primary_intent": "factual",
         "complexity": "moderate",
@@ -1111,9 +1111,19 @@ JSON:"""
         "entities": [],
         "requires_reasoning": False,
     }
-    intent = parse_json_dict(response, fallback=default_intent)
-    logger.info(f"[TIMING] extract_query_intent result: {intent}")
-    return intent
+
+    try:
+        start = time.perf_counter()
+        response = client.complete(prompt, temperature=0.1)
+        elapsed_ms = (time.perf_counter() - start) * 1000
+        logger.info(f"[TIMING] extract_query_intent LLM call: {elapsed_ms:.0f}ms")
+
+        intent = parse_json_dict(response, fallback=default_intent)
+        logger.info(f"[TIMING] extract_query_intent result: {intent}")
+        return intent
+    except Exception as e:
+        logger.warning(f"[RETRIEVAL] Query intent extraction failed: {e}")
+        return default_intent
 
 
 def route_to_strategy(intent: dict[str, Any]) -> str:
@@ -1123,7 +1133,7 @@ def route_to_strategy(intent: dict[str, Any]) -> str:
         intent: Query intent dict from extract_query_intent()
 
     Returns:
-        Strategy name: "vector", "hybrid", or "tree"
+        Strategy name: "vector" or "hybrid"
     """
     complexity = intent.get("complexity", "moderate")
     requires_reasoning = intent.get("requires_reasoning", False)

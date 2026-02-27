@@ -53,38 +53,34 @@ def extract_json_from_response(response: str) -> str:
     return response
 
 
-def parse_json_list(
+def _parse_json_as(
     response: str,
+    expected_type: type,
     *,
-    fallback: list | None = None,
+    fallback: Any,
     log_errors: bool = True,
-) -> list[Any]:
-    """Parse LLM response as JSON list with error handling.
+) -> Any:
+    """Parse LLM response as a specific JSON type.
 
     Args:
         response: Raw LLM response string
-        fallback: Value to return on parse failure (default: empty list)
+        expected_type: Expected Python type (list or dict)
+        fallback: Value to return on parse failure
         log_errors: Whether to log parse failures
 
     Returns:
-        Parsed list, or fallback value on failure
-
-    Example:
-        >>> parse_json_list('[1, 2, 3]')
-        [1, 2, 3]
-        >>> parse_json_list('invalid', fallback=[])
-        []
+        Parsed value of expected_type, or fallback on failure
     """
-    if fallback is None:
-        fallback = []
-
     try:
         cleaned = extract_json_from_response(response)
         data = json.loads(cleaned)
 
-        if not isinstance(data, list):
+        if not isinstance(data, expected_type):
             if log_errors:
-                logger.warning(f"Expected JSON list, got {type(data).__name__}: {cleaned[:100]}")
+                logger.warning(
+                    f"Expected JSON {expected_type.__name__}, "
+                    f"got {type(data).__name__}: {cleaned[:100]}"
+                )
             return fallback
 
         return data
@@ -93,6 +89,25 @@ def parse_json_list(
         if log_errors:
             logger.warning(f"JSON parse failed: {e}. Response: {response[:200]}")
         return fallback
+
+
+def parse_json_list(
+    response: str,
+    *,
+    fallback: list | None = None,
+    log_errors: bool = True,
+) -> list[Any]:
+    """Parse LLM response as JSON list with error handling.
+
+    Example:
+        >>> parse_json_list('[1, 2, 3]')
+        [1, 2, 3]
+        >>> parse_json_list('invalid', fallback=[])
+        []
+    """
+    return _parse_json_as(
+        response, list, fallback=fallback if fallback is not None else [], log_errors=log_errors
+    )
 
 
 def parse_json_dict(
@@ -103,35 +118,12 @@ def parse_json_dict(
 ) -> dict[str, Any]:
     """Parse LLM response as JSON dict with error handling.
 
-    Args:
-        response: Raw LLM response string
-        fallback: Value to return on parse failure (default: empty dict)
-        log_errors: Whether to log parse failures
-
-    Returns:
-        Parsed dict, or fallback value on failure
-
     Example:
         >>> parse_json_dict('{"key": "value"}')
         {'key': 'value'}
         >>> parse_json_dict('invalid', fallback={})
         {}
     """
-    if fallback is None:
-        fallback = {}
-
-    try:
-        cleaned = extract_json_from_response(response)
-        data = json.loads(cleaned)
-
-        if not isinstance(data, dict):
-            if log_errors:
-                logger.warning(f"Expected JSON dict, got {type(data).__name__}: {cleaned[:100]}")
-            return fallback
-
-        return data
-
-    except json.JSONDecodeError as e:
-        if log_errors:
-            logger.warning(f"JSON parse failed: {e}. Response: {response[:200]}")
-        return fallback
+    return _parse_json_as(
+        response, dict, fallback=fallback if fallback is not None else {}, log_errors=log_errors
+    )

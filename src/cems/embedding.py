@@ -253,10 +253,10 @@ class AsyncEmbeddingClient:
         texts: list[str],
         batch_size: int = 100,
     ) -> list[list[float]]:
-        """Generate embeddings for multiple texts in a single API call.
+        """Generate embeddings for multiple texts, batched into API calls.
 
-        This is significantly faster than sequential embed() calls.
-        For 5 texts: batch = ~500ms vs sequential = ~2500ms.
+        Automatically splits into batches of batch_size to avoid API limits.
+        Faster than sequential embed() calls (batch ~500ms vs sequential ~2500ms).
 
         Args:
             texts: List of texts to embed
@@ -286,6 +286,9 @@ class AsyncEmbeddingClient:
 
     async def _call_api(self, texts: list[str]) -> list[list[float]]:
         """Make async API call to OpenRouter embeddings endpoint.
+
+        Note: Mirrors EmbeddingClient._call_api — kept separate to avoid
+        mixing sync/async client lifecycle (httpx.Client vs httpx.AsyncClient).
 
         Args:
             texts: Texts to embed

@@ -93,19 +93,15 @@ class CEMSMemory(WriteMixin, SearchMixin, CRUDMixin, MetadataMixin, RelationsMix
 
         from cems.embedding import EmbeddingClient
 
-        # Initialize embedder based on config
+        # Initialize embedder (always OpenRouter — llamacpp_server is async-only)
         if self._embedder is None:
             if self.config.embedding_backend == "llamacpp_server":
-                # llamacpp_server requires async - fall back to OpenRouter for sync
                 logger.warning(
                     "[MEMORY] llamacpp_server requires async. "
                     "Use async methods or switch to openrouter backend."
                 )
-                self._embedder = EmbeddingClient(model=self.config.embedding_model)
-            else:
-                # OpenRouter embedder
-                self._embedder = EmbeddingClient(model=self.config.embedding_model)
-                logger.info(f"[MEMORY] Using OpenRouter embeddings ({self.config.embedding_dimension}-dim)")
+            self._embedder = EmbeddingClient(model=self.config.embedding_model)
+            logger.info(f"[MEMORY] Using OpenRouter embeddings ({self.config.embedding_dimension}-dim)")
 
         self._initialized = True
 

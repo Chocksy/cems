@@ -89,6 +89,26 @@ class FilterBuilder:
             self.add_param(condition_template, value)
         return self
 
+    def _add_user_team_or(
+        self,
+        user_id: str,
+        team_id: str,
+        condition_template: str,
+        col_prefix: str = "",
+    ) -> None:
+        """Add a compound (user_id OR team_id) condition with manual indexing.
+
+        Args:
+            user_id: User ID
+            team_id: Team ID
+            condition_template: Format string with {p}, {uid_idx}, {tid_idx} placeholders
+            col_prefix: Column prefix (e.g., "d.")
+        """
+        uid_idx, tid_idx = self.add_raw_values(UUID(user_id), UUID(team_id))
+        self._conditions.append(
+            condition_template.format(p=col_prefix, uid_idx=uid_idx, tid_idx=tid_idx)
+        )
+
     def add_ownership_filter(
         self,
         user_id: str | None,
@@ -126,14 +146,10 @@ class FilterBuilder:
         elif scope == "shared":
             # Shared: user sees own docs OR team docs, all with scope='shared'
             if user_id:
-                uid_idx = self._param_idx
-                self._values.append(UUID(user_id))
-                self._param_idx += 1
-                tid_idx = self._param_idx
-                self._values.append(UUID(team_id))
-                self._param_idx += 1
-                self._conditions.append(
-                    f"({p}user_id = ${uid_idx} OR {p}team_id = ${tid_idx})"
+                self._add_user_team_or(
+                    user_id, team_id,
+                    "({p}user_id = ${uid_idx} OR {p}team_id = ${tid_idx})",
+                    col_prefix=p,
                 )
             else:
                 self.add_param(f"{p}team_id = ${{}}", UUID(team_id))
@@ -141,20 +157,32 @@ class FilterBuilder:
         elif scope == "both":
             # Both: user sees all own docs OR shared team docs
             if user_id:
-                uid_idx = self._param_idx
-                self._values.append(UUID(user_id))
-                self._param_idx += 1
-                tid_idx = self._param_idx
-                self._values.append(UUID(team_id))
-                self._param_idx += 1
-                self._conditions.append(
-                    f"({p}user_id = ${uid_idx} OR "
-                    f"({p}team_id = ${tid_idx} AND {p}scope = 'shared'))"
+                self._add_user_team_or(
+                    user_id, team_id,
+                    "({p}user_id = ${uid_idx} OR "
+                    "({p}team_id = ${tid_idx} AND {p}scope = 'shared'))",
+                    col_prefix=p,
                 )
             else:
                 self.add_param(f"{p}team_id = ${{}}", UUID(team_id))
 
         return self
+
+    def add_raw_values(self, *values: Any) -> list[int]:
+        """Register extra parameter values and return their placeholder indices.
+
+        Use this for LIMIT/OFFSET or other parameters that aren't part of
+        the WHERE clause but share the same query parameter list.
+
+        Returns:
+            List of parameter indices (e.g., [5, 6] for $5 and $6)
+        """
+        indices = []
+        for v in values:
+            indices.append(self._param_idx)
+            self._values.append(v)
+            self._param_idx += 1
+        return indices
 
     def build(self, default: str = "TRUE") -> str:
         """Build the WHERE clause string.

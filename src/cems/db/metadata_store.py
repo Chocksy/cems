@@ -11,6 +11,7 @@ update_maintenance_log, save_category_summary.
 """
 
 import logging
+from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
@@ -36,13 +37,11 @@ class PostgresMetadataStore:
 
     def save_metadata(self, metadata: MemoryMetadata) -> None:
         """Save or update memory metadata."""
-        from uuid import UUID as _UUID
-
         # Convert user_id to UUID for the DB column
         user_uuid = None
         if metadata.user_id and metadata.user_id != "unknown":
             try:
-                user_uuid = _UUID(metadata.user_id)
+                user_uuid = UUID(metadata.user_id)
             except ValueError:
                 pass
 
@@ -114,8 +113,6 @@ class PostgresMetadataStore:
         self, user_id: str, scope: MemoryScope | None = None
     ) -> list[str]:
         """Get all unique categories for a user."""
-        from uuid import UUID
-
         with self._db.session() as session:
             query = select(PgMemoryMetadata.category).distinct().where(
                 PgMemoryMetadata.user_id == UUID(user_id),
@@ -129,8 +126,6 @@ class PostgresMetadataStore:
         self, user_id: str, limit: int = 10, scope: MemoryScope | None = None
     ) -> list[MemoryMetadata]:
         """Get the most recently accessed memories."""
-        from uuid import UUID
-
         with self._db.session() as session:
             query = (
                 select(PgMemoryMetadata)
@@ -146,12 +141,23 @@ class PostgresMetadataStore:
             rows = session.execute(query).scalars().all()
             return [self._pg_to_metadata(row) for row in rows]
 
+    @staticmethod
+    def _row_to_category_summary(row, fallback_user_id: str) -> CategorySummary:
+        """Convert a PgCategorySummary row to a CategorySummary model."""
+        return CategorySummary(
+            user_id=str(row.scope_id) if row.scope_id else fallback_user_id,
+            category=row.category,
+            scope=MemoryScope(row.scope),
+            summary=row.summary,
+            item_count=row.item_count,
+            last_updated=row.last_updated,
+            version=row.version,
+        )
+
     def get_category_summary(
         self, user_id: str, category: str, scope: MemoryScope
     ) -> CategorySummary | None:
         """Get a category summary."""
-        from uuid import UUID
-
         with self._db.session() as session:
             row = session.execute(
                 select(PgCategorySummary).where(
@@ -161,23 +167,13 @@ class PostgresMetadataStore:
                 )
             ).scalar_one_or_none()
             if row:
-                return CategorySummary(
-                    user_id=str(row.scope_id) if row.scope_id else user_id,
-                    category=row.category,
-                    scope=MemoryScope(row.scope),
-                    summary=row.summary,
-                    item_count=row.item_count,
-                    last_updated=row.last_updated,
-                    version=row.version,
-                )
+                return self._row_to_category_summary(row, user_id)
             return None
 
     def get_all_category_summaries(
         self, user_id: str, scope: MemoryScope | None = None
     ) -> list[CategorySummary]:
         """Get all category summaries for a user."""
-        from uuid import UUID
-
         with self._db.session() as session:
             query = select(PgCategorySummary).where(
                 PgCategorySummary.scope_id == UUID(user_id),
@@ -185,15 +181,4 @@ class PostgresMetadataStore:
             if scope:
                 query = query.where(PgCategorySummary.scope == scope.value)
             rows = session.execute(query).scalars().all()
-            return [
-                CategorySummary(
-                    user_id=str(row.scope_id) if row.scope_id else user_id,
-                    category=row.category,
-                    scope=MemoryScope(row.scope),
-                    summary=row.summary,
-                    item_count=row.item_count,
-                    last_updated=row.last_updated,
-                    version=row.version,
-                )
-                for row in rows
-            ]
+            return [self._row_to_category_summary(row, user_id) for row in rows]

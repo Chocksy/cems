@@ -3,7 +3,7 @@
 Exports all handler functions for route registration in server.py.
 """
 
-from cems.api.handlers.health import config_setup, health_check, ping
+from cems.api.handlers.health import config_discovery, health_check, ping
 from cems.api.handlers.memory import (
     api_memory_add,
     api_memory_add_batch,
@@ -30,7 +30,7 @@ __all__ = [
     # Health / Config
     "ping",
     "health_check",
-    "config_setup",
+    "config_discovery",
     # Memory
     "api_memory_add",
     "api_memory_add_batch",

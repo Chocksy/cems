@@ -260,4 +260,4 @@ def run_migrations() -> None:
                 session.execute(text(sql))
                 logger.info(f"Migration applied: {migration_id}")
             except Exception as e:
-                logger.warning(f"Migration {migration_id} skipped or failed: {e}")
+                logger.error(f"Migration {migration_id} failed: {e}")

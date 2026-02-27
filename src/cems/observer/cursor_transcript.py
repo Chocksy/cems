@@ -215,7 +215,7 @@ def _parse_tool_call(text: str) -> str | None:
 
 
 def _parse_tool_result(text: str) -> str | None:
-    """Parse a [Tool result] section. Usually just the tool name on first line."""
+    """Parse a [Tool result] section. Uses only the first line as a summary."""
     first_line = text.split("\n")[0].strip()
     if first_line:
         return f"[TOOL RESULT]: {first_line}"

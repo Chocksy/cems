@@ -113,5 +113,13 @@ header h1 span{color:var(--accent);font-weight:400}
 .pagination-info{font-size:.78rem;color:var(--fg2);font-family:var(--mono)}
 .page-btn{cursor:pointer}
 
+/* Tool badges (observer) */
+.tool-badge{display:inline-block;min-width:52px;text-align:center;padding:.1rem .4rem;border-radius:4px;font-size:.72rem;font-weight:600;font-family:var(--mono);text-transform:uppercase}
+.tool-claude{background:#1e3a5f;color:#93c5fd}
+.tool-codex{background:#14532d;color:#86efac}
+.tool-cursor{background:#2e1065;color:#d8b4fe}
+.tool-goose{background:#431407;color:#fdba74}
+.tool-unknown{background:var(--bg3);color:var(--fg2)}
+
 /* Prompt preview */
 .prompt-preview{font-size:.8rem;color:var(--fg2);font-style:italic;margin-top:.3rem;max-width:600px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}

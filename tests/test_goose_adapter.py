@@ -62,7 +62,7 @@ class TestGooseDiscovery:
         assert sessions[0].tool == "goose"
         assert sessions[0].file_size > 0
         assert sessions[0].extra["working_dir"] == "/Users/test/myproject"
-        assert sessions[0].extra["max_message_id"] == 1
+        assert sessions[0].extra["db_max_message_id"] == 1
 
     def test_discover_skips_old_sessions(self, tmp_path):
         """Should skip sessions with old updated_at timestamps."""
@@ -244,8 +244,8 @@ class TestGooseExtractText:
 
         assert text is None
 
-    def test_extract_text_updates_max_message_id(self, tmp_path):
-        """Should update session.extra['max_message_id'] after extraction."""
+    def test_extract_text_updates_last_observed_message_id(self, tmp_path):
+        """Should update session.extra['last_observed_message_id'] after extraction."""
         db_path = tmp_path / "sessions.db"
         conn = _create_test_db(db_path)
 
@@ -271,7 +271,7 @@ class TestGooseExtractText:
         with patch("cems.observer.adapters.goose.GOOSE_DB_PATH", db_path):
             adapter.extract_text(session, from_byte=0)
 
-        assert session.extra["max_message_id"] == 3
+        assert session.extra["last_observed_message_id"] == 3
 
 
 class TestGooseEnrichMetadata:

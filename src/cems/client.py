@@ -153,8 +153,6 @@ class CEMSClient:
         scope: Literal["personal", "shared"] = "personal",
         tags: list[str] | None = None,
         source_ref: str | None = None,
-        pinned: bool = False,
-        pin_reason: str | None = None,
     ) -> dict[str, Any]:
         """Add a memory.
 
@@ -164,8 +162,6 @@ class CEMSClient:
             scope: "personal" or "shared"
             tags: Optional tags
             source_ref: Project reference (e.g., "project:org/repo")
-            pinned: If True, memory is pinned and never auto-pruned
-            pin_reason: Reason for pinning
 
         Returns:
             API response with result
@@ -178,10 +174,6 @@ class CEMSClient:
         }
         if source_ref:
             payload["source_ref"] = source_ref
-        if pinned:
-            payload["pinned"] = pinned
-        if pin_reason:
-            payload["pin_reason"] = pin_reason
 
         return self._request("POST", "/api/memory/add", json=payload)
 
@@ -231,11 +223,14 @@ class CEMSClient:
         )
 
     def delete(self, memory_id: str, hard: bool = False) -> dict[str, Any]:
-        """Delete or archive a memory.
+        """Delete a memory (soft-delete by default).
+
+        Soft-delete sets deleted_at timestamp; the memory is excluded from
+        queries but can be recovered. Hard delete permanently removes it.
 
         Args:
             memory_id: Memory ID to delete
-            hard: If True, permanently delete. If False, archive.
+            hard: If True, permanently delete. If False, soft-delete (default).
 
         Returns:
             API response
@@ -436,7 +431,11 @@ class CEMSAdminClient:
         json: dict | None = None,
         params: dict | None = None,
     ) -> dict[str, Any]:
-        """Make an HTTP request to the admin API."""
+        """Make an HTTP request to the admin API.
+
+        Intentionally duplicated from CEMSClient._request — the admin client
+        has different auth error handling (401 vs 403) and separate headers.
+        """
         url = f"{self.api_url}{endpoint}"
 
         try:

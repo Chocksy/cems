@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import time
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -20,8 +21,6 @@ _SNIPPET_CHARS = 500
 # Session summary segments are joined with this separator.
 # Strip it before snippeting to avoid noise in results.
 _SEGMENT_SEP = "\n\n---\n\n"
-
-import re
 
 # Pattern to detect content that starts mid-sentence
 # (leading comma/period/semicolon, or lowercase after whitespace)
@@ -51,7 +50,7 @@ def _make_snippet(content: str) -> tuple[str, bool]:
     """Return (snippet, was_truncated)."""
     cleaned = _clean_content(content)
     if len(cleaned) <= _SNIPPET_CHARS:
-        return cleaned, len(cleaned) < len(content)
+        return cleaned, False
     cut = cleaned[:_SNIPPET_CHARS]
     for sep in (". ", ".\n", "\n\n", "\n"):
         pos = cut.rfind(sep)
@@ -140,9 +139,7 @@ class RetrievalMixin:
             synthesize_query,
         )
 
-        log = logger
-        log.info(f"[RETRIEVAL] Starting retrieve_for_inference: query='{query[:50]}...', mode={mode}")
-        debug_mode = self.config.debug_mode
+        logger.info(f"[RETRIEVAL] Starting retrieve_for_inference: query='{query[:50]}...', mode={mode}")
 
         # Get LLM client for advanced features
         from cems.llm import get_client
@@ -154,7 +151,7 @@ class RetrievalMixin:
         if mode == "auto" and client:
             intent = extract_query_intent(query, client)
             selected_mode = route_to_strategy(intent)
-            log.info(f"[RETRIEVAL] Auto mode selected: {selected_mode}")
+            logger.info(f"[RETRIEVAL] Auto mode selected: {selected_mode}")
 
         # Detect query types - each needs different handling
         from cems.retrieval import _is_temporal_query, _is_preference_query, _is_aggregation_query
@@ -163,11 +160,11 @@ class RetrievalMixin:
         is_aggregation = _is_aggregation_query(query)
 
         if is_temporal:
-            log.info(f"[RETRIEVAL] Temporal query detected - will use query synthesis for decomposition")
+            logger.info(f"[RETRIEVAL] Temporal query detected - will use query synthesis for decomposition")
         if is_preference:
-            log.info(f"[RETRIEVAL] Preference query detected - will use query synthesis to bridge semantic gap")
+            logger.info(f"[RETRIEVAL] Preference query detected - will use query synthesis to bridge semantic gap")
         if is_aggregation:
-            log.info(f"[RETRIEVAL] Aggregation query detected - will use larger candidate pool and diversity selection")
+            logger.info(f"[RETRIEVAL] Aggregation query detected - will use larger candidate pool and diversity selection")
 
         # Stage 2.0: Profile Probe FIRST for preference queries (RAP approach)
         # We need profile_context before synthesis to provide dynamic examples
@@ -188,7 +185,7 @@ class RetrievalMixin:
             if profile_results:
                 profile_context = extract_profile_context([r.content for r in profile_results])
                 if profile_context:
-                    log.info(f"[RETRIEVAL] Profile probe found context: {profile_context[:3]}...")
+                    logger.info(f"[RETRIEVAL] Profile probe found context: {profile_context[:3]}...")
 
         # Stage 2.1: Query synthesis with strong-signal skip
         queries_to_search = [query]
@@ -209,7 +206,7 @@ class RetrievalMixin:
                 gap_threshold = self.config.strong_signal_gap
                 if is_strong_lexical_signal(top_score, second_score, threshold, gap_threshold):
                     gap = top_score - second_score
-                    log.info(
+                    logger.info(
                         f"[RETRIEVAL] Strong signal detected (score={top_score:.3f}, "
                         f"gap={gap:.3f}), skipping query expansion"
                     )
@@ -219,7 +216,7 @@ class RetrievalMixin:
                 # RAP: Pass profile_context as dynamic examples to synthesis
                 expanded = synthesize_query(query, client, is_preference=is_preference, profile_context=profile_context)
                 queries_to_search = [query] + expanded[:3]
-                log.info(f"[RETRIEVAL] Query synthesis: {len(queries_to_search)} queries")
+                logger.info(f"[RETRIEVAL] Query synthesis: {len(queries_to_search)} queries")
 
         # Stage 3: HyDE (if enabled and in hybrid mode)
         # For preference queries, ALWAYS enable HyDE to bridge semantic gap
@@ -227,14 +224,14 @@ class RetrievalMixin:
         if is_preference and client:
             # Force HyDE for preference queries - critical for bridging semantic gap
             should_hyde = True
-            log.info(f"[RETRIEVAL] Forcing HyDE for preference query")
+            logger.info(f"[RETRIEVAL] Forcing HyDE for preference query")
         if should_hyde:
             hypothetical = generate_hypothetical_memory(
                 query, client, is_preference=is_preference, profile_context=profile_context
             )
             if hypothetical:
                 queries_to_search.append(hypothetical)
-                log.info(f"[RETRIEVAL] HyDE generated")
+                logger.info(f"[RETRIEVAL] HyDE generated")
 
         # Stage 4: Candidate retrieval
         query_results: list[list[SearchResult]] = []
@@ -245,7 +242,7 @@ class RetrievalMixin:
         candidates_limit = self.config.max_candidates_per_query
         if is_aggregation:
             candidates_limit = max(50, candidates_limit * 2)  # At least 50, or 2x default
-            log.info(f"[RETRIEVAL] Aggregation query: using larger candidate pool ({candidates_limit})")
+            logger.info(f"[RETRIEVAL] Aggregation query: using larger candidate pool ({candidates_limit})")
 
         for i, search_query in enumerate(queries_to_search):
             is_original = (i == 0)
@@ -303,7 +300,7 @@ class RetrievalMixin:
                 list_weights=list_weights,
                 top_rank_bonus=top_rank_bonus,
             )
-            log.info(f"[RETRIEVAL] RRF fusion: {sum(len(r) for r in query_results)} -> {len(candidates)} results")
+            logger.info(f"[RETRIEVAL] RRF fusion: {sum(len(r) for r in query_results)} -> {len(candidates)} results")
         else:
             candidates = query_results[0] if query_results else []
 
@@ -316,7 +313,7 @@ class RetrievalMixin:
 
             if reranker_backend == "llamacpp_server":
                 # llamacpp_server requires async - skip in sync context
-                log.warning("[RETRIEVAL] llamacpp_server reranker requires async. Use async method or llm backend.")
+                logger.warning("[RETRIEVAL] llamacpp_server reranker requires async. Use async method or llm backend.")
 
             elif reranker_backend == "llm" and client:
                 # OpenRouter LLM reranking
@@ -325,7 +322,7 @@ class RetrievalMixin:
                     top_k=self.config.rerank_output_limit,
                     config=self.config
                 )
-                log.info(f"[RETRIEVAL] LLM reranking complete: {len(candidates)} results")
+                logger.info(f"[RETRIEVAL] LLM reranking complete: {len(candidates)} results")
             # reranker_backend == "disabled" -> skip reranking
 
         # Stage 7: Relevance filtering
@@ -333,17 +330,10 @@ class RetrievalMixin:
         candidates = [c for c in candidates if c.score >= threshold]
 
         # Stage 8: Apply unified scoring adjustments
-        categories = {
-            c.metadata.category.lower()
-            for c in candidates
-            if c.metadata and c.metadata.category
-        }
-        skip_category_penalty = len(categories) <= 1
         for candidate in candidates:
             candidate.score = apply_score_adjustments(
                 candidate,
                 project=project,
-                skip_category_penalty=skip_category_penalty,
                 config=self.config,
             )
 
@@ -359,12 +349,12 @@ class RetrievalMixin:
         assembly_budget = max_tokens
         if is_aggregation:
             assembly_budget = max(max_tokens, 4000)  # At least 4000 tokens for aggregation
-            log.info(f"[RETRIEVAL] Aggregation query: increased token budget from {max_tokens} to {assembly_budget}")
+            logger.info(f"[RETRIEVAL] Aggregation query: increased token budget from {max_tokens} to {assembly_budget}")
             selected, tokens_used = assemble_context_diverse(candidates, assembly_budget)
-            log.info(f"[RETRIEVAL] Final (diverse): {filtered_count} candidates -> {len(selected)} selected, {tokens_used} tokens")
+            logger.info(f"[RETRIEVAL] Final (diverse): {filtered_count} candidates -> {len(selected)} selected, {tokens_used} tokens")
         else:
             selected, tokens_used = assemble_context(candidates, assembly_budget)
-            log.info(f"[RETRIEVAL] Final: {filtered_count} candidates -> {len(selected)} selected, {tokens_used} tokens")
+            logger.info(f"[RETRIEVAL] Final: {filtered_count} candidates -> {len(selected)} selected, {tokens_used} tokens")
 
         return {
             "results": _serialize_results(selected),
@@ -406,9 +396,7 @@ class RetrievalMixin:
             synthesize_query,
         )
 
-        log = logger
-        log.info(f"[RETRIEVAL] Starting async retrieve_for_inference: query='{query[:50]}...'")
-        debug_mode = self.config.debug_mode
+        logger.info(f"[RETRIEVAL] Starting async retrieve_for_inference: query='{query[:50]}...'")
 
         # Ensure async embedder is initialized
         await self._ensure_initialized_async()
@@ -422,7 +410,7 @@ class RetrievalMixin:
         if mode == "auto" and client:
             intent = extract_query_intent(query, client)
             selected_mode = route_to_strategy(intent)
-            log.info(f"[RETRIEVAL] Auto mode selected: {selected_mode}")
+            logger.info(f"[RETRIEVAL] Auto mode selected: {selected_mode}")
 
         # Detect query types - each needs different handling
         from cems.retrieval import _is_temporal_query, _is_preference_query, _is_aggregation_query
@@ -431,11 +419,11 @@ class RetrievalMixin:
         is_aggregation = _is_aggregation_query(query)
 
         if is_temporal:
-            log.info(f"[RETRIEVAL] Temporal query detected - will use query synthesis for decomposition")
+            logger.info(f"[RETRIEVAL] Temporal query detected - will use query synthesis for decomposition")
         if is_preference:
-            log.info(f"[RETRIEVAL] Preference query detected - will use query synthesis to bridge semantic gap")
+            logger.info(f"[RETRIEVAL] Preference query detected - will use query synthesis to bridge semantic gap")
         if is_aggregation:
-            log.info(f"[RETRIEVAL] Aggregation query detected - will use larger candidate pool and diversity selection")
+            logger.info(f"[RETRIEVAL] Aggregation query detected - will use larger candidate pool and diversity selection")
 
         # Stage 2.0: Profile Probe FIRST for preference queries (RAP approach)
         # We need profile_context before synthesis to provide dynamic examples
@@ -456,7 +444,7 @@ class RetrievalMixin:
             if profile_results:
                 profile_context = extract_profile_context([r.content for r in profile_results])
                 if profile_context:
-                    log.info(f"[RETRIEVAL] Profile probe found context: {profile_context[:3]}...")
+                    logger.info(f"[RETRIEVAL] Profile probe found context: {profile_context[:3]}...")
 
         # Stage 2.1: Query synthesis with strong-signal skip
         queries_to_search = [query]
@@ -470,7 +458,7 @@ class RetrievalMixin:
         )
         if force_synthesis:
             query_type = 'temporal' if is_temporal else ('aggregation' if is_aggregation else 'preference')
-            log.info(f"[RETRIEVAL] Forcing synthesis for {query_type} query")
+            logger.info(f"[RETRIEVAL] Forcing synthesis for {query_type} query")
         if should_synthesize:
             # Probe BM25 to check signal strength before expanding
             lexical_probe = await self._search_lexical_raw_async(query, scope, limit=2)
@@ -481,7 +469,7 @@ class RetrievalMixin:
                 gap_threshold = self.config.strong_signal_gap
                 if is_strong_lexical_signal(top_score, second_score, threshold, gap_threshold):
                     gap = top_score - second_score
-                    log.info(
+                    logger.info(
                         f"[RETRIEVAL] Strong signal detected (score={top_score:.3f}, "
                         f"gap={gap:.3f}), skipping query expansion"
                     )
@@ -491,29 +479,29 @@ class RetrievalMixin:
                 # RAP: Pass profile_context as dynamic examples to synthesis
                 expanded = synthesize_query(query, client, is_preference=is_preference, profile_context=profile_context)
                 queries_to_search = [query] + expanded[:3]
-                log.info(f"[RETRIEVAL] Query synthesis: {len(queries_to_search)} queries")
+                logger.info(f"[RETRIEVAL] Query synthesis: {len(queries_to_search)} queries")
 
         # For preference queries, ALWAYS enable HyDE to bridge semantic gap
         should_hyde = enable_hyde and selected_mode == "hybrid" and client
         if is_preference and client:
             # Force HyDE for preference queries - critical for bridging semantic gap
             should_hyde = True
-            log.info(f"[RETRIEVAL] Forcing HyDE for preference query")
+            logger.info(f"[RETRIEVAL] Forcing HyDE for preference query")
         if should_hyde:
             hypothetical = generate_hypothetical_memory(
                 query, client, is_preference=is_preference, profile_context=profile_context
             )
             if hypothetical:
                 queries_to_search.append(hypothetical)
-                log.info(f"[RETRIEVAL] HyDE generated")
+                logger.info(f"[RETRIEVAL] HyDE generated")
 
         # OPTIMIZATION: Batch embed all queries in a single API call
         # This reduces N sequential embedding calls (~500ms each) to 1 batch call
         embed_start = time.perf_counter()
-        log.info(f"[RETRIEVAL] Batch embedding {len(queries_to_search)} queries")
+        logger.info(f"[RETRIEVAL] Batch embedding {len(queries_to_search)} queries")
         query_embeddings = await self._async_embedder.embed_batch(queries_to_search)
         embed_ms = (time.perf_counter() - embed_start) * 1000
-        log.info(f"[TIMING] Batch embedding complete: {embed_ms:.0f}ms for {len(queries_to_search)} queries")
+        logger.info(f"[TIMING] Batch embedding complete: {embed_ms:.0f}ms for {len(queries_to_search)} queries")
 
         # Stage 4: Candidate retrieval using pre-computed embeddings
         # Track which lists are original vs expansion for RRF weights
@@ -525,7 +513,7 @@ class RetrievalMixin:
         candidates_limit = self.config.max_candidates_per_query
         if is_aggregation:
             candidates_limit = max(50, candidates_limit * 2)  # At least 50, or 2x default
-            log.info(f"[RETRIEVAL] Aggregation query: using larger candidate pool ({candidates_limit})")
+            logger.info(f"[RETRIEVAL] Aggregation query: using larger candidate pool ({candidates_limit})")
 
         search_start = time.perf_counter()
         for i, (search_query, embedding) in enumerate(zip(queries_to_search, query_embeddings)):
@@ -554,13 +542,13 @@ class RetrievalMixin:
                 query_results.append(lexical_results)
                 list_weights.append(weight)
         search_ms = (time.perf_counter() - search_start) * 1000
-        log.info(f"[TIMING] DB search (vector+lexical): {search_ms:.0f}ms for {len(queries_to_search)} queries")
+        logger.info(f"[TIMING] DB search (vector+lexical): {search_ms:.0f}ms for {len(queries_to_search)} queries")
 
         # Log raw candidate counts per query
         for i, results in enumerate(query_results):
             if results:
                 top_scores = [f"{r.score:.3f}" for r in results[:3]]
-                log.info(f"[RETRIEVAL] Query #{i}: {len(results)} results, top scores: {top_scores}")
+                logger.info(f"[RETRIEVAL] Query #{i}: {len(results)} results, top scores: {top_scores}")
 
         if enable_graph and query_results and query_results[0]:
             relation_results: list[SearchResult] = []
@@ -596,7 +584,7 @@ class RetrievalMixin:
                 list_weights=list_weights,
                 top_rank_bonus=top_rank_bonus,
             )
-            log.info(f"[RETRIEVAL] RRF fusion: {sum(len(r) for r in query_results)} -> {len(candidates)} results")
+            logger.info(f"[RETRIEVAL] RRF fusion: {sum(len(r) for r in query_results)} -> {len(candidates)} results")
         else:
             candidates = query_results[0] if query_results else []
 
@@ -637,9 +625,9 @@ class RetrievalMixin:
 
                     candidates_to_rank.sort(key=lambda x: x.score, reverse=True)
                     candidates = candidates_to_rank[:self.config.rerank_output_limit]
-                    log.info(f"[RETRIEVAL] llama.cpp server reranking complete: {len(candidates)} results")
+                    logger.info(f"[RETRIEVAL] llama.cpp server reranking complete: {len(candidates)} results")
                 except Exception as e:
-                    log.warning(f"[RETRIEVAL] llama.cpp server reranking failed: {e}")
+                    logger.warning(f"[RETRIEVAL] llama.cpp server reranking failed: {e}")
 
             elif reranker_backend == "llm" and client:
                 # OpenRouter LLM reranking
@@ -648,29 +636,21 @@ class RetrievalMixin:
                     top_k=self.config.rerank_output_limit,
                     config=self.config
                 )
-                log.info(f"[RETRIEVAL] LLM reranking complete: {len(candidates)} results")
+                logger.info(f"[RETRIEVAL] LLM reranking complete: {len(candidates)} results")
             # reranker_backend == "disabled" -> skip reranking
 
         threshold = self.config.relevance_threshold
         before_filter = len(candidates)
         candidates = [c for c in candidates if c.score >= threshold]
-        log.info(
+        logger.info(
             f"[RETRIEVAL] Relevance filter: threshold={threshold:.2f}, "
             f"{before_filter} -> {len(candidates)} candidates"
         )
-
-        categories = {
-            c.metadata.category.lower()
-            for c in candidates
-            if c.metadata and c.metadata.category
-        }
-        skip_category_penalty = len(categories) <= 1
 
         for candidate in candidates:
             candidate.score = apply_score_adjustments(
                 candidate,
                 project=project,
-                skip_category_penalty=skip_category_penalty,
                 config=self.config,
             )
 
@@ -683,20 +663,20 @@ class RetrievalMixin:
         assembly_budget = max_tokens
         if is_aggregation:
             assembly_budget = max(max_tokens, 4000)  # At least 4000 tokens for aggregation
-            log.info(f"[RETRIEVAL] Aggregation query: increased token budget from {max_tokens} to {assembly_budget}")
+            logger.info(f"[RETRIEVAL] Aggregation query: increased token budget from {max_tokens} to {assembly_budget}")
             selected, tokens_used = assemble_context_diverse(candidates, assembly_budget)
         else:
             selected, tokens_used = assemble_context(candidates, assembly_budget)
 
         # Log final selection with source_refs
         assembly_type = "diverse" if is_aggregation else "standard"
-        log.info(f"[RETRIEVAL] Final ({assembly_type}) {len(selected)} results:")
+        logger.info(f"[RETRIEVAL] Final ({assembly_type}) {len(selected)} results:")
         for i, r in enumerate(selected[:5]):
             src_ref = r.metadata.source_ref if r.metadata else "NONE"
-            log.info(f"  [{i}] score={r.score:.3f} src={src_ref} id={r.memory_id[:8]}...")
+            logger.info(f"  [{i}] score={r.score:.3f} src={src_ref} id={r.memory_id[:8]}...")
 
         pipeline_ms = (time.perf_counter() - pipeline_start) * 1000
-        log.info(f"[TIMING] PIPELINE TOTAL: {pipeline_ms:.0f}ms | {filtered_count} candidates -> {len(selected)} selected, {tokens_used} tokens")
+        logger.info(f"[TIMING] PIPELINE TOTAL: {pipeline_ms:.0f}ms | {filtered_count} candidates -> {len(selected)} selected, {tokens_used} tokens")
 
         return {
             "results": _serialize_results(selected),

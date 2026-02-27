@@ -23,14 +23,12 @@ logger = logging.getLogger(__name__)
 # Minimum confidence from LLM to act on a classification
 MIN_CONFIDENCE = 0.7
 
+# Maximum texts per embedding API call
+EMBEDDING_BATCH_SIZE = 100
+
 
 class ConsolidationJob:
-    """Nightly maintenance job for memory consolidation.
-
-    Finds and merges semantically duplicate memories using vector
-    similarity search and LLM-powered classification + merging.
-    Also detects conflicting memories and records them for resolution.
-    """
+    """Nightly consolidation: find and merge semantically duplicate memories."""
 
     def __init__(self, memory: "CEMSMemory"):
         self.memory = memory
@@ -115,10 +113,9 @@ class ConsolidationJob:
 
         embedding_cache: dict[str, list[float]] = {}
         if contents:
-            BATCH_SIZE = 100
-            for batch_start in range(0, len(contents), BATCH_SIZE):
-                batch_texts = contents[batch_start : batch_start + BATCH_SIZE]
-                batch_ids = content_doc_ids[batch_start : batch_start + BATCH_SIZE]
+            for batch_start in range(0, len(contents), EMBEDDING_BATCH_SIZE):
+                batch_texts = contents[batch_start : batch_start + EMBEDDING_BATCH_SIZE]
+                batch_ids = content_doc_ids[batch_start : batch_start + EMBEDDING_BATCH_SIZE]
                 batch_embeddings = await self.memory._async_embedder.embed_batch(batch_texts)
                 for did, emb in zip(batch_ids, batch_embeddings):
                     if emb:

@@ -8,13 +8,13 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
 LOG_DIR = Path.home() / ".claude" / "hooks" / "logs"
 EVENTS_FILE = LOG_DIR / "hook_events.jsonl"
 VERBOSE_DIR = LOG_DIR / "verbose"
-HOOK_OUTPUT_DIR = Path.home() / ".cems" / "logs" / "hook_output"
 OBSERVER_DIR = Path.home() / ".cems" / "observer"
 GATE_CACHE_DIR = Path.home() / ".cems" / "cache" / "gate_rules"
 
@@ -123,9 +123,8 @@ class EventIndex:
             session.gate_triggers += 1
         elif event == "UserPromptSubmitOutput":
             pass  # Stats only — output is in verbose log
-        elif event in ("PreToolUse", "PostToolUse"):
-            if event == "PreToolUse":
-                session.tool_count += 1
+        elif event == "PreToolUse":
+            session.tool_count += 1
 
     def get_sessions(self, limit: int = 50) -> list[dict]:
         """Return recent sessions sorted by last_ts descending."""
@@ -202,6 +201,111 @@ class EventIndex:
         recent = list(self.retrievals[-limit:])
         recent.reverse()
         return recent
+
+    # --- Observer methods ---
+
+    def get_observer_sessions(self, limit: int = 100) -> list[dict]:
+        """Read all observer state files and return sorted by last activity."""
+        if not OBSERVER_DIR.exists():
+            return []
+
+        sessions = []
+        for state_file in OBSERVER_DIR.glob("*.json"):
+            if state_file.name == "daemon.pid":
+                continue
+            try:
+                data = json.loads(state_file.read_text())
+            except (json.JSONDecodeError, OSError):
+                continue
+
+            last_activity = max(
+                data.get("last_observed_at", 0),
+                data.get("last_finalized_at", 0),
+                data.get("session_started", 0),
+            )
+            sessions.append({
+                "session_id": data.get("session_id", state_file.stem),
+                "tool": data.get("tool", "") or "unknown",
+                "project_id": data.get("project_id", ""),
+                "source_ref": data.get("source_ref", ""),
+                "observation_count": data.get("observation_count", 0),
+                "epoch": data.get("epoch", 0),
+                "is_done": data.get("is_done", False),
+                "session_started": data.get("session_started", 0),
+                "last_observed_at": data.get("last_observed_at", 0),
+                "last_finalized_at": data.get("last_finalized_at", 0),
+                "last_growth_seen_at": data.get("last_growth_seen_at", 0),
+                "last_observed_bytes": data.get("last_observed_bytes", 0),
+                "last_activity": last_activity,
+            })
+
+        sessions.sort(key=lambda s: s["last_activity"], reverse=True)
+        return sessions[:limit]
+
+    def get_observer_session_detail(self, sid: str) -> dict | None:
+        """Return full state dict + last 50 daemon log lines for a session."""
+        if "/" in sid or "\\" in sid or ".." in sid:
+            return None
+
+        state_file = OBSERVER_DIR / f"{sid}.json"
+        if not state_file.exists():
+            return None
+
+        try:
+            data = json.loads(state_file.read_text())
+        except (json.JSONDecodeError, OSError):
+            return None
+
+        data.setdefault("tool", "unknown")
+        if not data["tool"]:
+            data["tool"] = "unknown"
+
+        # Grep daemon log for matching lines
+        log_lines: list[str] = []
+        daemon_log = OBSERVER_DIR / "daemon.log"
+        short_id = sid[:8]
+        if daemon_log.exists():
+            try:
+                for line in daemon_log.read_text().splitlines():
+                    if short_id in line:
+                        log_lines.append(line)
+                log_lines = log_lines[-50:]
+            except OSError:
+                pass
+
+        data["daemon_log"] = log_lines
+        return data
+
+    def get_observer_stats(self) -> dict:
+        """Aggregate observer stats: totals, by-tool breakdown, pending signals."""
+        sessions = self.get_observer_sessions(limit=9999)
+
+        by_tool: dict[str, int] = {}
+        active = 0
+        done = 0
+        total_observations = 0
+
+        for s in sessions:
+            tool = s.get("tool", "unknown") or "unknown"
+            by_tool[tool] = by_tool.get(tool, 0) + 1
+            if s.get("is_done"):
+                done += 1
+            else:
+                active += 1
+            total_observations += s.get("observation_count", 0)
+
+        # Count pending signals
+        signals_dir = OBSERVER_DIR / "signals"
+        pending_signals = _count_files(signals_dir, "*.json") if signals_dir.exists() else 0
+
+        return {
+            "total": len(sessions),
+            "active": active,
+            "done": done,
+            "by_tool": by_tool,
+            "total_observations": total_observations,
+            "pending_signals": pending_signals,
+        }
 
     def get_status(self) -> dict:
         """Return system status info — file sizes, daemon, caches."""

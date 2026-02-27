@@ -4,7 +4,7 @@
 
 <h1 align="center">CEMS</h1>
 <p align="center"><strong>Continuous Evolving Memory System</strong></p>
-<p align="center">Persistent memory for AI coding assistants. Store, retrieve, and evolve memories to make Claude Code and Cursor smarter over time.</p>
+<p align="center">Persistent memory for AI coding assistants. Works with Claude Code, Cursor, Codex, Goose, and any MCP-compatible agent.</p>
 
 <p align="center">
   <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT"></a>
@@ -26,7 +26,7 @@ You need two things from your CEMS admin: a **server URL** and an **API key**.
 curl -fsSL https://getcems.com/install.sh | bash
 ```
 
-It will ask for your API URL and key interactively.
+It will ask for your API URL and key, then let you choose which IDEs to configure (Claude Code, Cursor, Codex, Goose, or all).
 
 ### Option B: Non-interactive install
 
@@ -42,15 +42,27 @@ git clone https://github.com/chocksy/cems.git && cd cems
 ./install.sh
 ```
 
+### Option D: Install skills only (any agent)
+
+If your agent supports [skills.sh](https://skills.sh), you can add CEMS skills without the full install:
+
+```bash
+npx skills add Chocksy/cems
+```
+
+This installs recall, remember, and foundation skills. You still need a CEMS server and API key configured separately.
+
 ### What the installer does
 
 1. Installs [uv](https://docs.astral.sh/uv/) if missing
 2. Installs the CEMS CLI (`cems`, `cems-server`, `cems-observer`) via `uv tool install`
-3. Runs `cems setup --claude` which:
-   - Copies 6 hook scripts to `~/.claude/hooks/`
-   - Copies 5 skill files to `~/.claude/skills/cems/`
-   - Merges CEMS config into `~/.claude/settings.json` (preserves existing settings)
-   - Saves credentials to `~/.cems/credentials` (chmod 600)
+3. Runs `cems setup` which lets you choose IDEs to configure:
+   - **Claude Code** (`--claude`): 6 hooks, 6 skills, 2 commands, settings.json config
+   - **Cursor** (`--cursor`): 3 hooks, 5 skills, MCP config in `mcp.json`
+   - **Codex** (`--codex`): 3 commands, 2 skills, MCP config in `config.toml`
+   - **Goose** (`--goose`): MCP extension in `config.yaml`
+4. Saves credentials to `~/.cems/credentials` (chmod 600)
+5. Saves IDE choices to `~/.cems/install.conf` (used by `cems update` for non-interactive re-deploys)
 
 ### After install
 
@@ -73,7 +85,7 @@ cems update          # Pull latest + re-deploy hooks/skills
 cems update --hooks  # Re-deploy hooks only (skip package upgrade)
 ```
 
-Auto-update can be disabled by setting `CEMS_AUTO_UPDATE=0` in your environment or `~/.cems/credentials`.
+Updates re-deploy to whatever IDEs you originally configured (stored in `~/.cems/install.conf`). Auto-update can be disabled by setting `CEMS_AUTO_UPDATE=0` in your environment or `~/.cems/credentials`.
 
 ### Credentials
 
@@ -84,14 +96,17 @@ Stored in `~/.cems/credentials` (chmod 600). Checked in order:
 
 ## How It Works
 
-CEMS hooks into your IDE (Claude Code or Cursor) and provides persistent memory across sessions:
+CEMS hooks into your IDE and provides persistent memory across sessions:
 
-1. **Memory Injection** -- On every prompt, the `UserPromptSubmit` hook searches your memories and injects relevant context
-2. **Session Learning** -- On session end, the `Stop` hook extracts learnings from your session and stores them
+1. **Memory Injection** -- On every prompt, relevant memories are searched and injected as context
+2. **Session Learning** -- On session end, learnings are extracted and stored
 3. **Observational Memory** -- The observer daemon watches session transcripts and extracts high-level observations about your workflow
 4. **Scheduled Maintenance** -- Nightly/weekly/monthly jobs deduplicate, compress, and prune memories automatically
 
 ## What Gets Installed
+
+<details>
+<summary><strong>Claude Code</strong> (~/.claude/)</summary>
 
 ```
 ~/.claude/
@@ -104,21 +119,76 @@ CEMS hooks into your IDE (Claude Code or Cursor) and provides persistent memory 
 │   ├── cems_stop.py                 # Session analysis + observer
 │   ├── cems_pre_compact.py          # Pre-compaction hook
 │   └── utils/                       # Shared utilities
-└── skills/
-    └── cems/
-        ├── remember.md     # /remember - Add personal memory
-        ├── recall.md       # /recall - Search memories
-        ├── share.md        # /share - Add team memory
-        ├── forget.md       # /forget - Delete memory
-        └── context.md      # /context - Show status
-
-~/.cems/
-└── credentials             # API URL + key (chmod 600)
+├── skills/cems/
+│   ├── recall.md           # /recall - Search memories
+│   ├── remember.md         # /remember - Add personal memory
+│   ├── share.md            # /share - Add team memory
+│   ├── forget.md           # /forget - Delete memory
+│   ├── context.md          # /context - Show status
+│   └── memory-guide.md     # Proactive memory usage guide
+└── commands/
+    ├── recall.md           # /recall command
+    └── remember.md         # /remember command
 ```
+</details>
+
+<details>
+<summary><strong>Cursor</strong> (~/.cursor/)</summary>
+
+```
+~/.cursor/
+├── mcp.json                # MCP server config (merged)
+├── hooks/
+│   ├── cems_session_start.py    # Profile injection
+│   ├── cems_agent_response.py   # Agent response hook
+│   └── cems_stop.py             # Session end hook
+└── skills/
+    ├── cems-recall/SKILL.md     # Search memories
+    ├── cems-remember/SKILL.md   # Add memory
+    ├── cems-forget/SKILL.md     # Delete memory
+    ├── cems-share/SKILL.md      # Share with team
+    └── cems-context/SKILL.md    # Memory status
+```
+</details>
+
+<details>
+<summary><strong>Codex</strong> (~/.codex/)</summary>
+
+```
+~/.codex/
+├── config.toml             # MCP server config (merged)
+├── commands/
+│   ├── recall.md           # Search memories
+│   ├── remember.md         # Add memory
+│   └── foundation.md       # Foundation guidelines
+└── skills/
+    ├── recall/SKILL.md     # Search memories
+    └── remember/SKILL.md   # Add memory
+```
+</details>
+
+<details>
+<summary><strong>Goose</strong> (~/.config/goose/)</summary>
+
+```
+~/.config/goose/
+└── config.yaml             # CEMS MCP extension block (merged)
+```
+</details>
+
+<details>
+<summary><strong>Shared</strong> (~/.cems/)</summary>
+
+```
+~/.cems/
+├── credentials             # API URL + key (chmod 600)
+└── install.conf            # IDE choices for cems update
+```
+</details>
 
 ## Usage
 
-### Skills (Claude Code slash commands)
+### Skills (slash commands)
 
 ```
 /remember I prefer Python for backend development
@@ -128,6 +198,8 @@ CEMS hooks into your IDE (Claude Code or Cursor) and provides persistent memory 
 /forget abc123
 /context
 ```
+
+Available in Claude Code, Cursor, and Codex. Exact skill names vary by IDE.
 
 ### CLI
 
@@ -181,7 +253,7 @@ For team usage, deploy CEMS as a server. Requires Docker Compose.
      -H "Authorization: Bearer $CEMS_ADMIN_KEY" \
      -H "Content-Type: application/json" \
      -d '{"username": "yourname"}'
-   # Returns: {"api_key": "cems_usr_abc123..."}
+   # Returns: {"api_key": "cems_usr_..."}
    ```
 
 4. **Give the API key to your team member** -- they run the client install above.
@@ -220,7 +292,7 @@ Everything lives in **PostgreSQL with pgvector**:
 
 ### Search Pipeline
 
-CEMS uses a 9-stage retrieval pipeline:
+CEMS uses a multi-stage retrieval pipeline:
 
 ```
 Query → Understanding → Synthesis → HyDE → Retrieval → RRF Fusion → Filtering → Scoring → Assembly → Results
@@ -267,10 +339,10 @@ The MCP wrapper on port 8766 exposes CEMS as an MCP server with 6 tools:
 |------|-------------|
 | `memory_add` | Store a memory |
 | `memory_search` | Search with the full retrieval pipeline |
+| `memory_get` | Retrieve full document by ID |
 | `memory_forget` | Delete or archive a memory |
 | `memory_update` | Update memory content |
 | `memory_maintenance` | Trigger maintenance jobs |
-| `session_analyze` | Analyze session transcripts |
 
 ### API Endpoints
 
@@ -287,9 +359,11 @@ The MCP wrapper on port 8766 exposes CEMS as an MCP server with 6 tools:
 | POST | `/api/memory/update` | Update memory |
 | POST | `/api/memory/log-shown` | Feedback tracking |
 | POST | `/api/memory/maintenance` | Run maintenance |
+| GET | `/api/memory/get` | Get full document by ID |
 | GET | `/api/memory/list` | List memories |
 | GET | `/api/memory/status` | System status |
 | GET | `/api/memory/profile` | Session profile context |
+| GET | `/api/memory/foundation` | Foundation guidelines |
 | GET | `/api/memory/gate-rules` | Gate rules by project |
 | POST | `/api/session/summarize` | Session summary (observer daemon) |
 | POST | `/api/tool/learning` | Tool learning |
@@ -317,8 +391,11 @@ The MCP wrapper on port 8766 exposes CEMS as an MCP server with 6 tools:
 
 ### Skills not appearing
 
-1. Verify: `ls ~/.claude/skills/cems/`
-2. Restart Claude Code
+1. Verify files exist:
+   - Claude Code: `ls ~/.claude/skills/cems/`
+   - Cursor: `ls ~/.cursor/skills/cems-recall/`
+   - Codex: `ls ~/.codex/skills/recall/`
+2. Restart your IDE
 3. Type `/` and look for `remember`, `recall`, etc.
 
 ### Re-install hooks

@@ -53,7 +53,6 @@ async def api_tool_learning(request: Request):
         if not tool_name:
             return JSONResponse({"error": "tool_name is required"}, status_code=400)
 
-        # Skip non-significant tools (reads, searches don't produce learnings)
         non_learnable_tools = {"Read", "Glob", "Grep", "LS", "WebFetch", "WebSearch"}
         if tool_name in non_learnable_tools:
             return JSONResponse({
@@ -63,7 +62,6 @@ async def api_tool_learning(request: Request):
                 "reason": "skipped_non_learnable_tool",
             })
 
-        # Skip if no meaningful context
         if not context_snippet and not tool_output:
             return JSONResponse({
                 "success": True,
@@ -72,7 +70,7 @@ async def api_tool_learning(request: Request):
                 "reason": "skipped_no_context",
             })
 
-        # Build tool context for learning extraction
+        # Each tool type extracts different relevant fields for the LLM prompt
         tool_context = f"Tool: {tool_name}\n"
         if tool_input:
             if tool_name in ("Edit", "MultiEdit") and "file_path" in tool_input:
@@ -95,7 +93,6 @@ async def api_tool_learning(request: Request):
         if tool_output:
             tool_context += f"Result: {tool_output[:500]}\n"
 
-        # Extract learning from tool usage
         learning = extract_tool_learning(
             tool_context=tool_context,
             conversation_snippet=context_snippet,
@@ -110,13 +107,11 @@ async def api_tool_learning(request: Request):
                 "reason": "skipped_no_learning_extracted",
             })
 
-        # Store the learning
         memory = get_memory()
         content = learning.get("content", "")
         category = learning.get("category", "learnings")
         learning_type = learning.get("type", "TOOL")
 
-        # Format with type prefix
         formatted_content = f"[{learning_type}] {content}"
         if session_id != "unknown":
             formatted_content += f" (session: {session_id[:8]})"
@@ -130,7 +125,6 @@ async def api_tool_learning(request: Request):
             infer=False,
         )
 
-        # Extract memory ID
         memory_id = None
         if result and "results" in result:
             for r in result["results"]:

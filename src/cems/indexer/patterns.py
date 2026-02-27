@@ -170,8 +170,6 @@ def get_default_patterns() -> list[IndexPattern]:
 
 def match_files(repo_path: Path, pattern: IndexPattern) -> list[Path]:
     """Find files matching a pattern in a repository."""
-    import fnmatch
-
     matched = []
     for file_pattern in pattern.file_patterns:
         # Handle glob patterns

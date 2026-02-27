@@ -9,7 +9,6 @@ from __future__ import annotations
 import json
 from collections import deque
 from pathlib import Path
-from typing import List
 
 __all__ = ["read_last_messages", "read_last_assistant_message"]
 
@@ -39,14 +38,10 @@ def _extract_text(entry: dict) -> str | None:
             if texts:
                 return " ".join(texts).strip()
     
-    # Fallback: direct content field
+    # Fallback: direct content field (covers system messages and other types)
     content = entry.get("content")
     if isinstance(content, str) and content.strip():
         return content.strip()
-    
-    # System messages often have plain content
-    if entry.get("type") == "system" and isinstance(entry.get("content"), str):
-        return entry["content"].strip()
 
     return None
 
@@ -118,7 +113,7 @@ def read_last_messages(transcript_path: str | Path, max_lines: int = 40, max_cha
     except Exception:
         return ""
 
-    parts: List[str] = []
+    parts: list[str] = []
     for raw in tail:
         try:
             entry = json.loads(raw)

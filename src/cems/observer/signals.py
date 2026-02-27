@@ -12,21 +12,25 @@ import logging
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 
 logger = logging.getLogger(__name__)
 
 SIGNALS_DIR = Path.home() / ".cems" / "observer" / "signals"
 
+SignalType = Literal["compact", "stop"]
+ToolName = Literal["claude", "codex", "cursor", "goose"]
+
 
 @dataclass
 class Signal:
     """A lifecycle signal from a hook to the daemon."""
-    type: str    # "compact" | "stop"
-    ts: float    # unix timestamp
-    tool: str    # "claude" | "codex" | "cursor"
+    type: SignalType
+    ts: float
+    tool: ToolName
 
 
-def write_signal(session_id: str, signal_type: str, tool: str = "claude") -> None:
+def write_signal(session_id: str, signal_type: SignalType, tool: ToolName = "claude") -> None:
     """Write a signal file for the daemon to pick up.
 
     Overwrites any existing signal for this session (last write wins).

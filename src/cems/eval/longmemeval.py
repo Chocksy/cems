@@ -20,9 +20,11 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 import time
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -222,10 +224,8 @@ class CEMSEvalClient:
         """
         try:
             # Remove day of week: "2023/04/10 (Mon) 17:50" -> "2023/04/10 17:50"
-            import re
             clean = re.sub(r"\s*\([^)]+\)\s*", " ", ts).strip()
             # Parse and convert
-            from datetime import datetime
             dt = datetime.strptime(clean, "%Y/%m/%d %H:%M")
             return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
         except Exception:
@@ -267,15 +267,9 @@ class CEMSEvalClient:
         except Exception:
             return False
 
-    def cleanup_eval_memories(self, admin_key: str | None = None) -> int:
-        """Delete all memories created during eval.
-
-        Uses admin bulk delete API for efficiency instead of individual forget calls.
-        Falls back to individual deletes if admin API fails.
-        """
-        # Try bulk delete via admin API first (same as cleanup_stale_eval_data)
+    def _admin_eval_cleanup(self, admin_key: str | None = None) -> dict | None:
+        """Call admin eval cleanup API. Returns response dict or None on failure."""
         effective_key = admin_key or os.getenv("CEMS_ADMIN_KEY") or self.api_key
-
         try:
             resp = self.client.delete(
                 f"{self.api_url}/admin/eval/cleanup",
@@ -286,13 +280,22 @@ class CEMSEvalClient:
                 params={"source_prefix": "project:longmemeval"},
             )
             data = resp.json()
-
             if data.get("success"):
-                docs = data.get("documents_deleted", 0)
-                self._session_to_memory.clear()
-                return docs
+                return data
         except Exception:
-            pass  # Fall through to individual deletes
+            pass
+        return None
+
+    def cleanup_eval_memories(self, admin_key: str | None = None) -> int:
+        """Delete all memories created during eval.
+
+        Uses admin bulk delete API for efficiency instead of individual forget calls.
+        Falls back to individual deletes if admin API fails.
+        """
+        data = self._admin_eval_cleanup(admin_key)
+        if data:
+            self._session_to_memory.clear()
+            return data.get("documents_deleted", 0)
 
         # Fallback: individual deletes (slow but reliable)
         deleted = 0
@@ -311,35 +314,17 @@ class CEMSEvalClient:
         Should be called before starting a fresh eval run to prevent
         data contamination from previous runs.
         """
-        # Try admin API first (requires CEMS_ADMIN_KEY)
-        effective_key = admin_key or os.getenv("CEMS_ADMIN_KEY") or self.api_key
+        data = self._admin_eval_cleanup(admin_key)
+        if data:
+            docs = data.get("documents_deleted", 0)
+            chunks = data.get("chunks_deleted", 0)
+            if docs > 0:
+                print(f"  Deleted {docs} documents ({chunks} chunks)")
+            else:
+                print("  No stale eval data found")
+            return docs
 
-        try:
-            resp = self.client.delete(
-                f"{self.api_url}/admin/eval/cleanup",
-                headers={
-                    "Authorization": f"Bearer {effective_key}",
-                    "Content-Type": "application/json",
-                },
-                params={"source_prefix": "project:longmemeval"},
-            )
-            data = resp.json()
-
-            if data.get("success"):
-                docs = data.get("documents_deleted", 0)
-                chunks = data.get("chunks_deleted", 0)
-                if docs > 0:
-                    print(f"  Deleted {docs} documents ({chunks} chunks)")
-                else:
-                    print("  No stale eval data found")
-                return docs
-
-            # Admin API returned error
-            print(f"  Admin API error: {data.get('error', 'unknown')}")
-            print("  Falling back to search-based cleanup...")
-
-        except Exception as e:
-            print(f"  Admin API unavailable ({e}), trying search-based cleanup...")
+        print("  Admin API unavailable, trying search-based cleanup...")
 
         # Fallback: search-based cleanup (less reliable)
         return self._search_based_cleanup()
@@ -610,7 +595,7 @@ def run_eval(
         retrieved_set = set(retrieved_ids[:5])  # Recall@5
 
         recall_any = bool(correct_set & retrieved_set)
-        recall_all = correct_set <= retrieved_set if correct_set else True
+        recall_all = bool(correct_set) and correct_set <= retrieved_set
 
         result = EvalResult(
             question_id=qid,

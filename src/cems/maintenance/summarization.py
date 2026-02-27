@@ -15,16 +15,22 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def _is_older_than(doc: dict, days: int) -> bool:
-    """Check if a document is older than N days."""
-    created_at = doc.get("created_at")
-    if not created_at:
+def _doc_age_exceeds(doc: dict, days: int, field: str = "created_at") -> bool:
+    """Check if a document's timestamp field is older than N days.
+
+    Args:
+        doc: Document dict
+        days: Age threshold in days
+        field: Timestamp field to check (default "created_at")
+    """
+    ts = doc.get(field) or doc.get("created_at")
+    if not ts:
         return False
-    if isinstance(created_at, str):
-        created_at = datetime.fromisoformat(created_at)
-    if created_at.tzinfo is None:
-        created_at = created_at.replace(tzinfo=UTC)
-    return created_at < datetime.now(UTC) - timedelta(days=days)
+    if isinstance(ts, str):
+        ts = datetime.fromisoformat(ts)
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=UTC)
+    return ts < datetime.now(UTC) - timedelta(days=days)
 
 
 class SummarizationJob:
@@ -49,7 +55,7 @@ class SummarizationJob:
 
         # Get all docs, filter to 30+ days old
         all_docs = await doc_store.get_all_documents(user_id, limit=500)
-        old_docs = [d for d in all_docs if _is_older_than(d, days=30)]
+        old_docs = [d for d in all_docs if _doc_age_exceeds(d, days=30)]
         logger.info(f"Found {len(old_docs)} old documents to potentially summarize")
 
         categories_updated = await self._compress_by_category(old_docs)
@@ -146,7 +152,7 @@ class SummarizationJob:
             Number of documents pruned
         """
         stale_days = self.config.stale_days
-        stale_docs = [d for d in all_docs if self._is_stale(d, stale_days)]
+        stale_docs = [d for d in all_docs if _doc_age_exceeds(d, stale_days, field="updated_at")]
         pruned = 0
 
         for doc in stale_docs:
@@ -162,18 +168,6 @@ class SummarizationJob:
             logger.info(f"Soft-deleted {pruned} stale documents (>{stale_days} days)")
 
         return pruned
-
-    @staticmethod
-    def _is_stale(doc: dict, days: int) -> bool:
-        """Check if a document is stale (not updated in N days)."""
-        updated_at = doc.get("updated_at") or doc.get("created_at")
-        if not updated_at:
-            return False
-        if isinstance(updated_at, str):
-            updated_at = datetime.fromisoformat(updated_at)
-        if updated_at.tzinfo is None:
-            updated_at = updated_at.replace(tzinfo=UTC)
-        return updated_at < datetime.now(UTC) - timedelta(days=days)
 
     def run(self) -> dict[str, int]:
         """Synchronous wrapper for run_async."""

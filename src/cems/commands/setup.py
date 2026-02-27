@@ -226,7 +226,7 @@ def _install_claude_hooks(data_path: Path, api_url: str) -> None:
     _merge_settings(claude_dir, data_path / "claude" / "settings.json")
 
     # Register MCP server
-    _register_mcp_server(api_url)
+    _register_claude_mcp_server(api_url)
 
 
 def _discover_mcp_url(api_url: str) -> str:
@@ -249,8 +249,8 @@ def _discover_mcp_url(api_url: str) -> str:
     return api_url.rstrip("/") + "/mcp"
 
 
-def _register_mcp_server(api_url: str) -> None:
-    """Register CEMS MCP server in Claude Code config.
+def _register_claude_mcp_server(api_url: str) -> None:
+    """Register CEMS MCP server in Claude Code config (~/.claude.json).
 
     Queries the server's discovery endpoint for the MCP URL,
     falls back to {api_url}/mcp if unavailable.
@@ -303,7 +303,7 @@ def _merge_settings(claude_dir: Path, template_path: Path) -> None:
     """Merge CEMS hook config into existing ~/.claude/settings.json.
 
     Preserves all existing settings (env, permissions, non-CEMS hooks).
-    Only adds/updates hook events that CEMS needs.
+    Appends CEMS hook entries that are not already registered (idempotent).
     """
     settings_file = claude_dir / "settings.json"
 
@@ -316,6 +316,9 @@ def _merge_settings(claude_dir: Path, template_path: Path) -> None:
             existing = {}
 
     # Load CEMS hook template
+    if not template_path.exists():
+        console.print(f"  [red]Template not found: {template_path}[/red]")
+        return
     template = json.loads(template_path.read_text())
     cems_hooks = template.get("hooks", {})
 
@@ -336,11 +339,10 @@ def _merge_settings(claude_dir: Path, template_path: Path) -> None:
                     existing_commands.add(hook.get("command", ""))
 
             for cems_entry in cems_entries:
-                for hook in cems_entry.get("hooks", []):
-                    if hook.get("command", "") not in existing_commands:
-                        # CEMS hook not present — add this entry
-                        existing_hooks[event_name].append(cems_entry)
-                        break
+                # Idempotency: match on command string to detect existing CEMS hooks
+                entry_commands = {h.get("command", "") for h in cems_entry.get("hooks", [])}
+                if not entry_commands & existing_commands:
+                    existing_hooks[event_name].append(cems_entry)
 
     settings_file.write_text(json.dumps(existing, indent=2) + "\n")
     console.print(f"  Settings merged into {settings_file}")
@@ -406,7 +408,7 @@ extensions:
     console.print(f"  Goose config updated: {goose_config_file}")
 
 
-def _install_codex(data_path: Path, api_url: str) -> None:
+def _install_codex_config(data_path: Path, api_url: str) -> None:
     """Install Codex commands, skills, and MCP config."""
     codex_dir = Path.home() / ".codex"
     src_commands = data_path / "codex" / "commands"
@@ -607,7 +609,7 @@ def setup(install_claude: bool, install_cursor: bool, install_codex: bool, insta
 
     if install_codex:
         console.print("[bold blue]Codex[/bold blue]")
-        _install_codex(data_path, resolved_url)
+        _install_codex_config(data_path, resolved_url)
         console.print()
 
     if install_goose:

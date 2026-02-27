@@ -230,7 +230,7 @@ Return ONLY valid JSON (object or null)."""
 
     try:
         client = get_client()
-        response = client.complete(
+        raw_response = client.complete(
             prompt=prompt,
             system=system_prompt,
             temperature=0.2,  # Lower temperature for consistency
@@ -238,14 +238,14 @@ Return ONLY valid JSON (object or null)."""
         )
 
         # Parse response
-        response = response.strip()
+        text = raw_response.strip()
 
         # Handle null response
-        if response.lower() in ("null", "none", "{}"):
+        if text.lower() in ("null", "none", "{}"):
             return None
 
         # Use shared utility for extraction
-        cleaned = extract_json_from_response(response)
+        cleaned = extract_json_from_response(text)
 
         learning = json.loads(cleaned)
 

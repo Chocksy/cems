@@ -63,7 +63,7 @@ class TestSessionMetadata:
 
     def test_enrich_reads_first_entry(self, tmp_path):
         """Should read cwd and gitBranch from first JSONL line."""
-        from cems.observer.session import SessionInfo, enrich_session_metadata
+        from cems.observer.session import SessionInfo, populate_session_metadata
 
         session_file = tmp_path / "test.jsonl"
         entry = {"type": "user", "cwd": "/Users/test/myproject", "gitBranch": "main"}
@@ -76,7 +76,7 @@ class TestSessionMetadata:
         )
 
         with patch("cems.observer.session._get_project_id", return_value="test/myproject"):
-            result = enrich_session_metadata(session)
+            result = populate_session_metadata(session)
 
         assert result.cwd == "/Users/test/myproject"
         assert result.git_branch == "main"
@@ -85,7 +85,7 @@ class TestSessionMetadata:
 
     def test_enrich_handles_empty_file(self, tmp_path):
         """Should handle empty session file gracefully."""
-        from cems.observer.session import SessionInfo, enrich_session_metadata
+        from cems.observer.session import SessionInfo, populate_session_metadata
 
         session_file = tmp_path / "empty.jsonl"
         session_file.write_text("")
@@ -96,7 +96,7 @@ class TestSessionMetadata:
             session_id="empty-id",
         )
 
-        result = enrich_session_metadata(session)
+        result = populate_session_metadata(session)
         assert result.cwd == ""
         assert result.project_id is None
 
@@ -288,7 +288,7 @@ class TestDaemon:
              patch("cems.observer.signals.SIGNALS_DIR", signals_dir), \
              patch("cems.observer.daemon.get_adapters", return_value=[ClaudeAdapter()]), \
              patch("cems.observer.daemon.send_summary", return_value=True) as mock_send, \
-             patch("cems.observer.adapters.claude._get_project_id", return_value="test/proj"):
+             patch("cems.observer.session._get_project_id", return_value="test/proj"):
 
             triggered = run_cycle("http://localhost:8765", "test-key")
 

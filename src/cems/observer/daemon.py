@@ -19,7 +19,7 @@ import time
 import urllib.error
 import urllib.request
 
-from cems.observer.adapters import SessionInfo, get_adapters
+from cems.observer.adapters import SessionAdapter, SessionInfo, get_adapters
 from cems.observer.signals import Signal, clear_signal, read_signal
 from cems.observer.state import (
     ObservationState,
@@ -157,14 +157,16 @@ def handle_signal(
     sig: Signal,
     session: SessionInfo,
     state: ObservationState,
-    adapter,
+    adapter: SessionAdapter,
     api_url: str,
     api_key: str,
 ) -> None:
     """Handle a lifecycle signal (compact or stop).
 
-    - compact: finalize current epoch doc, bump epoch, continue watching
-    - stop: finalize current epoch doc, mark session done
+    - compact: finalize current epoch doc (if observed), bump epoch, continue watching
+    - stop: finalize current epoch doc (if observed), mark session done
+
+    Finalization is skipped when observation_count == 0 (no content to finalize).
     """
     logger.info(
         f"Signal '{sig.type}' for {session.session_id[:8]} "
@@ -180,7 +182,7 @@ def handle_signal(
         project_context = _build_project_context(session)
 
         # Even if no new content, send a finalize to polish the existing summary
-        send_summary(
+        success = send_summary(
             content=content or "(session ended)",
             session_id=session.session_id,
             source_ref=state.source_ref or session.source_ref,
@@ -190,14 +192,16 @@ def handle_signal(
             api_url=api_url,
             api_key=api_key,
         )
+        if not success:
+            logger.warning(f"Finalize summary failed for {session.session_id[:8]}")
         state.last_finalized_at = time.time()
 
         # Update bytes pointer if we read new content
         if content:
             state.last_observed_bytes = session.file_size
             # Update watermark for SQLite-based adapters
-            if "max_message_id" in session.extra:
-                state.last_observed_message_id = session.extra["max_message_id"]
+            if "last_observed_message_id" in session.extra:
+                state.last_observed_message_id = session.extra["last_observed_message_id"]
 
     if sig.type == "compact":
         state.epoch += 1
@@ -213,7 +217,7 @@ def handle_signal(
 def handle_finalize(
     session: SessionInfo,
     state: ObservationState,
-    adapter,
+    adapter: SessionAdapter,
     api_url: str,
     api_key: str,
     reason: str = "staleness",
@@ -227,7 +231,7 @@ def handle_finalize(
     adapter.enrich_metadata(session)
     project_context = _build_project_context(session)
 
-    send_summary(
+    success = send_summary(
         content="(session ended — auto-finalized)",
         session_id=session.session_id,
         source_ref=state.source_ref or session.source_ref,
@@ -237,6 +241,8 @@ def handle_finalize(
         api_url=api_url,
         api_key=api_key,
     )
+    if not success:
+        logger.warning(f"Auto-finalize summary failed for {session.session_id[:8]}")
 
     state.is_done = True
     state.last_finalized_at = time.time()
@@ -246,7 +252,7 @@ def handle_finalize(
 def process_session_growth(
     session: SessionInfo,
     state: ObservationState,
-    adapter,
+    adapter: SessionAdapter,
     api_url: str,
     api_key: str,
 ) -> bool:
@@ -298,8 +304,8 @@ def process_session_growth(
         state.source_ref = session.source_ref
         state.last_observed_bytes = session.file_size
         # Update watermark for SQLite-based adapters
-        if "max_message_id" in session.extra:
-            state.last_observed_message_id = session.extra["max_message_id"]
+        if "last_observed_message_id" in session.extra:
+            state.last_observed_message_id = session.extra["last_observed_message_id"]
         state.last_observed_at = time.time()
         state.observation_count += 1
         save_state(state)
@@ -332,6 +338,11 @@ def run_cycle(api_url: str, api_key: str) -> int:
         for session in sessions:
             try:
                 state = load_state(session.session_id)
+
+                # Backfill tool name for old state files
+                if not state.tool:
+                    state.tool = adapter.tool_name
+                    save_state(state)
 
                 # Skip completed sessions
                 if state.is_done:

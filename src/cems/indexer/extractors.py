@@ -55,6 +55,19 @@ def extract_markdown(file_path: Path) -> list[ExtractedKnowledge]:
         else:
             current_content.append(section)
 
+    # Flush the last section
+    if current_header and current_content:
+        section_text = "\n".join(current_content).strip()
+        if len(section_text) > 50:
+            knowledge.append(
+                ExtractedKnowledge(
+                    content=f"{current_header}\n\n{section_text}",
+                    file_path=str(file_path),
+                    category="documentation",
+                    tags=["docs", "section"],
+                )
+            )
+
     return knowledge
 
 

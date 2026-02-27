@@ -424,15 +424,6 @@ class TestRelevanceScoring:
         score = apply_score_adjustments(result, project="acme/api")
         assert score == 0.8
 
-    def test_apply_score_adjustments_skip_category_penalty(self):
-        """skip_category_penalty param is accepted (no-op, category scoring removed)."""
-        result = self._create_result(score=1.0, category="deployment", days_ago=0)
-        score = apply_score_adjustments(
-            result,
-            skip_category_penalty=True,
-        )
-        assert score == 1.0
-
     # --- Phase 2: New scoring tests ---
 
     def test_project_boost_above_one(self):

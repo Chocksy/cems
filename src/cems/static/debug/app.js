@@ -5,6 +5,8 @@
   const views = {
     sessions: document.getElementById("view-sessions"),
     detail: document.getElementById("view-detail"),
+    observer: document.getElementById("view-observer"),
+    "observer-detail": document.getElementById("view-observer-detail"),
     status: document.getElementById("view-status"),
   };
 
@@ -13,6 +15,7 @@
     btn.addEventListener("click", () => {
       const view = btn.dataset.view;
       if (view === "sessions") navigate("#/");
+      else if (view === "observer") navigate("#/observer");
       else if (view === "status") navigate("#/status");
     });
   });
@@ -48,6 +51,18 @@
       const sid = decodeURIComponent(sessionMatch[1]);
       const offset = sessionMatch[2] ? parseInt(sessionMatch[2]) : 0;
       showDetail(sid, offset, /* pushHash */ false);
+      return;
+    }
+
+    // #/observer/:sid
+    const observerDetailMatch = hash.match(/^#\/observer\/([^/]+)$/);
+    if (observerDetailMatch) {
+      showObserverDetail(decodeURIComponent(observerDetailMatch[1]));
+      return;
+    }
+
+    if (hash === "#/observer") {
+      showObserver();
       return;
     }
 
@@ -463,6 +478,189 @@
     return html || "<div>Session ended.</div>";
   }
 
+  // --- Observer ---
+  let _lastObserverHash = "";
+
+  async function showObserver() {
+    setActiveNav("observer");
+    showView("observer");
+    if (!views.observer.innerHTML || views.observer.innerHTML.includes("view-")) {
+      views.observer.innerHTML = '<div class="loading">Loading observer sessions...</div>';
+    }
+
+    const [sessions, stats] = await Promise.all([
+      api("/api/observer/sessions?limit=100"),
+      api("/api/observer/stats"),
+    ]);
+
+    if (sessions.error) {
+      views.observer.innerHTML = `<div class="empty">Error: ${esc(sessions.error)}</div>`;
+      return;
+    }
+
+    if (!sessions.length) {
+      views.observer.innerHTML = '<div class="empty">No observer sessions found.</div>';
+      return;
+    }
+
+    // Skip re-render if data hasn't changed
+    const hash = JSON.stringify(sessions.map(s => s.session_id + s.last_activity + s.observation_count));
+    if (hash === _lastObserverHash) return;
+    _lastObserverHash = hash;
+
+    // Stats bar
+    let html = `
+      <div class="stats-bar">
+        <div class="stat">Total: <span class="stat-value">${stats.total || 0}</span></div>
+        <div class="stat">Active: <span class="stat-value">${stats.active || 0}</span></div>
+        <div class="stat">Done: <span class="stat-value">${stats.done || 0}</span></div>
+        <div class="stat">Observations: <span class="stat-value">${stats.total_observations || 0}</span></div>
+        <div class="stat">Pending signals: <span class="stat-value">${stats.pending_signals || 0}</span></div>
+      </div>`;
+
+    // Tool breakdown
+    const byTool = stats.by_tool || {};
+    if (Object.keys(byTool).length) {
+      html += `<div class="stats-bar" style="margin-top:-.5rem">`;
+      for (const [tool, count] of Object.entries(byTool)) {
+        html += `<div class="stat">${toolBadge(tool)} <span class="stat-value">${count}</span></div>`;
+      }
+      html += `</div>`;
+    }
+
+    // Table
+    html += `
+      <table class="sessions-table">
+        <thead><tr>
+          <th>Tool</th>
+          <th>Session</th>
+          <th>Project</th>
+          <th>Started</th>
+          <th>Last Active</th>
+          <th>Obs</th>
+          <th>Epoch</th>
+          <th>Bytes</th>
+          <th>Status</th>
+        </tr></thead>
+        <tbody>`;
+
+    for (const s of sessions) {
+      const status = s.is_done
+        ? '<span class="badge badge-gray">done</span>'
+        : '<span class="badge badge-green">active</span>';
+      const project = s.source_ref || s.project_id || "-";
+
+      html += `<tr data-osid="${esc(s.session_id)}">
+        <td>${toolBadge(s.tool)}</td>
+        <td><span class="sid">${esc(s.session_id.slice(0, 12))}</span></td>
+        <td><span class="project-name">${esc(project)}</span></td>
+        <td><span class="ts">${formatEpoch(s.session_started)}</span></td>
+        <td><span class="ts">${formatEpoch(s.last_activity)}</span></td>
+        <td>${s.observation_count || "-"}</td>
+        <td>${s.epoch || 0}</td>
+        <td>${formatBytes(s.last_observed_bytes)}</td>
+        <td>${status}</td>
+      </tr>`;
+    }
+
+    html += "</tbody></table>";
+    views.observer.innerHTML = html;
+
+    // Click handler for rows
+    views.observer.querySelectorAll("tr[data-osid]").forEach((row) => {
+      row.addEventListener("click", () => navigate(`#/observer/${encodeURIComponent(row.dataset.osid)}`));
+    });
+  }
+
+  async function showObserverDetail(sid) {
+    showView("observer-detail");
+    setActiveNav("observer");
+    views["observer-detail"].innerHTML = '<div class="loading">Loading observer session...</div>';
+
+    const data = await api(`/api/observer/sessions/${sid}`);
+
+    if (data.error) {
+      views["observer-detail"].innerHTML = `<div class="empty">${esc(data.error)}</div>`;
+      return;
+    }
+
+    const sessionTag = `session:${sid.slice(0, 12)}${data.epoch > 0 ? ":e" + data.epoch : ""}`;
+
+    let html = `
+      <a class="back-link" href="#/observer">&#8592; Back to observer</a>
+      <div class="session-header">
+        <div>
+          <div class="session-title">${toolBadge(data.tool)} ${esc(sid)}</div>
+          <div class="session-meta">
+            <span>Project: <strong>${esc(data.source_ref || data.project_id || "unknown")}</strong></span>
+            <span>Tag: <code>${esc(sessionTag)}</code></span>
+          </div>
+        </div>
+        <div class="session-meta">
+          ${data.is_done ? '<span class="badge badge-gray">Done</span>' : '<span class="badge badge-green">Active</span>'}
+          <span class="badge badge-blue">${data.observation_count || 0} observations</span>
+          <span class="badge badge-purple">epoch ${data.epoch || 0}</span>
+        </div>
+      </div>
+
+      <div class="status-section">
+        <h3>State</h3>
+        <div class="status-grid">
+          <span class="status-key">Session started</span>
+          <span class="status-val">${formatEpoch(data.session_started)}</span>
+          <span class="status-key">Last observed at</span>
+          <span class="status-val">${formatEpoch(data.last_observed_at)}</span>
+          <span class="status-key">Last finalized at</span>
+          <span class="status-val">${formatEpoch(data.last_finalized_at)}</span>
+          <span class="status-key">Last growth seen at</span>
+          <span class="status-val">${formatEpoch(data.last_growth_seen_at)}</span>
+          <span class="status-key">Bytes observed</span>
+          <span class="status-val">${formatBytes(data.last_observed_bytes)}</span>
+          <span class="status-key">Session tag</span>
+          <span class="status-val">${esc(sessionTag)}</span>
+        </div>
+      </div>`;
+
+    // Daemon log lines
+    const logLines = data.daemon_log || [];
+    if (logLines.length) {
+      html += `<div class="status-section">
+        <h3>Daemon Log (last ${logLines.length} matching lines)</h3>
+        <div class="log-tail">${esc(logLines.join("\n"))}</div>
+      </div>`;
+    } else {
+      html += `<div class="status-section">
+        <h3>Daemon Log</h3>
+        <div style="color:var(--fg3);font-size:.82rem">No log lines matching this session.</div>
+      </div>`;
+    }
+
+    views["observer-detail"].innerHTML = html;
+  }
+
+  // --- Observer Helpers ---
+  function formatEpoch(ts) {
+    if (!ts) return "-";
+    try {
+      const d = new Date(ts * 1000);
+      return d.toLocaleString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+    } catch {
+      return String(ts);
+    }
+  }
+
+  function formatBytes(n) {
+    if (!n) return "-";
+    if (n < 1024) return n + " B";
+    if (n < 1024 * 1024) return (n / 1024).toFixed(1) + " KB";
+    return (n / (1024 * 1024)).toFixed(1) + " MB";
+  }
+
+  function toolBadge(name) {
+    const t = (name || "unknown").toLowerCase();
+    return `<span class="tool-badge tool-${esc(t)}">${esc(t)}</span>`;
+  }
+
   // --- Status ---
   async function showStatus() {
     setActiveNav("status");
@@ -552,9 +750,10 @@
     }
   }
 
-  // --- Auto-refresh (sessions list only, every 10s) ---
+  // --- Auto-refresh (sessions + observer, every 10s) ---
   setInterval(() => {
     if (!views.sessions.hidden) showSessions();
+    if (!views.observer.hidden) showObserver();
   }, 10000);
 
   // --- Init: route based on current hash ---

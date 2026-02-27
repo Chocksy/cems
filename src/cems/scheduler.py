@@ -93,69 +93,33 @@ class CEMSScheduler:
 
         logger.info("Maintenance jobs scheduled")
 
-    def _run_consolidation(self) -> None:
-        """Run the nightly consolidation job for all users."""
-        logger.info("Starting nightly consolidation...")
+    def _run_for_all_users(self, job_type: str) -> None:
+        """Run a maintenance job for all active users."""
+        logger.info(f"Starting scheduled {job_type}...")
         user_ids = self._get_user_ids()
         if not user_ids:
-            logger.info("No active users found, skipping consolidation")
+            logger.info(f"No active users found, skipping {job_type}")
             return
 
         for user_id in user_ids:
             try:
                 memory = self._create_user_memory(user_id)
-                result = _run_async(ConsolidationJob(memory).run_async())
-                logger.info(f"Consolidation for user {user_id[:8]}: {result}")
+                result = self._run_job_for_memory(job_type, memory)
+                logger.info(f"{job_type} for user {user_id[:8]}: {result}")
             except Exception as e:
-                logger.error(f"Consolidation failed for user {user_id[:8]}: {e}")
+                logger.error(f"{job_type} failed for user {user_id[:8]}: {e}")
+
+    def _run_consolidation(self) -> None:
+        self._run_for_all_users("consolidation")
 
     def _run_reflection(self) -> None:
-        """Run the nightly observation reflection job for all users."""
-        logger.info("Starting nightly observation reflection...")
-        user_ids = self._get_user_ids()
-        if not user_ids:
-            logger.info("No active users found, skipping reflection")
-            return
-
-        for user_id in user_ids:
-            try:
-                memory = self._create_user_memory(user_id)
-                result = _run_async(ObservationReflector(memory).run_async())
-                logger.info(f"Reflection for user {user_id[:8]}: {result}")
-            except Exception as e:
-                logger.error(f"Reflection failed for user {user_id[:8]}: {e}")
+        self._run_for_all_users("reflect")
 
     def _run_summarization(self) -> None:
-        """Run the weekly summarization job for all users."""
-        logger.info("Starting weekly summarization...")
-        user_ids = self._get_user_ids()
-        if not user_ids:
-            logger.info("No active users found, skipping summarization")
-            return
-
-        for user_id in user_ids:
-            try:
-                memory = self._create_user_memory(user_id)
-                result = _run_async(SummarizationJob(memory).run_async())
-                logger.info(f"Summarization for user {user_id[:8]}: {result}")
-            except Exception as e:
-                logger.error(f"Summarization failed for user {user_id[:8]}: {e}")
+        self._run_for_all_users("summarization")
 
     def _run_reindex(self) -> None:
-        """Run the monthly re-indexing job for all users."""
-        logger.info("Starting monthly re-indexing...")
-        user_ids = self._get_user_ids()
-        if not user_ids:
-            logger.info("No active users found, skipping re-indexing")
-            return
-
-        for user_id in user_ids:
-            try:
-                memory = self._create_user_memory(user_id)
-                result = _run_async(ReindexJob(memory).run_async())
-                logger.info(f"Re-indexing for user {user_id[:8]}: {result}")
-            except Exception as e:
-                logger.error(f"Re-indexing failed for user {user_id[:8]}: {e}")
+        self._run_for_all_users("reindex")
 
     def start(self) -> None:
         """Start the scheduler."""
@@ -207,16 +171,13 @@ class CEMSScheduler:
 
     def _run_job_for_memory(self, job_type: str, memory: "CEMSMemory", **kwargs) -> dict:
         """Run a specific job type with a given memory instance."""
-        if job_type == "consolidation":
-            return _run_async(ConsolidationJob(memory).run_async(**kwargs))
-        elif job_type == "summarization":
-            return _run_async(SummarizationJob(memory).run_async())
-        elif job_type == "reindex":
-            return _run_async(ReindexJob(memory).run_async())
-        elif job_type == "reflect":
-            return _run_async(ObservationReflector(memory).run_async())
-        else:
-            raise ValueError(f"Unknown job type: {job_type}")
+        jobs = {
+            "consolidation": lambda: ConsolidationJob(memory).run_async(**kwargs),
+            "summarization": lambda: SummarizationJob(memory).run_async(),
+            "reindex": lambda: ReindexJob(memory).run_async(),
+            "reflect": lambda: ObservationReflector(memory).run_async(),
+        }
+        return _run_async(jobs[job_type]())
 
     def get_jobs(self) -> list[dict]:
         """Get list of scheduled jobs."""

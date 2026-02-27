@@ -75,10 +75,10 @@ def discover_active_sessions(max_age_hours: int = 2) -> list[SessionInfo]:
     return sessions
 
 
-def enrich_session_metadata(session: SessionInfo) -> SessionInfo:
-    """Read the first JSONL entry to extract cwd, gitBranch, project_id.
+def populate_session_metadata(session: SessionInfo) -> SessionInfo:
+    """Read the first JSONL entry to populate cwd, gitBranch, project_id.
 
-    Mutates and returns the session object with enriched metadata.
+    Mutates the session object in place and returns it.
 
     Args:
         session: SessionInfo with path set.

@@ -24,7 +24,11 @@ import httpx
 
 
 async def fetch_all_memories(api_url: str, api_key: str) -> list[dict]:
-    """Fetch all memories from production API using broad search."""
+    """Fetch memories from production API using heuristic search queries.
+
+    Uses multiple broad search queries to approximate a full export since
+    there is no list-all API endpoint. Not guaranteed to capture every memory.
+    """
     memories = []
     seen_ids = set()
     
@@ -124,7 +128,8 @@ async def import_to_local(memories: list[dict], db_url: str):
             
             # Get user_id - need to map to local user
             # For now, use a fixed local user ID
-            local_user_id = "e96b0454-0d1d-4f15-8a97-fb52d97f1d6c"  # test-user created earlier
+            # TODO: Map to actual local user ID instead of hardcoded test user
+            local_user_id = "e96b0454-0d1d-4f15-8a97-fb52d97f1d6c"
             
             category = metadata.get("category") or mem.get("category") or "general"
             tags = metadata.get("tags") or mem.get("tags") or []

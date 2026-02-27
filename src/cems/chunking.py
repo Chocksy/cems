@@ -73,10 +73,11 @@ class Chunker:
         self.chunk_chars = chunk_chars
         self.overlap_chars = overlap_chars
         self.encoding_name = encoding_name
-        self._encoding = None
+        # None = not yet loaded, False = load failed, otherwise tiktoken Encoding
+        self._encoding: "Any" = None
 
-    def _get_encoding(self):
-        """Lazy-load tiktoken encoding."""
+    def _get_encoding(self) -> "Any":
+        """Lazy-load tiktoken encoding. Returns Encoding or None on failure."""
         if self._encoding is None:
             try:
                 import tiktoken

@@ -61,10 +61,6 @@ async def export_memories():
         ORDER BY created_at DESC
     """)
     
-    # Also try to get content from Qdrant via a different approach
-    # For now, we'll need to fetch content separately
-    # Let's check if there's a content column or if we need Qdrant
-    
     memories = []
     for row in rows:
         memories.append({
@@ -108,70 +104,69 @@ async def import_memories():
     
     conn = await asyncpg.connect(db_url)
     embedder = EmbeddingClient()
-    
-    # Register pgvector
-    from pgvector.asyncpg import register_vector
-    await register_vector(conn)
-    
-    imported = 0
-    skipped = 0
-    
-    for mem in data:
-        # We need content to generate embedding
-        # If no content, we'll use the memory_id as a placeholder
-        content = mem.get("content", f"Memory {mem['memory_id']}")
-        
-        if not content or content.startswith("Memory "):
-            skipped += 1
-            continue
-        
-        try:
-            # Generate embedding
-            embedding = embedder.embed(content)
-            
-            # Insert into memories table
-            await conn.execute("""
-                INSERT INTO memories (
-                    id, content, embedding, user_id, scope, category,
-                    tags, source, source_ref, priority, pinned, pin_reason,
-                    archived, access_count, created_at, updated_at, last_accessed, expires_at
-                ) VALUES (
-                    $1::uuid, $2, $3, $4::uuid, $5, $6,
-                    $7, $8, $9, $10, $11, $12,
-                    $13, $14, $15, $16, $17, $18
+
+    try:
+        # Register pgvector
+        from pgvector.asyncpg import register_vector
+        await register_vector(conn)
+
+        imported = 0
+        skipped = 0
+
+        for mem in data:
+            content = mem.get("content", "")
+            if not content:
+                skipped += 1
+                continue
+
+            try:
+                # Generate embedding
+                embedding = embedder.embed(content)
+
+                # Insert into memories table (legacy — orphaned, kept for migration scripts)
+                await conn.execute("""
+                    INSERT INTO memories (
+                        id, content, embedding, user_id, scope, category,
+                        tags, source, source_ref, priority, pinned, pin_reason,
+                        archived, access_count, created_at, updated_at, last_accessed, expires_at
+                    ) VALUES (
+                        $1::uuid, $2, $3, $4::uuid, $5, $6,
+                        $7, $8, $9, $10, $11, $12,
+                        $13, $14, $15, $16, $17, $18
+                    )
+                    ON CONFLICT (id) DO NOTHING
+                """,
+                    mem["memory_id"],
+                    content,
+                    embedding,
+                    mem["user_id"],
+                    mem["scope"],
+                    mem["category"],
+                    mem["tags"],
+                    mem["source"],
+                    mem["source_ref"],
+                    mem["priority"] or 1.0,
+                    mem["pinned"] or False,
+                    mem["pin_reason"],
+                    mem["archived"] or False,
+                    mem["access_count"] or 0,
+                    datetime.fromisoformat(mem["created_at"]) if mem["created_at"] else datetime.utcnow(),
+                    datetime.fromisoformat(mem["updated_at"]) if mem["updated_at"] else datetime.utcnow(),
+                    datetime.fromisoformat(mem["last_accessed"]) if mem["last_accessed"] else datetime.utcnow(),
+                    datetime.fromisoformat(mem["expires_at"]) if mem.get("expires_at") else None,
                 )
-                ON CONFLICT (id) DO NOTHING
-            """,
-                mem["memory_id"],
-                content,
-                embedding,
-                mem["user_id"],
-                mem["scope"],
-                mem["category"],
-                mem["tags"],
-                mem["source"],
-                mem["source_ref"],
-                mem["priority"] or 1.0,
-                mem["pinned"] or False,
-                mem["pin_reason"],
-                mem["archived"] or False,
-                mem["access_count"] or 0,
-                datetime.fromisoformat(mem["created_at"]) if mem["created_at"] else datetime.utcnow(),
-                datetime.fromisoformat(mem["updated_at"]) if mem["updated_at"] else datetime.utcnow(),
-                datetime.fromisoformat(mem["last_accessed"]) if mem["last_accessed"] else datetime.utcnow(),
-                datetime.fromisoformat(mem["expires_at"]) if mem.get("expires_at") else None,
-            )
-            imported += 1
-            
-            if imported % 100 == 0:
-                print(f"  Imported {imported}...", file=sys.stderr)
-                
-        except Exception as e:
-            print(f"  Error importing {mem['memory_id']}: {e}", file=sys.stderr)
-            skipped += 1
-    
-    await conn.close()
-    print(f"Done: {imported} imported, {skipped} skipped", file=sys.stderr)
+                imported += 1
+
+                if imported % 100 == 0:
+                    print(f"  Imported {imported}...", file=sys.stderr)
+
+            except Exception as e:
+                print(f"  Error importing {mem['memory_id']}: {e}", file=sys.stderr)
+                skipped += 1
+
+        print(f"Done: {imported} imported, {skipped} skipped", file=sys.stderr)
+    finally:
+        await conn.close()
 
 
 if __name__ == "__main__":

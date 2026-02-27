@@ -154,7 +154,10 @@ def main():
     except Exception:
         pass  # Migration is best-effort
 
-    # Load credentials: env vars first, then ~/.cems/credentials fallback
+    # Load credentials: ~/.cems/credentials first, then env vars fallback
+    # NOTE: This dotenv parser duplicates hooks/utils/credentials.py intentionally.
+    # The observer runs as a standalone daemon (python -m cems.observer) and cannot
+    # import from the hooks/ directory which lives outside the package.
     _creds_file = Path.home() / ".cems" / "credentials"
     _file_creds: dict[str, str] = {}
     try:

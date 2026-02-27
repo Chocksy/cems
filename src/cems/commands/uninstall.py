@@ -223,16 +223,20 @@ def _remove_codex() -> int:
     return removed
 
 
-def _remove_goose_config() -> bool:
-    """Remove CEMS extension block from ~/.config/goose/config.yaml. Returns True if modified."""
+def _remove_goose_config() -> int:
+    """Remove CEMS extension block from ~/.config/goose/config.yaml.
+
+    Returns:
+        Count of removed config blocks (0 or 1) for consistency with other _remove_* functions.
+    """
     goose_config = Path.home() / ".config" / "goose" / "config.yaml"
     if not goose_config.exists():
-        return False
+        return 0
 
     try:
         content = goose_config.read_text()
         if "cems-mcp" not in content and "CEMS Memory" not in content:
-            return False
+            return 0
 
         # Remove the CEMS extension block (from "  cems:" to next extension or end of section)
         lines = content.split("\n")
@@ -257,9 +261,9 @@ def _remove_goose_config() -> bool:
         new_lines = [l for l in new_lines if "CEMS Memory extension" not in l]
 
         goose_config.write_text("\n".join(new_lines))
-        return True
+        return 1
     except OSError:
-        return False
+        return 0
 
 
 def _remove_credentials() -> bool:
