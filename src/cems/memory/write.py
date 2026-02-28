@@ -43,7 +43,6 @@ class WriteMixin:
 
             self._document_store = DocumentStore(
                 database_url=self.config.database_url,
-                embedding_dim=self.config.embedding_dimension,
             )
             await self._document_store.connect()
         return self._document_store
