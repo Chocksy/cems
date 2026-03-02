@@ -94,6 +94,7 @@ class RetrievalMixin:
         mode: Literal["auto", "vector", "hybrid"] = "auto",
         enable_hyde: bool = True,
         enable_rerank: bool = True,
+        enable_decomposition: bool = True,
     ) -> dict[str, Any]:
         """The enhanced inference retrieval pipeline.
 
@@ -125,9 +126,11 @@ class RetrievalMixin:
             Dict with results, tokens_used, metadata
         """
         from cems.retrieval import (
+            _has_multi_topic_signals,
             apply_score_adjustments,
             assemble_context,
             assemble_context_diverse,
+            decompose_query,
             deduplicate_results,
             extract_query_intent,
             format_memory_context,
@@ -166,6 +169,19 @@ class RetrievalMixin:
         if is_aggregation:
             logger.info(f"[RETRIEVAL] Aggregation query detected - will use larger candidate pool and diversity selection")
 
+        # Stage 1.5: Multi-topic decomposition
+        # If the prompt covers multiple topics ("fix Docker, also remind me about Coolify"),
+        # split into focused sub-queries for better retrieval per topic.
+        is_decomposed = False
+        sub_queries: list[str] = []
+        if (enable_decomposition and self.config.enable_query_decomposition
+                and client and not (is_temporal or is_preference or is_aggregation)):
+            if _has_multi_topic_signals(query):
+                sub_queries = decompose_query(query, client, max_queries=self.config.max_decomposed_queries)
+                if len(sub_queries) > 1:
+                    is_decomposed = True
+                    logger.info(f"[RETRIEVAL] Decomposed into {len(sub_queries)} sub-queries")
+
         # Stage 2.0: Profile Probe FIRST for preference queries (RAP approach)
         # We need profile_context before synthesis to provide dynamic examples
         #
@@ -178,7 +194,7 @@ class RetrievalMixin:
         # (removes good prefs) or too lenient (keeps bad prefs). The simple
         # fixed probe works best for now.
         profile_context: list[str] = []
-        if is_preference:
+        if is_preference and not is_decomposed:
             from cems.retrieval import extract_profile_context
             profile_probe_query = "I use I prefer my favorite I recently I took a class I really like"
             profile_results = self._search_raw(profile_probe_query, scope, limit=5)
@@ -191,32 +207,38 @@ class RetrievalMixin:
         queries_to_search = [query]
         skip_expansion = False
 
-        # ALWAYS run synthesis for temporal/preference/aggregation queries (they need expansion)
-        enable_preference = getattr(self.config, 'enable_preference_synthesis', True)
-        force_synthesis = is_temporal or (is_preference and enable_preference) or is_aggregation
-        should_synthesize = client and (enable_query_synthesis or force_synthesis) and (
-            self.config.enable_query_synthesis or force_synthesis
-        )
-        if should_synthesize:
-            lexical_probe = self._search_lexical_raw(query, scope, limit=2)
-            if lexical_probe:
-                top_score = lexical_probe[0].score
-                second_score = lexical_probe[1].score if len(lexical_probe) > 1 else 0.0
-                threshold = self.config.strong_signal_threshold
-                gap_threshold = self.config.strong_signal_gap
-                if is_strong_lexical_signal(top_score, second_score, threshold, gap_threshold):
-                    gap = top_score - second_score
-                    logger.info(
-                        f"[RETRIEVAL] Strong signal detected (score={top_score:.3f}, "
-                        f"gap={gap:.3f}), skipping query expansion"
-                    )
-                    skip_expansion = True
+        if is_decomposed:
+            # Multi-topic: use original + sub-queries (skip synthesis/expansion)
+            queries_to_search = [query] + sub_queries
+            logger.info(f"[RETRIEVAL] Using decomposed queries: {len(queries_to_search)} total")
+        else:
+            # Single-topic: normal synthesis path
+            # ALWAYS run synthesis for temporal/preference/aggregation queries (they need expansion)
+            enable_preference = getattr(self.config, 'enable_preference_synthesis', True)
+            force_synthesis = is_temporal or (is_preference and enable_preference) or is_aggregation
+            should_synthesize = client and (enable_query_synthesis or force_synthesis) and (
+                self.config.enable_query_synthesis or force_synthesis
+            )
+            if should_synthesize:
+                lexical_probe = self._search_lexical_raw(query, scope, limit=2)
+                if lexical_probe:
+                    top_score = lexical_probe[0].score
+                    second_score = lexical_probe[1].score if len(lexical_probe) > 1 else 0.0
+                    threshold = self.config.strong_signal_threshold
+                    gap_threshold = self.config.strong_signal_gap
+                    if is_strong_lexical_signal(top_score, second_score, threshold, gap_threshold):
+                        gap = top_score - second_score
+                        logger.info(
+                            f"[RETRIEVAL] Strong signal detected (score={top_score:.3f}, "
+                            f"gap={gap:.3f}), skipping query expansion"
+                        )
+                        skip_expansion = True
 
-            if not skip_expansion:
-                # RAP: Pass profile_context as dynamic examples to synthesis
-                expanded = synthesize_query(query, client, is_preference=is_preference, profile_context=profile_context)
-                queries_to_search = [query] + expanded[:3]
-                logger.info(f"[RETRIEVAL] Query synthesis: {len(queries_to_search)} queries")
+                if not skip_expansion:
+                    # RAP: Pass profile_context as dynamic examples to synthesis
+                    expanded = synthesize_query(query, client, is_preference=is_preference, profile_context=profile_context)
+                    queries_to_search = [query] + expanded[:3]
+                    logger.info(f"[RETRIEVAL] Query synthesis: {len(queries_to_search)} queries")
 
         # Stage 3: HyDE (if enabled and in hybrid mode)
         # For preference queries, ALWAYS enable HyDE to bridge semantic gap
@@ -244,9 +266,17 @@ class RetrievalMixin:
             candidates_limit = max(50, candidates_limit * 2)  # At least 50, or 2x default
             logger.info(f"[RETRIEVAL] Aggregation query: using larger candidate pool ({candidates_limit})")
 
+        # Determine sub-query boundary for weight assignment
+        _decomp_end = 1 + len(sub_queries) if is_decomposed else 1
+
         for i, search_query in enumerate(queries_to_search):
             is_original = (i == 0)
-            weight = self.config.rrf_original_weight if is_original else self.config.rrf_expansion_weight
+            if is_original:
+                weight = self.config.rrf_original_weight
+            elif is_decomposed and i < _decomp_end:
+                weight = self.config.rrf_decomposition_weight
+            else:
+                weight = self.config.rrf_expansion_weight
 
             vector_results = self._search_raw(
                 search_query, scope, limit=candidates_limit
@@ -378,13 +408,16 @@ class RetrievalMixin:
         mode: Literal["auto", "vector", "hybrid"] = "auto",
         enable_hyde: bool = True,
         enable_rerank: bool = True,
+        enable_decomposition: bool = True,
     ) -> dict[str, Any]:
         """Async version of retrieve_for_inference(). Use from HTTP server."""
         pipeline_start = time.perf_counter()
         from cems.retrieval import (
+            _has_multi_topic_signals,
             apply_score_adjustments,
             assemble_context,
             assemble_context_diverse,
+            decompose_query,
             deduplicate_results,
             extract_query_intent,
             format_memory_context,
@@ -425,6 +458,17 @@ class RetrievalMixin:
         if is_aggregation:
             logger.info(f"[RETRIEVAL] Aggregation query detected - will use larger candidate pool and diversity selection")
 
+        # Stage 1.5: Multi-topic decomposition
+        is_decomposed = False
+        sub_queries: list[str] = []
+        if (enable_decomposition and self.config.enable_query_decomposition
+                and client and not (is_temporal or is_preference or is_aggregation)):
+            if _has_multi_topic_signals(query):
+                sub_queries = decompose_query(query, client, max_queries=self.config.max_decomposed_queries)
+                if len(sub_queries) > 1:
+                    is_decomposed = True
+                    logger.info(f"[RETRIEVAL] Decomposed into {len(sub_queries)} sub-queries")
+
         # Stage 2.0: Profile Probe FIRST for preference queries (RAP approach)
         # We need profile_context before synthesis to provide dynamic examples
         #
@@ -437,7 +481,7 @@ class RetrievalMixin:
         # (removes good prefs) or too lenient (keeps bad prefs). The simple
         # fixed probe works best for now.
         profile_context: list[str] = []
-        if is_preference:
+        if is_preference and not is_decomposed:
             from cems.retrieval import extract_profile_context
             profile_probe_query = "I use I prefer my favorite I recently I took a class I really like"
             profile_results = await self._search_raw_async(profile_probe_query, scope, limit=5)
@@ -450,36 +494,40 @@ class RetrievalMixin:
         queries_to_search = [query]
         skip_expansion = False
 
-        # ALWAYS run synthesis for temporal/preference/aggregation queries (they need expansion)
-        enable_preference = getattr(self.config, 'enable_preference_synthesis', True)
-        force_synthesis = is_temporal or (is_preference and enable_preference) or is_aggregation
-        should_synthesize = client and (enable_query_synthesis or force_synthesis) and (
-            self.config.enable_query_synthesis or force_synthesis
-        )
-        if force_synthesis:
-            query_type = 'temporal' if is_temporal else ('aggregation' if is_aggregation else 'preference')
-            logger.info(f"[RETRIEVAL] Forcing synthesis for {query_type} query")
-        if should_synthesize:
-            # Probe BM25 to check signal strength before expanding
-            lexical_probe = await self._search_lexical_raw_async(query, scope, limit=2)
-            if lexical_probe:
-                top_score = lexical_probe[0].score
-                second_score = lexical_probe[1].score if len(lexical_probe) > 1 else 0.0
-                threshold = self.config.strong_signal_threshold
-                gap_threshold = self.config.strong_signal_gap
-                if is_strong_lexical_signal(top_score, second_score, threshold, gap_threshold):
-                    gap = top_score - second_score
-                    logger.info(
-                        f"[RETRIEVAL] Strong signal detected (score={top_score:.3f}, "
-                        f"gap={gap:.3f}), skipping query expansion"
-                    )
-                    skip_expansion = True
+        if is_decomposed:
+            queries_to_search = [query] + sub_queries
+            logger.info(f"[RETRIEVAL] Using decomposed queries: {len(queries_to_search)} total")
+        else:
+            # ALWAYS run synthesis for temporal/preference/aggregation queries (they need expansion)
+            enable_preference = getattr(self.config, 'enable_preference_synthesis', True)
+            force_synthesis = is_temporal or (is_preference and enable_preference) or is_aggregation
+            should_synthesize = client and (enable_query_synthesis or force_synthesis) and (
+                self.config.enable_query_synthesis or force_synthesis
+            )
+            if force_synthesis:
+                query_type = 'temporal' if is_temporal else ('aggregation' if is_aggregation else 'preference')
+                logger.info(f"[RETRIEVAL] Forcing synthesis for {query_type} query")
+            if should_synthesize:
+                # Probe BM25 to check signal strength before expanding
+                lexical_probe = await self._search_lexical_raw_async(query, scope, limit=2)
+                if lexical_probe:
+                    top_score = lexical_probe[0].score
+                    second_score = lexical_probe[1].score if len(lexical_probe) > 1 else 0.0
+                    threshold = self.config.strong_signal_threshold
+                    gap_threshold = self.config.strong_signal_gap
+                    if is_strong_lexical_signal(top_score, second_score, threshold, gap_threshold):
+                        gap = top_score - second_score
+                        logger.info(
+                            f"[RETRIEVAL] Strong signal detected (score={top_score:.3f}, "
+                            f"gap={gap:.3f}), skipping query expansion"
+                        )
+                        skip_expansion = True
 
-            if not skip_expansion:
-                # RAP: Pass profile_context as dynamic examples to synthesis
-                expanded = synthesize_query(query, client, is_preference=is_preference, profile_context=profile_context)
-                queries_to_search = [query] + expanded[:3]
-                logger.info(f"[RETRIEVAL] Query synthesis: {len(queries_to_search)} queries")
+                if not skip_expansion:
+                    # RAP: Pass profile_context as dynamic examples to synthesis
+                    expanded = synthesize_query(query, client, is_preference=is_preference, profile_context=profile_context)
+                    queries_to_search = [query] + expanded[:3]
+                    logger.info(f"[RETRIEVAL] Query synthesis: {len(queries_to_search)} queries")
 
         # For preference queries, ALWAYS enable HyDE to bridge semantic gap
         should_hyde = enable_hyde and selected_mode == "hybrid" and client
@@ -515,10 +563,18 @@ class RetrievalMixin:
             candidates_limit = max(50, candidates_limit * 2)  # At least 50, or 2x default
             logger.info(f"[RETRIEVAL] Aggregation query: using larger candidate pool ({candidates_limit})")
 
+        # Determine sub-query boundary for weight assignment
+        _decomp_end = 1 + len(sub_queries) if is_decomposed else 1
+
         search_start = time.perf_counter()
         for i, (search_query, embedding) in enumerate(zip(queries_to_search, query_embeddings)):
             is_original = (i == 0)  # First query is the original
-            weight = self.config.rrf_original_weight if is_original else self.config.rrf_expansion_weight
+            if is_original:
+                weight = self.config.rrf_original_weight
+            elif is_decomposed and i < _decomp_end:
+                weight = self.config.rrf_decomposition_weight
+            else:
+                weight = self.config.rrf_expansion_weight
 
             # Vector search (scores already 0-1)
             vector_results = await self._search_raw_async(

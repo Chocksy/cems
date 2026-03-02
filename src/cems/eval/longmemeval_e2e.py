@@ -31,6 +31,7 @@ from cems.eval.longmemeval import (
     CEMSEvalClient,
     collect_all_sessions,
     format_session_content,
+    ingest_via_summarize,
 )
 
 # Configuration
@@ -54,14 +55,15 @@ OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
 # --- Type-specific judge prompts ---
 
-JUDGE_SYSTEM_PROMPT = (
+# Custom CEMS judge prompts (original, with explanations)
+CUSTOM_JUDGE_SYSTEM_PROMPT = (
     "You are an impartial judge evaluating whether a model's response "
     "correctly answers a question based on conversation history. "
     "You will be given the question, the correct answer, and the model's response. "
     "Evaluate carefully and respond with YES or NO followed by a brief explanation."
 )
 
-JUDGE_PROMPTS = {
+CUSTOM_JUDGE_PROMPTS = {
     "standard": (
         "Question: {question}\n"
         "Correct Answer: {answer}\n"
@@ -112,6 +114,69 @@ JUDGE_PROMPTS = {
     ),
 }
 
+# Official LongMemEval judge prompts (from xiaowu0162/LongMemEval evaluate_qa.py)
+# These use max_tokens=10 and strict "yes or no only" format for comparability.
+OFFICIAL_JUDGE_PROMPTS = {
+    "standard": (
+        "I will give you a question, a correct answer, and a response from a model. "
+        "Please answer yes if the response contains the correct answer. Otherwise, answer no. "
+        "If the response is equivalent to the correct answer or contains all the intermediate "
+        "steps to get the correct answer, you should also answer yes. If the response only "
+        "contains a subset of the information required by the answer, answer no. \n\n"
+        "Question: {question}\n\n"
+        "Correct Answer: {answer}\n\n"
+        "Model Response: {response}\n\n"
+        "Is the model response correct? Answer yes or no only."
+    ),
+    "temporal-reasoning": (
+        "I will give you a question, a correct answer, and a response from a model. "
+        "Please answer yes if the response contains the correct answer. Otherwise, answer no. "
+        "If the response is equivalent to the correct answer or contains all the intermediate "
+        "steps to get the correct answer, you should also answer yes. If the response only "
+        "contains a subset of the information required by the answer, answer no. "
+        "In addition, do not penalize off-by-one errors for the number of days. "
+        "If the question asks for the number of days/weeks/months, etc., and the model makes "
+        "off-by-one errors (e.g., predicting 19 days when the answer is 18), the model's "
+        "response is still correct. \n\n"
+        "Question: {question}\n\n"
+        "Correct Answer: {answer}\n\n"
+        "Model Response: {response}\n\n"
+        "Is the model response correct? Answer yes or no only."
+    ),
+    "knowledge-update": (
+        "I will give you a question, a correct answer, and a response from a model. "
+        "Please answer yes if the response contains the correct answer. Otherwise, answer no. "
+        "If the response contains some previous information along with an updated answer, "
+        "the response should be considered as correct as long as the updated answer is the "
+        "required answer.\n\n"
+        "Question: {question}\n\n"
+        "Correct Answer: {answer}\n\n"
+        "Model Response: {response}\n\n"
+        "Is the model response correct? Answer yes or no only."
+    ),
+    "single-session-preference": (
+        "I will give you a question, a rubric for desired personalized response, "
+        "and a response from a model. Please answer yes if the response satisfies "
+        "the desired response. Otherwise, answer no. The model does not need to "
+        "reflect all the points in the rubric. The response is correct as long as "
+        "it recalls and utilizes the user's personal information correctly.\n\n"
+        "Question: {question}\n\n"
+        "Rubric: {answer}\n\n"
+        "Model Response: {response}\n\n"
+        "Is the model response correct? Answer yes or no only."
+    ),
+    "abstention": (
+        "I will give you an unanswerable question, an explanation, and a response "
+        "from a model. Please answer yes if the model correctly identifies the "
+        "question as unanswerable. The model could say that the information is "
+        "incomplete, or some other information is given but the asked information is not.\n\n"
+        "Question: {question}\n\n"
+        "Explanation: {answer}\n\n"
+        "Model Response: {response}\n\n"
+        "Does the model correctly identify the question as unanswerable? Answer yes or no only."
+    ),
+}
+
 # Map question types to judge prompt keys
 QUESTION_TYPE_TO_JUDGE = {
     "single-session-user": "standard",
@@ -122,6 +187,10 @@ QUESTION_TYPE_TO_JUDGE = {
     "temporal-reasoning": "temporal-reasoning",
     "abstention": "abstention",
 }
+
+# For backwards compat, default aliases
+JUDGE_SYSTEM_PROMPT = CUSTOM_JUDGE_SYSTEM_PROMPT
+JUDGE_PROMPTS = CUSTOM_JUDGE_PROMPTS
 
 READER_SYSTEM_PROMPT = (
     "You are a helpful assistant with access to extensive conversation history. "
@@ -313,15 +382,37 @@ def judge_answer(
     generated_answer: str,
     question_type: str,
     model: str = DEFAULT_JUDGE_MODEL,
+    judge_style: str = "official",
+    is_abstention: bool = False,
 ) -> tuple[bool, str]:
     """Judge whether the generated answer is correct.
+
+    Args:
+        llm: LLM client for judge calls
+        question: The question asked
+        correct_answer: Ground truth answer
+        generated_answer: Model's generated answer
+        question_type: Type of question
+        model: Judge model to use
+        judge_style: "official" (LongMemEval standard) or "custom" (CEMS custom prompts)
+        is_abstention: Whether this is an abstention question
 
     Returns:
         Tuple of (verdict: bool, explanation: str)
     """
-    # Select the appropriate judge prompt template
-    judge_key = QUESTION_TYPE_TO_JUDGE.get(question_type, "standard")
-    prompt_template = JUDGE_PROMPTS[judge_key]
+    # Select judge prompt set
+    if judge_style == "official":
+        prompt_set = OFFICIAL_JUDGE_PROMPTS
+    else:
+        prompt_set = CUSTOM_JUDGE_PROMPTS
+
+    # For abstention questions, always use the abstention prompt
+    if is_abstention:
+        judge_key = "abstention"
+    else:
+        judge_key = QUESTION_TYPE_TO_JUDGE.get(question_type, "standard")
+
+    prompt_template = prompt_set[judge_key]
 
     prompt = prompt_template.format(
         question=question,
@@ -329,13 +420,23 @@ def judge_answer(
         response=generated_answer,
     )
 
-    response = llm.complete(
-        prompt=prompt,
-        system=JUDGE_SYSTEM_PROMPT,
-        model=model,
-        temperature=0,
-        max_tokens=256,
-    )
+    # Official prompts use max_tokens=10, no system prompt (consistent with LongMemEval paper)
+    if judge_style == "official":
+        response = llm.complete(
+            prompt=prompt,
+            system=None,
+            model=model,
+            temperature=0,
+            max_tokens=10,
+        )
+    else:
+        response = llm.complete(
+            prompt=prompt,
+            system=CUSTOM_JUDGE_SYSTEM_PROMPT,
+            model=model,
+            temperature=0,
+            max_tokens=256,
+        )
 
     # Parse verdict
     verdict, explanation = parse_judge_response(response)
@@ -470,13 +571,16 @@ def run_e2e_eval(
     questions: list[dict],
     reader_model: str = DEFAULT_READER_MODEL,
     judge_model: str = DEFAULT_JUDGE_MODEL,
+    judge_style: str = "official",
     verbose: bool = False,
     search_limit: int = 10,
+    ingestion_mode: str = "raw",
+    concurrency: int = 1,
 ) -> tuple[list[E2EResult], E2ESummary]:
     """Run the end-to-end evaluation.
 
     Three-phase approach:
-    1. Collect all unique sessions → bulk ingest
+    1. Collect all unique sessions → ingest (raw batch or observer-style summarize)
     2. For each question: search → generate answer → judge answer
     3. Compute per-type and macro accuracy
 
@@ -486,8 +590,11 @@ def run_e2e_eval(
         questions: List of question dicts
         reader_model: Model for answer generation
         judge_model: Model for judging
+        judge_style: "official" (LongMemEval standard) or "custom" (CEMS custom)
         verbose: Print detailed output
         search_limit: Number of search results to retrieve
+        ingestion_mode: "raw" (batch add) or "summarize" (observer pipeline)
+        concurrency: Parallel requests for summarize mode
 
     Returns:
         Tuple of (results list, summary)
@@ -495,27 +602,29 @@ def run_e2e_eval(
     results: list[E2EResult] = []
     summary = E2ESummary()
 
-    # Phase 1: Bulk ingest all sessions
+    # Phase 1: Collect and ingest all sessions
     print("\nPhase 1: Collecting all unique sessions...")
     all_sessions = collect_all_sessions(questions)
     print(f"  Found {len(all_sessions)} unique sessions across {len(questions)} questions")
 
     if all_sessions:
-        print("\nPhase 2: Bulk ingesting all sessions...")
-        ingest_start = time.time()
-
-        memories_to_add = list(all_sessions.values())
-        cems_client.add_memories_batch(memories_to_add)
-
-        ingest_elapsed = time.time() - ingest_start
-        per_session_ms = ingest_elapsed / len(memories_to_add) * 1000 if memories_to_add else 0
-        print(
-            f"  Ingested {len(memories_to_add)} sessions in {ingest_elapsed:.1f}s "
-            f"({per_session_ms:.0f}ms/session)"
-        )
+        if ingestion_mode == "summarize":
+            print(f"\nPhase 2: Ingesting via /api/session/summarize (observer pipeline)...")
+            ingest_via_summarize(cems_client, all_sessions, concurrency=concurrency)
+        else:
+            print("\nPhase 2: Bulk ingesting (raw mode)...")
+            ingest_start = time.time()
+            memories_to_add = list(all_sessions.values())
+            cems_client.add_memories_batch(memories_to_add)
+            ingest_elapsed = time.time() - ingest_start
+            per_session_ms = ingest_elapsed / len(memories_to_add) * 1000 if memories_to_add else 0
+            print(
+                f"  Ingested {len(memories_to_add)} sessions in {ingest_elapsed:.1f}s "
+                f"({per_session_ms:.0f}ms/session)"
+            )
 
     # Phase 3: Run end-to-end eval
-    print(f"\nPhase 3: Running end-to-end eval ({reader_model} + {judge_model})...")
+    print(f"\nPhase 3: Running end-to-end eval ({reader_model} + {judge_model}, {judge_style} judge)...")
 
     for i, q in enumerate(questions):
         qid = q["question_id"]
@@ -524,9 +633,10 @@ def run_e2e_eval(
         answer = q.get("answer", "")
         session_ids = q.get("haystack_session_ids", [])
         correct_ids = q.get("answer_session_ids", [])
+        is_abstention = "_abs" in qid
 
-        # Step A: Search CEMS
-        search_result = cems_client.search(question, limit=search_limit)
+        # Step A: Search CEMS (use higher max_tokens for full content in reader context)
+        search_result = cems_client.search(question, limit=search_limit, max_tokens=16000)
         search_ms = search_result.get("_elapsed_ms", 0)
         mode_used = search_result.get("mode", "unknown")
 
@@ -567,7 +677,10 @@ def run_e2e_eval(
         judge_start = time.time()
         try:
             verdict, explanation = judge_answer(
-                llm, question, answer, generated, qtype, model=judge_model
+                llm, question, answer, generated, qtype,
+                model=judge_model,
+                judge_style=judge_style,
+                is_abstention=is_abstention,
             )
         except Exception as e:
             verdict, explanation = False, f"[Error judging: {e}]"
@@ -615,9 +728,10 @@ def run_e2e_eval(
             summary.by_type[qtype]["recall_any"] += 1
 
         # Progress output
+        abs_marker = " [ABS]" if is_abstention else ""
         status = "+" if verdict else "-"
         print(
-            f"  [{i+1}/{len(questions)}] {qtype}: {status} "
+            f"  [{i+1}/{len(questions)}] {qtype}{abs_marker}: {status} "
             f"(search {search_ms}ms, answer {answer_ms}ms, judge {judge_ms}ms)"
         )
 
@@ -702,8 +816,28 @@ def main():
         help=f"Model for judging (default: {DEFAULT_JUDGE_MODEL})"
     )
     parser.add_argument(
+        "--judge-style", choices=["official", "custom"], default="official",
+        help="Judge prompt style: official (LongMemEval standard) or custom (CEMS, default: official)"
+    )
+    parser.add_argument(
         "--dataset", choices=["oracle", "s"], default="s",
         help="Dataset variant (default: s)"
+    )
+    parser.add_argument(
+        "--ingestion-mode", choices=["raw", "summarize"], default="raw",
+        help="Ingestion mode: raw (batch add) or summarize (observer pipeline, default: raw)"
+    )
+    parser.add_argument(
+        "--enable-synthesis", action="store_true",
+        help="Enable LLM query synthesis for better retrieval"
+    )
+    parser.add_argument(
+        "--enable-hyde", action="store_true",
+        help="Enable HyDE (Hypothetical Document Embeddings) for better vector matching"
+    )
+    parser.add_argument(
+        "--concurrency", type=int, default=1,
+        help="Parallel requests for summarize ingestion (default: 1)"
     )
     parser.add_argument(
         "--output", "-o", type=str,
@@ -747,11 +881,20 @@ def main():
     print(f"API URL:      {args.api_url}")
     print(f"Dataset:      {args.dataset} variant")
     print(f"Questions:    {args.questions}")
+    print(f"Ingestion:    {args.ingestion_mode}")
     print(f"Reader model: {args.reader_model}")
     print(f"Judge model:  {args.judge_model}")
+    print(f"Judge style:  {args.judge_style}")
+    print(f"Synthesis:    {'ON' if args.enable_synthesis else 'OFF'}")
+    print(f"HyDE:         {'ON' if args.enable_hyde else 'OFF'}")
 
     # Initialize clients
-    cems_client = CEMSEvalClient(args.api_url, args.api_key)
+    cems_client = CEMSEvalClient(
+        args.api_url,
+        args.api_key,
+        enable_synthesis=args.enable_synthesis,
+        enable_hyde=args.enable_hyde,
+    )
     llm = LLMClient()
 
     # Health check
@@ -779,7 +922,7 @@ def main():
         sys.exit(1)
 
     # Run eval
-    print(f"\nStarting end-to-end evaluation...")
+    print(f"\nStarting end-to-end evaluation ({args.ingestion_mode} ingestion)...")
     start_time = time.time()
 
     try:
@@ -789,8 +932,11 @@ def main():
             questions=questions,
             reader_model=args.reader_model,
             judge_model=args.judge_model,
+            judge_style=args.judge_style,
             verbose=args.verbose,
             search_limit=args.search_limit,
+            ingestion_mode=args.ingestion_mode,
+            concurrency=args.concurrency,
         )
     except KeyboardInterrupt:
         print("\n\nInterrupted by user")
@@ -832,7 +978,11 @@ def main():
                 "elapsed_seconds": elapsed,
                 "reader_model": args.reader_model,
                 "judge_model": args.judge_model,
+                "judge_style": args.judge_style,
                 "dataset": args.dataset,
+                "ingestion_mode": args.ingestion_mode,
+                "enable_synthesis": args.enable_synthesis,
+                "enable_hyde": args.enable_hyde,
             },
             "results": [
                 {

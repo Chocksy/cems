@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 from collections import defaultdict
 from datetime import UTC, datetime
@@ -253,9 +254,102 @@ Return one search term per line. No bullets, no numbering."""
         return []
 
 
+# =========================================================================
+# Multi-Topic Query Decomposition
+# =========================================================================
+
+# Regex patterns that signal a multi-topic prompt (topic switches)
+_MULTI_TOPIC_PATTERNS = re.compile(
+    r"""(?ix)                   # case-insensitive, verbose
+    \b(?:also|additionally)\b
+    | \bby\s+the\s+way\b
+    | \bseparately\b
+    | \bremind\s+me\s+(?:about|of)\b
+    | \band\s+(?:also|another\s+thing)\b
+    | \bon\s+(?:a\s+)?(?:different|another|separate)\s+(?:note|topic|subject)\b
+    | \boh\s+and\b
+    | \bbtw\b
+    | \bplus\b(?:\s+(?:can|could|do|what|how|where|when|remind))
+    | \bwhile\s+(?:you're|we're|I'm)\s+at\s+it\b
+    """
+)
+
+
+def _has_multi_topic_signals(query: str) -> bool:
+    """Heuristic gate: detect multi-topic prompts via regex patterns.
+
+    Returns True if the query contains topic-switch phrases (e.g. "also",
+    "by the way", "separately") or multiple question marks, suggesting
+    the user is asking about distinct topics in a single prompt.
+
+    Cost: <1ms (regex only, no LLM).
+    """
+    # Check for topic-switch phrases
+    if _MULTI_TOPIC_PATTERNS.search(query):
+        return True
+
+    # Multiple question marks suggest multiple questions
+    if query.count("?") >= 2:
+        return True
+
+    return False
+
+
+def decompose_query(query: str, client: "OpenRouterClient", max_queries: int = 3) -> list[str]:
+    """Decompose a multi-topic prompt into focused sub-queries via LLM.
+
+    Uses a fast model (Cerebras/Groq route) to split compound prompts like
+    "fix Docker ports, also what TypeScript pattern, remind me about Coolify"
+    into individual topic-focused queries.
+
+    Args:
+        query: The user's multi-topic prompt
+        client: OpenRouter client for LLM calls
+        max_queries: Maximum number of sub-queries to return
+
+    Returns:
+        List of focused sub-queries, or [query] on error/single-topic.
+    """
+    prompt = f"""Split this multi-topic prompt into separate, focused search queries.
+Each query should target ONE distinct topic for memory retrieval.
+Keep the user's original wording/terms as much as possible.
+
+Prompt: {query}
+
+Return JSON: {{"queries": ["query1", "query2", ...]}}
+Return at most {max_queries} queries. If the prompt is really about one topic, return just that one query."""
+
+    try:
+        start = time.perf_counter()
+        # max_tokens=512: Qwen3 uses <think> tags that consume ~200 tokens before JSON output
+        result = client.complete(prompt, temperature=0.0, max_tokens=512)
+        elapsed_ms = (time.perf_counter() - start) * 1000
+        logger.info(f"[TIMING] decompose_query LLM call: {elapsed_ms:.0f}ms")
+        logger.debug(f"[RETRIEVAL] decompose_query raw response: {result[:300]}")
+
+        parsed = parse_json_dict(result, fallback={})
+        queries = parsed.get("queries", [])
+
+        if not isinstance(queries, list) or not queries:
+            logger.info("[RETRIEVAL] Decomposition returned no queries, using original")
+            return [query]
+
+        # Filter empty strings and limit
+        queries = [q.strip() for q in queries if isinstance(q, str) and q.strip()][:max_queries]
+
+        if not queries:
+            return [query]
+
+        logger.info(f"[RETRIEVAL] Decomposed into {len(queries)} sub-queries: {queries}")
+        return queries
+
+    except Exception as e:
+        logger.warning(f"[RETRIEVAL] Query decomposition failed: {e}")
+        return [query]
+
+
 def _word_set(text: str) -> set[str]:
     """Extract word set from text for similarity computation."""
-    import re
     # Simple word extraction: lowercase alphanumeric sequences
     return set(re.findall(r'\b[a-z0-9]+\b', text.lower()))
 

@@ -327,6 +327,7 @@ async def api_memory_search(request: Request):
         mode = body.get("mode", "vector")
         enable_hyde = body.get("enable_hyde", False)
         enable_rerank = body.get("enable_rerank", True)
+        enable_decomposition = body.get("enable_decomposition", True)
 
         logger.info(f"[API] Search request: query='{query[:50]}...', mode={mode}, raw={raw_mode}")
 
@@ -355,6 +356,7 @@ async def api_memory_search(request: Request):
             mode=mode,
             enable_hyde=enable_hyde,
             enable_rerank=enable_rerank,
+            enable_decomposition=enable_decomposition,
         )
 
         # Log intent analysis if present

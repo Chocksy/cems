@@ -28,6 +28,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+import math
+
 import httpx
 
 
@@ -35,7 +37,14 @@ import httpx
 DEFAULT_API_URL = os.getenv("CEMS_API_URL", "http://localhost:8765")
 DEFAULT_API_KEY = os.getenv("CEMS_API_KEY", "")
 DATA_DIR = Path(__file__).parent / "data"
-LONGMEMEVAL_URL = "https://huggingface.co/datasets/xiaowu0162/longmemeval-cleaned/resolve/main/longmemeval_oracle.json"
+
+# Dataset URLs
+LONGMEMEVAL_URLS = {
+    "oracle": "https://huggingface.co/datasets/xiaowu0162/longmemeval-cleaned/resolve/main/longmemeval_oracle.json",
+    "s": "https://huggingface.co/datasets/xiaowu0162/longmemeval-cleaned/resolve/main/longmemeval_s_cleaned.json",
+}
+# Legacy alias for backwards compatibility
+LONGMEMEVAL_URL = LONGMEMEVAL_URLS["oracle"]
 
 
 @dataclass
@@ -47,8 +56,10 @@ class EvalResult:
     ground_truth: str
     retrieved_session_ids: list[str]
     correct_session_ids: list[str]
-    recall_any: bool  # Did we find ANY correct session?
-    recall_all: bool  # Did we find ALL correct sessions?
+    recall_at_5: bool   # Did we find ANY correct session in top 5?
+    recall_at_10: bool  # Did we find ANY correct session in top 10?
+    recall_all: bool    # Did we find ALL correct sessions in top 5?
+    ndcg_at_5: float    # Position-sensitive score (0-1)
     search_time_ms: int
     mode_used: str
     num_results: int
@@ -58,18 +69,28 @@ class EvalResult:
 class EvalSummary:
     """Summary statistics for the eval run."""
     total_questions: int = 0
-    recall_any_count: int = 0
+    recall_at_5_count: int = 0
+    recall_at_10_count: int = 0
     recall_all_count: int = 0
+    total_ndcg_at_5: float = 0.0
     total_search_time_ms: int = 0
     by_type: dict[str, dict] = field(default_factory=dict)
 
     @property
-    def recall_any_rate(self) -> float:
-        return self.recall_any_count / self.total_questions if self.total_questions else 0
+    def recall_at_5_rate(self) -> float:
+        return self.recall_at_5_count / self.total_questions if self.total_questions else 0
+
+    @property
+    def recall_at_10_rate(self) -> float:
+        return self.recall_at_10_count / self.total_questions if self.total_questions else 0
 
     @property
     def recall_all_rate(self) -> float:
         return self.recall_all_count / self.total_questions if self.total_questions else 0
+
+    @property
+    def avg_ndcg_at_5(self) -> float:
+        return self.total_ndcg_at_5 / self.total_questions if self.total_questions else 0
 
     @property
     def avg_search_time_ms(self) -> float:
@@ -79,10 +100,19 @@ class EvalSummary:
 class CEMSEvalClient:
     """Client for CEMS evaluation operations."""
 
-    def __init__(self, api_url: str, api_key: str, timeout: float = 60.0):
+    def __init__(
+        self,
+        api_url: str,
+        api_key: str,
+        timeout: float = 60.0,
+        enable_synthesis: bool = False,
+        enable_hyde: bool = False,
+    ):
         self.api_url = api_url.rstrip("/")
         self.api_key = api_key
         self.timeout = timeout
+        self.enable_synthesis = enable_synthesis
+        self.enable_hyde = enable_hyde
         self.client = httpx.Client(timeout=timeout)
         self._session_to_memory: dict[str, str] = {}  # session_id -> memory_id
 
@@ -231,7 +261,7 @@ class CEMSEvalClient:
         except Exception:
             return None
 
-    def search(self, query: str, limit: int = 10) -> dict[str, Any]:
+    def search(self, query: str, limit: int = 10, max_tokens: int = 4000) -> dict[str, Any]:
         """Search memories and return results with timing."""
         start = time.time()
         try:
@@ -243,8 +273,11 @@ class CEMSEvalClient:
                     "limit": limit,
                     "scope": "personal",
                     "mode": "auto",  # Let CEMS decide vector vs hybrid
+                    "max_tokens": max_tokens,
                     # Pass project so same-project boost (1.3x) applies to all eval memories
                     "project": "longmemeval",
+                    "enable_query_synthesis": self.enable_synthesis,
+                    "enable_hyde": self.enable_hyde,
                 },
             )
             elapsed_ms = int((time.time() - start) * 1000)
@@ -391,6 +424,86 @@ class CEMSEvalClient:
 
         return deleted
 
+    def summarize_session(
+        self,
+        content: str,
+        session_id: str,
+        source_ref: str,
+        mode: str = "finalize",
+        model: str | None = None,
+    ) -> dict:
+        """Ingest a session through /api/session/summarize (observer pipeline).
+
+        This runs the full session summary extraction pipeline:
+        extract_session_summary() → chunk → embed → store.
+        """
+        body = {
+            "content": content,
+            "session_id": session_id,
+            "source_ref": source_ref,
+            "mode": mode,
+            # CRITICAL: Pass full session_id as tag to avoid truncation.
+            # Default handler truncates to session_id[:12], but LongMemEval
+            # IDs like "ultrachat_283755" share a 10-char prefix, causing
+            # massive collisions (32% data loss on full dataset).
+            "session_tag": f"lme:{session_id}",
+        }
+        if model:
+            body["model"] = model
+        resp = self.client.post(
+            f"{self.api_url}/api/session/summarize",
+            headers=self._headers(),
+            json=body,
+            timeout=120,
+        )
+        return resp.json()
+
+
+def download_dataset(variant: str = "s", force: bool = False) -> Path:
+    """Download LongMemEval dataset variant.
+
+    Args:
+        variant: Dataset variant ("oracle" or "s")
+        force: Force re-download even if file exists
+
+    Returns:
+        Path to downloaded file
+    """
+    if variant not in LONGMEMEVAL_URLS:
+        raise ValueError(f"Unknown variant: {variant}. Use: {list(LONGMEMEVAL_URLS.keys())}")
+
+    url = LONGMEMEVAL_URLS[variant]
+    filename = url.split("/")[-1]
+    data_file = DATA_DIR / filename
+
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+    if data_file.exists() and not force:
+        size_mb = data_file.stat().st_size / 1024 / 1024
+        print(f"Using cached data: {data_file} ({size_mb:.1f} MB)")
+        return data_file
+
+    print(f"Downloading LongMemEval {variant} variant...")
+    print(f"  URL: {url}")
+
+    with httpx.Client(timeout=300, follow_redirects=True) as client:
+        with client.stream("GET", url) as resp:
+            resp.raise_for_status()
+            total = int(resp.headers.get("content-length", 0))
+            downloaded = 0
+
+            with open(data_file, "wb") as f:
+                for chunk in resp.iter_bytes(chunk_size=1024 * 1024):
+                    f.write(chunk)
+                    downloaded += len(chunk)
+                    if total:
+                        pct = downloaded / total * 100
+                        print(f"\r  Progress: {pct:.1f}% ({downloaded / 1024 / 1024:.1f} MB)", end="")
+
+    size_mb = data_file.stat().st_size / 1024 / 1024
+    print(f"\n  Saved to: {data_file} ({size_mb:.1f} MB)")
+    return data_file
+
 
 def download_longmemeval(force: bool = False) -> Path:
     """Download LongMemEval dataset if not present."""
@@ -418,18 +531,36 @@ def download_longmemeval(force: bool = False) -> Path:
     return data_file
 
 
-def load_longmemeval(data_file: Path, limit: int | None = None) -> list[dict]:
-    """Load LongMemEval questions from JSON file."""
+def load_longmemeval(
+    data_file: Path,
+    limit: int | None = None,
+    variant: str = "oracle",
+) -> list[dict]:
+    """Load LongMemEval questions from JSON file.
+
+    Args:
+        data_file: Path to dataset JSON
+        limit: Max questions to load
+        variant: Dataset variant. For "oracle", abstention questions are filtered out
+            (they have no answer sessions). For "s", all questions are included since
+            the S variant contains answer sessions for abstention questions too.
+    """
     print(f"Loading data from {data_file}...")
 
     with open(data_file) as f:
         data = json.load(f)
 
-    # Filter out abstention questions (they have no correct answer)
-    questions = [q for q in data if "_abs" not in q.get("question_id", "")]
-
     print(f"  Total questions: {len(data)}")
-    print(f"  Non-abstention: {len(questions)}")
+
+    if variant == "oracle":
+        # Filter out abstention questions (they have no correct answer in oracle)
+        questions = [q for q in data if "_abs" not in q.get("question_id", "")]
+        print(f"  Non-abstention: {len(questions)}")
+    else:
+        # S variant includes abstention questions (they have answer sessions)
+        questions = data
+        abs_count = sum(1 for q in data if "_abs" in q.get("question_id", ""))
+        print(f"  Including {abs_count} abstention questions")
 
     if limit:
         questions = questions[:limit]
@@ -488,57 +619,190 @@ def collect_all_sessions(questions: list[dict]) -> dict[str, dict]:
     return all_sessions
 
 
+def compute_ndcg_at_k(retrieved_ids: list[str], correct_ids: list[str], k: int = 5) -> float:
+    """Compute Normalized Discounted Cumulative Gain at k.
+
+    Position-sensitive metric: finding correct session at rank 1 scores higher
+    than finding it at rank 5.
+
+    Args:
+        retrieved_ids: Ordered list of retrieved session IDs
+        correct_ids: List of correct session IDs (ground truth)
+        k: Number of top results to consider
+
+    Returns:
+        NDCG score between 0 and 1
+    """
+    if not correct_ids:
+        return 0.0
+
+    correct_set = set(correct_ids)
+    top_k = retrieved_ids[:k]
+
+    # DCG: sum of 1/log2(rank+1) for each correct result
+    dcg = 0.0
+    for i, sid in enumerate(top_k):
+        if sid in correct_set:
+            dcg += 1.0 / math.log2(i + 2)  # rank is 1-indexed, so i+2
+
+    # Ideal DCG: assume all correct results are at the top positions
+    ideal_hits = min(len(correct_ids), k)
+    idcg = sum(1.0 / math.log2(i + 2) for i in range(ideal_hits))
+
+    if idcg == 0:
+        return 0.0
+    return dcg / idcg
+
+
+def ingest_via_summarize(
+    client: CEMSEvalClient,
+    sessions: dict[str, dict],
+    concurrency: int = 1,
+    summary_model: str | None = None,
+) -> int:
+    """Ingest sessions through /api/session/summarize (observer pipeline).
+
+    Each session goes through: extract_session_summary()
+    → chunk → embed → store as session-summary category.
+
+    Args:
+        client: CEMS eval client
+        sessions: Dict mapping session_id → {content, session_id, timestamp}
+        concurrency: Number of parallel requests (default 1, sequential)
+        summary_model: Optional LLM model override for summary extraction
+
+    Returns:
+        Number of successfully ingested sessions
+    """
+    total = len(sessions)
+    success_count = 0
+    errors: list[str] = []
+    start_time = time.time()
+    completed = 0
+
+    session_items = list(sessions.items())
+
+    def _ingest_one(item: tuple[str, dict]) -> tuple[str, dict | None, str | None]:
+        session_id, session_data = item
+        try:
+            result = client.summarize_session(
+                content=session_data["content"],
+                session_id=session_id,
+                source_ref=f"project:longmemeval:{session_id}",
+                mode="finalize",
+                model=summary_model,
+            )
+            if result.get("success"):
+                return (session_id, result, None)
+            elif result.get("error"):
+                return (session_id, None, result["error"])
+            return (session_id, result, None)
+        except Exception as e:
+            return (session_id, None, str(e))
+
+    if concurrency > 1:
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        with ThreadPoolExecutor(max_workers=concurrency) as pool:
+            futures = {pool.submit(_ingest_one, item): item[0] for item in session_items}
+            for future in as_completed(futures):
+                sid, result, error = future.result()
+                if error:
+                    errors.append(f"{sid}: {error}")
+                elif result:
+                    success_count += 1
+                completed += 1
+
+                if completed % 10 == 0 or completed == total:
+                    elapsed = time.time() - start_time
+                    avg = elapsed / completed
+                    remaining = avg * (total - completed)
+                    print(
+                        f"  [{completed}/{total}] Ingesting sessions... "
+                        f"({avg:.1f}s/session, ~{remaining/60:.1f}min remaining)"
+                    )
+    else:
+        for i, item in enumerate(session_items):
+            sid, result, error = _ingest_one(item)
+            if error:
+                errors.append(f"{sid}: {error}")
+            elif result:
+                success_count += 1
+            completed += 1
+
+            if completed % 10 == 0 or completed == total:
+                elapsed = time.time() - start_time
+                avg = elapsed / completed
+                remaining = avg * (total - completed)
+                print(
+                    f"  [{completed}/{total}] Ingesting sessions... "
+                    f"({avg:.1f}s/session, ~{remaining/60:.1f}min remaining)"
+                )
+
+    elapsed_total = time.time() - start_time
+    print(f"  Ingested {success_count}/{total} sessions in {elapsed_total:.1f}s")
+
+    if errors:
+        print(f"  {len(errors)} errors during ingestion:")
+        for err in errors[:5]:  # Show first 5
+            print(f"    - {err}")
+        if len(errors) > 5:
+            print(f"    ... and {len(errors) - 5} more")
+
+    return success_count
+
+
 def run_eval(
     client: CEMSEvalClient,
     questions: list[dict],
     verbose: bool = False,
-    use_bulk_ingestion: bool = True,
+    ingestion_mode: str = "raw",
+    concurrency: int = 1,
+    summary_model: str | None = None,
 ) -> tuple[list[EvalResult], EvalSummary]:
     """Run the evaluation and return results.
 
-    Two-phase approach (when use_bulk_ingestion=True):
+    Two-phase approach:
     1. Collect all unique sessions upfront
-    2. Bulk ingest all sessions in one HTTP call
+    2. Ingest all sessions (raw batch or observer-style summarize)
     3. Run searches against stable data
 
     Args:
         client: CEMS evaluation client
         questions: List of questions to evaluate
         verbose: Print detailed output
-        use_bulk_ingestion: Use bulk ingestion (default True, faster)
+        ingestion_mode: "raw" (batch add) or "summarize" (observer pipeline)
+        concurrency: Parallel requests for summarize mode
+        summary_model: Optional LLM model override for summary extraction
     """
     results: list[EvalResult] = []
     summary = EvalSummary()
 
-    # Track which sessions we've already ingested (for incremental mode)
-    ingested_sessions: set[str] = set()
+    # Phase 1: Collect and ingest all sessions
+    print("\nPhase 1: Collecting all unique sessions...")
+    all_sessions = collect_all_sessions(questions)
+    print(f"  Found {len(all_sessions)} unique sessions across {len(questions)} questions")
 
-    # Phase 1: Bulk ingest all sessions upfront (if enabled)
-    if use_bulk_ingestion:
-        print("\nPhase 1: Collecting all unique sessions...")
-        all_sessions = collect_all_sessions(questions)
-        print(f"  Found {len(all_sessions)} unique sessions across {len(questions)} questions")
-
-        if all_sessions:
-            print("\nPhase 2: Bulk ingesting all sessions...")
+    if all_sessions:
+        if ingestion_mode == "summarize":
+            model_label = f" with {summary_model}" if summary_model else ""
+            print(f"\nPhase 2: Ingesting via /api/session/summarize{model_label}...")
+            ingest_via_summarize(client, all_sessions, concurrency=concurrency, summary_model=summary_model)
+        else:
+            print("\nPhase 2: Bulk ingesting (raw mode)...")
             ingest_start = time.time()
-
-            # Convert to list format for batch API
             memories_to_add = list(all_sessions.values())
-
-            # Batch ingest
             result_map = client.add_memories_batch(memories_to_add)
-
             ingest_elapsed = time.time() - ingest_start
-            print(f"  Ingested {len(result_map)} sessions in {ingest_elapsed:.1f}s "
-                  f"({ingest_elapsed/len(memories_to_add)*1000:.0f}ms/session)")
+            per_session_ms = ingest_elapsed / len(memories_to_add) * 1000 if memories_to_add else 0
+            print(
+                f"  Ingested {len(result_map)} sessions in {ingest_elapsed:.1f}s "
+                f"({per_session_ms:.0f}ms/session)"
+            )
 
-            # Mark all as ingested
-            ingested_sessions = set(result_map.keys())
+    # Phase 3: Run searches
+    print(f"\nPhase 3: Running searches...")
 
-        print("\nPhase 3: Running searches...")
-
-    # Phase 2/3: Run searches
     for i, q in enumerate(questions):
         qid = q["question_id"]
         qtype = q.get("question_type", "unknown")
@@ -546,23 +810,6 @@ def run_eval(
         answer = q.get("answer", "")
 
         print(f"\n[{i+1}/{len(questions)}] {qtype}: {question[:60]}...")
-
-        # Incremental ingestion (only if bulk ingestion disabled)
-        if not use_bulk_ingestion:
-            sessions = q.get("haystack_sessions", [])
-            session_ids = q.get("haystack_session_ids", [])
-            session_dates = q.get("haystack_dates", [])
-            dates_padded = session_dates + [None] * (len(sessions) - len(session_dates))
-
-            for sid, session, session_date in zip(session_ids, sessions, dates_padded):
-                if sid not in ingested_sessions:
-                    content = format_session_content(session)
-                    mem_id = client.add_memory(content, sid, timestamp=session_date)
-                    if mem_id:
-                        ingested_sessions.add(sid)
-                        if verbose:
-                            ts_info = f" @ {session_date}" if session_date else ""
-                            print(f"  Ingested session {sid}{ts_info} -> {mem_id[:8]}...")
 
         # Get correct session IDs for this question
         session_ids = q.get("haystack_session_ids", [])
@@ -592,20 +839,25 @@ def run_eval(
 
         # Calculate recall metrics
         correct_set = set(correct_ids)
-        retrieved_set = set(retrieved_ids[:5])  # Recall@5
+        retrieved_at_5 = set(retrieved_ids[:5])
+        retrieved_at_10 = set(retrieved_ids[:10])
 
-        recall_any = bool(correct_set & retrieved_set)
-        recall_all = bool(correct_set) and correct_set <= retrieved_set
+        recall_at_5 = bool(correct_set & retrieved_at_5)
+        recall_at_10 = bool(correct_set & retrieved_at_10)
+        recall_all = bool(correct_set) and correct_set <= retrieved_at_5
+        ndcg_at_5 = compute_ndcg_at_k(retrieved_ids, correct_ids, k=5)
 
         result = EvalResult(
             question_id=qid,
             question_type=qtype,
             question=question,
             ground_truth=str(answer),
-            retrieved_session_ids=retrieved_ids[:5],
+            retrieved_session_ids=retrieved_ids[:10],
             correct_session_ids=correct_ids,
-            recall_any=recall_any,
+            recall_at_5=recall_at_5,
+            recall_at_10=recall_at_10,
             recall_all=recall_all,
+            ndcg_at_5=ndcg_at_5,
             search_time_ms=elapsed_ms,
             mode_used=mode_used,
             num_results=len(search_result.get("results", [])),
@@ -615,56 +867,77 @@ def run_eval(
         # Update summary
         summary.total_questions += 1
         summary.total_search_time_ms += elapsed_ms
-        if recall_any:
-            summary.recall_any_count += 1
+        summary.total_ndcg_at_5 += ndcg_at_5
+        if recall_at_5:
+            summary.recall_at_5_count += 1
+        if recall_at_10:
+            summary.recall_at_10_count += 1
         if recall_all:
             summary.recall_all_count += 1
 
         # Update by-type stats
         if qtype not in summary.by_type:
-            summary.by_type[qtype] = {"total": 0, "recall_any": 0, "recall_all": 0}
+            summary.by_type[qtype] = {
+                "total": 0, "recall_at_5": 0, "recall_at_10": 0,
+                "recall_all": 0, "ndcg_at_5_sum": 0.0,
+            }
         summary.by_type[qtype]["total"] += 1
-        if recall_any:
-            summary.by_type[qtype]["recall_any"] += 1
+        if recall_at_5:
+            summary.by_type[qtype]["recall_at_5"] += 1
+        if recall_at_10:
+            summary.by_type[qtype]["recall_at_10"] += 1
         if recall_all:
             summary.by_type[qtype]["recall_all"] += 1
+        summary.by_type[qtype]["ndcg_at_5_sum"] += ndcg_at_5
 
         # Print result
-        status = "✓" if recall_any else "✗"
-        print(f"  {status} Recall@5: {recall_any} | Mode: {mode_used} | Time: {elapsed_ms}ms")
-        if verbose and not recall_any:
+        status = "+" if recall_at_5 else "-"
+        print(f"  {status} R@5:{recall_at_5} R@10:{recall_at_10} NDCG@5:{ndcg_at_5:.3f} | {mode_used} | {elapsed_ms}ms")
+        if verbose and not recall_at_5:
             print(f"    Expected: {correct_ids}")
-            print(f"    Got: {retrieved_ids[:5]}")
+            print(f"    Got: {retrieved_ids[:10]}")
 
     return results, summary
 
 
-def print_summary(summary: EvalSummary) -> None:
+def print_summary(summary: EvalSummary, ingestion_mode: str = "raw", dataset: str = "oracle") -> None:
     """Print evaluation summary."""
     print("\n" + "=" * 60)
-    print("EVALUATION SUMMARY")
+    print("RETRIEVAL EVALUATION SUMMARY")
     print("=" * 60)
 
+    print(f"\nDataset: {dataset} variant | Ingestion: {ingestion_mode}")
     print(f"\nOverall ({summary.total_questions} questions):")
-    print(f"  Recall@5 (any):  {summary.recall_any_rate:.1%} ({summary.recall_any_count}/{summary.total_questions})")
+    print(f"  Recall@5:        {summary.recall_at_5_rate:.1%} ({summary.recall_at_5_count}/{summary.total_questions})")
+    print(f"  Recall@10:       {summary.recall_at_10_rate:.1%} ({summary.recall_at_10_count}/{summary.total_questions})")
     print(f"  Recall@5 (all):  {summary.recall_all_rate:.1%} ({summary.recall_all_count}/{summary.total_questions})")
+    print(f"  NDCG@5:          {summary.avg_ndcg_at_5:.3f}")
     print(f"  Avg search time: {summary.avg_search_time_ms:.0f}ms")
 
     print(f"\nBy Question Type:")
     for qtype, stats in sorted(summary.by_type.items()):
         total = stats["total"]
-        any_rate = stats["recall_any"] / total if total else 0
-        all_rate = stats["recall_all"] / total if total else 0
+        r5 = stats["recall_at_5"] / total if total else 0
+        r10 = stats["recall_at_10"] / total if total else 0
+        r_all = stats["recall_all"] / total if total else 0
+        ndcg = stats["ndcg_at_5_sum"] / total if total else 0
         print(f"  {qtype}:")
-        print(f"    Recall@5 (any): {any_rate:.1%} ({stats['recall_any']}/{total})")
-        print(f"    Recall@5 (all): {all_rate:.1%} ({stats['recall_all']}/{total})")
+        print(f"    Recall@5: {r5:.1%} ({stats['recall_at_5']}/{total})  Recall@10: {r10:.1%}  NDCG@5: {ndcg:.3f}")
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Run LongMemEval benchmark on CEMS")
+    parser = argparse.ArgumentParser(description="Run LongMemEval retrieval benchmark on CEMS")
     parser.add_argument(
         "--questions", "-n", type=int, default=10,
         help="Number of questions to evaluate (default: 10)"
+    )
+    parser.add_argument(
+        "--dataset", choices=["oracle", "s"], default="s",
+        help="Dataset variant (default: s)"
+    )
+    parser.add_argument(
+        "--ingestion-mode", choices=["raw", "summarize"], default="raw",
+        help="Ingestion mode: raw (batch add) or summarize (observer pipeline, default: raw)"
     )
     parser.add_argument(
         "--api-url", default=DEFAULT_API_URL,
@@ -673,6 +946,18 @@ def main():
     parser.add_argument(
         "--api-key", default=DEFAULT_API_KEY,
         help="CEMS API key (default: from CEMS_API_KEY env)"
+    )
+    parser.add_argument(
+        "--enable-synthesis", action="store_true",
+        help="Enable LLM query synthesis for better retrieval"
+    )
+    parser.add_argument(
+        "--enable-hyde", action="store_true",
+        help="Enable HyDE (Hypothetical Document Embeddings) for better vector matching"
+    )
+    parser.add_argument(
+        "--concurrency", type=int, default=1,
+        help="Parallel requests for summarize ingestion (default: 1)"
     )
     parser.add_argument(
         "--output", "-o", type=str,
@@ -695,8 +980,8 @@ def main():
         help="Don't clean up stale data from previous eval runs"
     )
     parser.add_argument(
-        "--incremental", action="store_true",
-        help="Use incremental ingestion (old behavior, slower) instead of bulk"
+        "--summary-model", type=str,
+        help="Override LLM model for summary extraction (e.g. qwen/qwen3-32b for Cerebras speed)"
     )
 
     args = parser.parse_args()
@@ -706,13 +991,24 @@ def main():
         sys.exit(1)
 
     print("=" * 60)
-    print("LONGMEMEVAL BENCHMARK FOR CEMS")
+    print("LONGMEMEVAL RETRIEVAL BENCHMARK FOR CEMS")
     print("=" * 60)
-    print(f"API URL: {args.api_url}")
-    print(f"Questions: {args.questions}")
+    print(f"API URL:    {args.api_url}")
+    print(f"Dataset:    {args.dataset} variant")
+    print(f"Questions:  {args.questions}")
+    print(f"Ingestion:  {args.ingestion_mode}")
+    print(f"Synthesis:  {'ON' if args.enable_synthesis else 'OFF'}")
+    print(f"HyDE:       {'ON' if args.enable_hyde else 'OFF'}")
+    if args.summary_model:
+        print(f"Summary:    {args.summary_model}")
 
     # Initialize client
-    client = CEMSEvalClient(args.api_url, args.api_key)
+    client = CEMSEvalClient(
+        args.api_url,
+        args.api_key,
+        enable_synthesis=args.enable_synthesis,
+        enable_hyde=args.enable_hyde,
+    )
 
     # Health check
     print("\nChecking CEMS connection...")
@@ -728,8 +1024,8 @@ def main():
 
     # Download/load data
     try:
-        data_file = download_longmemeval(force=args.download)
-        questions = load_longmemeval(data_file, limit=args.questions)
+        data_file = download_dataset(variant=args.dataset, force=args.download)
+        questions = load_longmemeval(data_file, limit=args.questions, variant=args.dataset)
     except Exception as e:
         print(f"Error loading data: {e}", file=sys.stderr)
         sys.exit(1)
@@ -739,16 +1035,16 @@ def main():
         sys.exit(1)
 
     # Run evaluation
-    use_bulk = not args.incremental
-    mode_str = "bulk ingestion" if use_bulk else "incremental (legacy)"
-    print(f"\nStarting evaluation with {mode_str}...")
+    print(f"\nStarting evaluation ({args.ingestion_mode} ingestion)...")
     start_time = time.time()
 
     try:
         results, summary = run_eval(
             client, questions,
             verbose=args.verbose,
-            use_bulk_ingestion=use_bulk,
+            ingestion_mode=args.ingestion_mode,
+            concurrency=args.concurrency,
+            summary_model=args.summary_model,
         )
     except KeyboardInterrupt:
         print("\n\nInterrupted by user")
@@ -759,7 +1055,7 @@ def main():
 
     # Print summary
     if summary.total_questions > 0:
-        print_summary(summary)
+        print_summary(summary, ingestion_mode=args.ingestion_mode, dataset=args.dataset)
         print(f"\nTotal time: {elapsed:.1f}s ({elapsed/60:.1f} min)")
 
     # Cleanup
@@ -773,8 +1069,14 @@ def main():
         output_data = {
             "summary": {
                 "total_questions": summary.total_questions,
-                "recall_any_rate": summary.recall_any_rate,
+                "dataset": args.dataset,
+                "ingestion_mode": args.ingestion_mode,
+                "enable_synthesis": args.enable_synthesis,
+                "enable_hyde": args.enable_hyde,
+                "recall_at_5_rate": summary.recall_at_5_rate,
+                "recall_at_10_rate": summary.recall_at_10_rate,
                 "recall_all_rate": summary.recall_all_rate,
+                "avg_ndcg_at_5": summary.avg_ndcg_at_5,
                 "avg_search_time_ms": summary.avg_search_time_ms,
                 "by_type": summary.by_type,
                 "elapsed_seconds": elapsed,
@@ -787,8 +1089,10 @@ def main():
                     "ground_truth": r.ground_truth,
                     "retrieved_session_ids": r.retrieved_session_ids,
                     "correct_session_ids": r.correct_session_ids,
-                    "recall_any": r.recall_any,
+                    "recall_at_5": r.recall_at_5,
+                    "recall_at_10": r.recall_at_10,
                     "recall_all": r.recall_all,
+                    "ndcg_at_5": r.ndcg_at_5,
                     "search_time_ms": r.search_time_ms,
                     "mode_used": r.mode_used,
                 }

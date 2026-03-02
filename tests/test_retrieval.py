@@ -7,6 +7,7 @@ import pytest
 
 from cems.models import MemoryMetadata, MemoryScope, SearchResult
 from cems.retrieval import (
+    _has_multi_topic_signals,
     _is_aggregation_query,
     _is_preference_query,
     _is_temporal_query,
@@ -16,6 +17,7 @@ from cems.retrieval import (
     apply_score_adjustments,
     assemble_context,
     assemble_context_diverse,
+    decompose_query,
     deduplicate_results,
     filter_preferences_by_relevance,
     format_memory_context,
@@ -987,3 +989,104 @@ class TestSnippetTruncation:
         assert "---" not in cleaned
         assert "Line one." in cleaned
         assert "Line two." in cleaned
+
+
+class TestHeuristicGate:
+    """Tests for multi-topic heuristic detection."""
+
+    def test_detects_also_keyword(self):
+        """Queries with 'also' should be detected as multi-topic."""
+        assert _has_multi_topic_signals("fix Docker ports, also what was that TypeScript pattern?")
+        assert _has_multi_topic_signals("Update the config. Also remind me about Coolify")
+
+    def test_detects_multiple_question_marks(self):
+        """Multiple question marks suggest multiple distinct questions."""
+        assert _has_multi_topic_signals("What Docker port did I use? What TypeScript pattern was that?")
+        assert _has_multi_topic_signals("How do I fix this? Where is the config? What about tests?")
+
+    def test_single_topic_not_triggered(self):
+        """Single-topic queries should NOT trigger multi-topic detection."""
+        assert not _has_multi_topic_signals("fix Docker port binding issue")
+        assert not _has_multi_topic_signals("What TypeScript pattern should I use for error handling?")
+        assert not _has_multi_topic_signals("How do I configure Coolify deployments?")
+
+    def test_compound_single_topic_not_triggered(self):
+        """Compound sentences about ONE topic should not trigger."""
+        assert not _has_multi_topic_signals("fix the Docker port binding and restart the container")
+        assert not _has_multi_topic_signals("update the config file and run the tests")
+
+    def test_detects_topic_switch_phrases(self):
+        """Various topic-switch phrases should trigger detection."""
+        assert _has_multi_topic_signals("fix the bug. By the way, what about the deploy?")
+        assert _has_multi_topic_signals("Check the logs. Separately, remind me about the API key")
+        assert _has_multi_topic_signals("Remind me about Coolify. Oh and what was that CLI tool?")
+        assert _has_multi_topic_signals("Fix the tests. On a different note, what about the DB?")
+
+
+class TestQueryDecomposition:
+    """Tests for LLM-based query decomposition."""
+
+    def test_multi_topic_split(self):
+        """Multi-topic prompt should be split into focused sub-queries."""
+        mock_client = MagicMock()
+        mock_client.complete.return_value = '{"queries": ["fix Docker port binding", "TypeScript error pattern", "Coolify deployment config"]}'
+
+        result = decompose_query(
+            "fix Docker ports. Also what was that TypeScript pattern? And remind me about Coolify",
+            mock_client,
+        )
+
+        assert len(result) == 3
+        assert "Docker" in result[0]
+        assert "TypeScript" in result[1]
+        assert "Coolify" in result[2]
+
+    def test_single_topic_passthrough(self):
+        """Single-topic prompt returned by LLM should pass through as-is."""
+        mock_client = MagicMock()
+        mock_client.complete.return_value = '{"queries": ["fix Docker port binding"]}'
+
+        result = decompose_query("fix Docker port binding", mock_client)
+
+        assert len(result) == 1
+        assert "Docker" in result[0]
+
+    def test_error_fallback(self):
+        """LLM error should fall back to original query."""
+        mock_client = MagicMock()
+        mock_client.complete.side_effect = Exception("API error")
+
+        original = "fix Docker ports and remind me about Coolify"
+        result = decompose_query(original, mock_client)
+
+        assert result == [original]
+
+    def test_think_tag_stripping(self):
+        """<think> tags from reasoning models should be stripped before JSON parsing."""
+        mock_client = MagicMock()
+        mock_client.complete.return_value = '<think>Let me analyze this prompt...</think>{"queries": ["query one", "query two"]}'
+
+        result = decompose_query("multi topic query", mock_client)
+
+        assert len(result) == 2
+        assert result[0] == "query one"
+        assert result[1] == "query two"
+
+    def test_invalid_json_fallback(self):
+        """Invalid JSON should fall back to original query."""
+        mock_client = MagicMock()
+        mock_client.complete.return_value = "not valid json at all"
+
+        original = "fix Docker and remind me about Coolify"
+        result = decompose_query(original, mock_client)
+
+        assert result == [original]
+
+    def test_max_queries_limit(self):
+        """Should respect max_queries limit."""
+        mock_client = MagicMock()
+        mock_client.complete.return_value = '{"queries": ["q1", "q2", "q3", "q4", "q5"]}'
+
+        result = decompose_query("many topics", mock_client, max_queries=2)
+
+        assert len(result) == 2

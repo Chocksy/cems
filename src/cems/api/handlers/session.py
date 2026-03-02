@@ -74,9 +74,11 @@ async def api_session_summarize(request: Request):
             f"project={project_context}, mode={mode}, epoch={epoch}, tag={tag}"
         )
 
+        model_override = body.get("model")  # Optional LLM model override
         summary = extract_session_summary(
             content=content,
             project_context=project_context,
+            model=model_override,
         )
 
         if not summary:

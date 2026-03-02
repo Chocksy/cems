@@ -1,11 +1,12 @@
 """Session summary extraction using LLM.
 
-Replaces atomic one-liner observations with rich 2-3 paragraph session
-summaries. Each summary captures the full context of a session segment
-(what was worked on, decisions made, outcomes) as a single document.
+Extracts structured atomic facts + brief context from session transcripts.
+Each fact is a standalone, independently searchable sentence. The context
+paragraph provides semantic embedding signal for the full session.
 
-Target: 200-400 words (400-600 tokens) — fits in a single chunk (800-token
-threshold), so search returns the full summary without splitting.
+Inspired by top LongMemEval systems: Hindsight (91.4%, structured 5W facts),
+Mem0 (atomic fact extraction), and the LongMemEval reference implementation
+("extract all personal information... in simple sentences").
 
 Uses Gemini 2.5 Flash via OpenRouter for fast, cheap extraction.
 """
@@ -19,64 +20,55 @@ logger = logging.getLogger(__name__)
 
 SUMMARY_MODEL = "google/gemini-2.5-flash"
 
-SUMMARY_SYSTEM_PROMPT = """You are the memory consciousness of a coding assistant. You produce session summaries that will be stored as long-term memories and recalled across FUTURE sessions — possibly weeks or months later. These summaries are the ONLY way the assistant remembers what happened.
+SUMMARY_SYSTEM_PROMPT = """You are the memory consciousness of a coding assistant. You extract structured facts from sessions that will be stored as long-term memories and recalled across FUTURE sessions — possibly weeks or months later. These facts are the ONLY way the assistant remembers what happened.
 
-You are summarizing a coding session{project_label}.
+You are extracting facts from a coding session{project_label}.
 
 ## YOUR TASK
 
-Write a **2-3 paragraph narrative summary** of this session segment. This is NOT a list of bullet points — it's a cohesive story of what happened.
+Extract **5-15 atomic facts** from this session as standalone sentences. Each fact must be independently meaningful — searchable and understandable without any other context.
 
-## STRUCTURE
+Then write a **1-2 sentence context overview** that captures the session's overall purpose (for semantic search).
 
-**Paragraph 1**: What was the user working on? What was the goal or problem? Include the project name if known.
+## FACT EXTRACTION RULES
 
-**Paragraph 2**: What happened during the session? Key decisions, approaches tried, tools used, architecture choices. Preserve specific names, numbers, versions, and dates.
+- **Each fact is a complete, standalone sentence**: "User's dog is named Rex" not just "Rex"
+- **Preserve exact values**: prices ("$5 coupon"), percentages ("43.7%% faster"), dates, names, versions, quantities
+- **Frame state changes explicitly**: "User switched from SQLite to PostgreSQL" not "User uses PostgreSQL"
+- **User assertions are authoritative**: "User stated they are a staunch atheist" not "User discussed religion"
+- **Distinguish assertions from questions**: "User asked about deployment options" vs "User decided to deploy on Railway"
+- **Use precise action verbs**: "subscribed to", "purchased", "enrolled in" — not vague "got" or "getting"
+- **Include project name** in relevant facts for searchability
+- **Preserve distinguishing details**: "Assistant recommended Docker Compose (simple), K8s (scalable), Railway (managed)" not "Assistant recommended 3 options"
+- **Non-standard terminology**: quote user's exact words: "User did a 'movement session' (their term for exercise)"
 
-**Paragraph 3** (if needed): What was the outcome? What changed? Any unresolved issues or next steps the user mentioned?
-
-## RULES
-
-- **Narrative voice**: "The user worked on X. They decided Y because Z. The implementation involved..."
-- **Preserve specifics**: Names, numbers, dates, tool names, service names, file paths that represent architecture decisions
-- **Temporal flow**: Capture what happened in order, not just topics
-- **State changes**: Explicitly note what changed AND what it replaced: "switched from X to Y", "replaced A with B". If the new state contradicts previous information, make that explicit.
-- **User assertions are authoritative**: When the user TELLS something about their project, preserve it exactly as fact. Distinguish from questions — "User stated they have two services running" vs "User asked about deployment options".
-- **Target length**: 200-400 words (2-3 paragraphs)
-
-## DETAIL PRESERVATION
-
-- **Names, handles, @usernames** — always preserve exactly
-- **Numbers, quantities, measurements, prices** — always preserve
-- **Non-standard terminology** — quote the user's exact words: "did a 'movement session' (their term for exercise)"
-- **Precise action verbs** — replace vague "getting/got" with specific verbs: "subscribed to", "purchased", "received", "enrolled in"
-- **Distinguishing details** — when listing recommendations or options, preserve the KEY ATTRIBUTE of each:
-  - BAD: "Assistant recommended 3 deployment options"
-  - GOOD: "Assistant recommended Docker Compose (simple), K8s (scalable), Railway (managed)"
-- **Specific results** — preserve concrete numbers: "Optimization achieved 43.7%% faster load times, memory dropped from 2.8GB to 940MB"
-
-{project_name_instruction}
-
-## WHAT TO INCLUDE
-- Project goals and high-level context
+## WHAT TO EXTRACT AS FACTS
+- User preferences, opinions, and personal information
 - Decisions and architecture choices (with reasoning when stated)
-- User preferences discovered (tools, styles, workflows)
-- Key facts: names, dates, deadlines, services, people mentioned
-- What worked well and what didn't
-- State changes and updates to previous decisions
+- Key names: people, services, tools, versions, file paths that represent architecture
+- Numbers: prices, measurements, deadlines, quantities, performance metrics
+- State changes: what was replaced and what replaced it
+- Project goals, outcomes, and unresolved issues
 
-## WHAT NOT TO INCLUDE
+## WHAT NOT TO EXTRACT
 - Specific CLI commands or exact file contents
 - Transient debugging steps (unless they reveal an important pattern)
 - Raw tool output, error messages, build logs
 - Routine operations (reading files, running tests, git status)
+
+{project_name_instruction}
 
 ## OUTPUT FORMAT
 
 Return a single JSON object:
 {{
   "title": "Brief descriptive title (5-10 words)",
-  "content": "The 2-3 paragraph summary...",
+  "facts": [
+    "Fact 1 as a standalone sentence",
+    "Fact 2 as a standalone sentence",
+    "..."
+  ],
+  "context": "1-2 sentence overview of what the session was about, for semantic search.",
   "tags": ["tag1", "tag2"],
   "priority": "high|medium|low"
 }}
@@ -93,7 +85,7 @@ def extract_session_summary(
     project_context: str | None = None,
     model: str | None = None,
 ) -> dict | None:
-    """Extract a session summary from transcript content.
+    """Extract structured facts from a session transcript.
 
     Args:
         content: Session transcript content (text, not message array).
@@ -101,7 +93,7 @@ def extract_session_summary(
         model: Optional model override (defaults to Gemini 2.5 Flash).
 
     Returns:
-        Summary dict with keys: title, content, tags, priority.
+        Summary dict with keys: title, content (assembled facts), tags, priority.
         None if content is too short or extraction fails.
     """
     if not content or len(content) < 200:
@@ -119,14 +111,14 @@ def extract_session_summary(
 
     project_label = f" for: {project_context}" if project_context else ""
 
-    # Dynamic instruction: weave project name into the summary text for searchability
+    # Dynamic instruction: weave project name into facts for searchability
     if project_context:
         project_name_instruction = (
             "## PROJECT NAME\n\n"
-            f"Always mention the project/repo name in the summary so it's searchable without metadata:\n"
-            f'- BAD: "The user overhauled the memory quality system"\n'
-            f'- GOOD: "The user overhauled the memory quality system in {project_context}"\n\n'
-            f'The project context "{project_context}" should appear naturally in the summary.'
+            f"Include the project/repo name in relevant facts so they're searchable without metadata:\n"
+            f'- BAD: "User overhauled the memory quality system"\n'
+            f'- GOOD: "User overhauled the memory quality system in {project_context}"\n\n'
+            f'The project context "{project_context}" should appear naturally in facts and context.'
         )
     else:
         project_name_instruction = ""
@@ -136,6 +128,9 @@ def extract_session_summary(
         project_name_instruction=project_name_instruction,
     )
 
+    # Enable fast_route (Cerebras/Groq) when using a non-Gemini model override
+    use_fast_route = use_model != SUMMARY_MODEL
+
     try:
         response = client.complete(
             prompt=f"Session content to summarize:\n\n{content}",
@@ -143,7 +138,7 @@ def extract_session_summary(
             model=use_model,
             temperature=0.3,
             max_tokens=2000,
-            fast_route=False,  # Gemini not on Cerebras/Groq/SambaNova
+            fast_route=use_fast_route,
         )
     except Exception as e:
         logger.error(f"Session summary extraction LLM call failed: {e}")
@@ -159,11 +154,14 @@ def extract_session_summary(
 def _parse_summary(response: str) -> dict | None:
     """Parse LLM response into a validated summary dict.
 
+    Handles both the new facts+context format and the legacy narrative format
+    (for backward compatibility during rollout).
+
     Args:
         response: Raw LLM response text (should be a JSON object).
 
     Returns:
-        Validated summary dict, or None on failure.
+        Validated summary dict with assembled 'content' field, or None on failure.
     """
     summary = parse_json_dict(response, log_errors=True)
 
@@ -171,16 +169,35 @@ def _parse_summary(response: str) -> dict | None:
         logger.warning(f"Could not parse session summary from response: {response[:200]}")
         return None
 
-    content = summary.get("content", "").strip()
+    # New format: facts list + context string → assemble into content
+    facts = summary.get("facts")
+    context = summary.get("context", "").strip()
+
+    if isinstance(facts, list) and facts:
+        # Filter and validate facts
+        valid_facts = [str(f).strip() for f in facts if f and str(f).strip()]
+        if not valid_facts:
+            logger.debug("All facts were empty after filtering")
+            return None
+
+        # Assemble: one fact per line, then context paragraph
+        parts = valid_facts
+        if context:
+            parts = valid_facts + ["", f"Context: {context}"]
+        content = "\n".join(parts)
+    else:
+        # Legacy fallback: plain "content" field (narrative format)
+        content = summary.get("content", "").strip()
+
     if not content or len(content) < 50:
         logger.debug(f"Summary content too short ({len(content)} chars)")
         return None
 
     title = summary.get("title", "").strip()
     if not title:
-        # Generate a basic title from first sentence
-        first_sentence = content.split(".")[0][:80]
-        title = first_sentence
+        # Generate a basic title from first fact or sentence
+        first_line = content.split("\n")[0].split(".")[0][:80]
+        title = first_line
 
     priority = summary.get("priority", "medium").lower()
     if priority not in ("high", "medium", "low"):

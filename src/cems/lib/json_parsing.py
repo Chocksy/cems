@@ -36,6 +36,9 @@ def extract_json_from_response(response: str) -> str:
         >>> extract_json_from_response('Here is JSON:\\n```json\\n[1,2]\\n```')
         '[1,2]'
     """
+    # Strip <think> tags from reasoning models (e.g. Qwen3)
+    response = re.sub(r"<think>[\s\S]*?</think>", "", response)
+
     response = response.strip()
 
     # Try to extract from markdown code blocks anywhere in the response

@@ -238,6 +238,20 @@ class CEMSConfig(BaseSettings):
         description="Bonus added to rank 2-3 items in RRF",
     )
 
+    # Query decomposition (multi-topic prompts)
+    enable_query_decomposition: bool = Field(
+        default=True,
+        description="Decompose multi-topic prompts into focused sub-queries",
+    )
+    max_decomposed_queries: int = Field(
+        default=3,
+        description="Maximum number of sub-queries from decomposition",
+    )
+    rrf_decomposition_weight: float = Field(
+        default=1.5,
+        description="RRF weight for decomposed sub-queries (between original=2.0 and expansion=1.0)",
+    )
+
     # =========================================================================
     # Reranker Settings
     # =========================================================================

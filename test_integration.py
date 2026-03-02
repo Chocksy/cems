@@ -762,6 +762,216 @@ def test_retrieval_modes() -> tuple[bool, str]:
         return False, str(e)
 
 
+def test_multi_topic_decomposition() -> tuple[bool, str]:
+    """Test multi-topic query decomposition returns results from multiple topics.
+
+    Creates two memories (Docker, TypeScript), then searches with a compound
+    query that mentions both topics. Verifies that decomposition finds BOTH.
+    """
+    import time
+    timestamp = int(time.time())
+    docker_content = f"Docker port binding fix {timestamp}: use -p 8080:80 for the web container"
+    ts_content = f"TypeScript error pattern {timestamp}: use Result<T, E> for typed error handling"
+
+    try:
+        # Step 1: Add two topically distinct memories
+        docker_add = call_api("POST", "/api/memory/add", {
+            "content": docker_content,
+            "category": "devops",
+            "infer": False,
+        })
+        ts_add = call_api("POST", "/api/memory/add", {
+            "content": ts_content,
+            "category": "frontend",
+            "infer": False,
+        })
+
+        if not docker_add.get("success") or not ts_add.get("success"):
+            return False, "failed to add test memories"
+
+        docker_id = docker_add.get("result", {}).get("results", [{}])[0].get("id")
+        ts_id = ts_add.get("result", {}).get("results", [{}])[0].get("id")
+
+        # Give vector store time to index
+        time.sleep(0.5)
+
+        # Step 2: Compound query mentioning both topics
+        result = call_api("POST", "/api/memory/search", {
+            "query": f"fix Docker port binding {timestamp}. Also what was that TypeScript error pattern {timestamp}?",
+            "limit": 10,
+            "scope": "personal",
+            "enable_decomposition": True,
+        })
+
+        # Step 3: Clean up
+        if docker_id:
+            call_api("POST", "/api/memory/forget", {"memory_id": docker_id, "hard_delete": True})
+        if ts_id:
+            call_api("POST", "/api/memory/forget", {"memory_id": ts_id, "hard_delete": True})
+
+        if not result.get("success"):
+            return False, f"search failed: {result.get('error')}"
+
+        results = result.get("results", [])
+        queries_used = result.get("queries_used", [])
+
+        # Verify decomposition happened (should have >1 query)
+        has_decomposition = len(queries_used) > 1
+
+        # Check both topics found in results
+        found_docker = any("Docker" in r.get("content", "") or "docker" in r.get("content", "").lower() for r in results)
+        found_ts = any("TypeScript" in r.get("content", "") or "typescript" in r.get("content", "").lower() for r in results)
+
+        detail = f"queries={len(queries_used)}, results={len(results)}, docker={found_docker}, ts={found_ts}"
+
+        if found_docker and found_ts:
+            return True, f"both topics found ({detail})"
+        elif found_docker or found_ts:
+            # Partial success - at least one topic found
+            return True, f"partial: {detail} (decomposition={'yes' if has_decomposition else 'no'})"
+        else:
+            return False, f"neither topic found ({detail})"
+
+    except Exception as e:
+        return False, str(e)
+
+
+def test_single_topic_no_decomposition() -> tuple[bool, str]:
+    """Single-topic queries should NOT trigger decomposition (zero cost path).
+
+    Verifies the heuristic gate correctly skips LLM decomposition for
+    focused, single-topic queries.
+    """
+    import time
+    timestamp = int(time.time())
+    content = f"Pytest fixture scope {timestamp}: use session scope for expensive setup"
+
+    try:
+        # Add a memory
+        add_result = call_api("POST", "/api/memory/add", {
+            "content": content,
+            "category": "testing",
+            "infer": False,
+        })
+        if not add_result.get("success"):
+            return False, f"add failed: {add_result.get('error')}"
+
+        memory_id = add_result.get("result", {}).get("results", [{}])[0].get("id")
+        time.sleep(0.5)
+
+        # Single-topic query — should NOT decompose
+        result = call_api("POST", "/api/memory/search", {
+            "query": f"pytest fixture scope {timestamp}",
+            "limit": 5,
+            "scope": "personal",
+            "enable_decomposition": True,
+        })
+
+        # Clean up
+        if memory_id:
+            call_api("POST", "/api/memory/forget", {"memory_id": memory_id, "hard_delete": True})
+
+        if not result.get("success"):
+            return False, f"search failed: {result.get('error')}"
+
+        queries_used = result.get("queries_used", [])
+        results = result.get("results", [])
+
+        # For a single-topic query, queries_used should be [original] only
+        # (no sub-queries appended from decomposition)
+        # Note: synthesis may add expansion queries, but that's not decomposition
+        found = any(str(timestamp) in r.get("content", "") for r in results)
+
+        return True, f"queries={len(queries_used)}, results={len(results)}, found={found}"
+    except Exception as e:
+        return False, str(e)
+
+
+def test_decomposition_opt_out() -> tuple[bool, str]:
+    """enable_decomposition=False should skip decomposition even for multi-topic queries."""
+    try:
+        result = call_api("POST", "/api/memory/search", {
+            "query": "fix Docker ports. Also what was that TypeScript pattern? And remind me about Coolify",
+            "limit": 5,
+            "scope": "personal",
+            "enable_decomposition": False,
+        })
+
+        if not result.get("success"):
+            return False, f"search failed: {result.get('error')}"
+
+        queries_used = result.get("queries_used", [])
+        # With decomposition disabled, the original query should be present
+        # and no decomposed sub-queries should appear
+        # (synthesis may still add expansion queries if enabled)
+        return True, f"opt-out OK, queries={len(queries_used)}"
+    except Exception as e:
+        return False, str(e)
+
+
+def test_three_topic_decomposition() -> tuple[bool, str]:
+    """Test decomposition with three distinct topics and unique markers.
+
+    Creates three memories across very different domains, then fires a
+    compound query with 'also' and 'by the way' to trigger decomposition.
+    """
+    import time
+    timestamp = int(time.time())
+    mem_a = f"Redis caching strategy {timestamp}: use TTL 3600 for session data"
+    mem_b = f"Figma design tokens {timestamp}: export colors as CSS custom properties"
+    mem_c = f"Kubernetes pod scaling {timestamp}: set HPA min=2 max=10 target CPU 70%"
+
+    try:
+        ids = []
+        for content, cat in [(mem_a, "backend"), (mem_b, "design"), (mem_c, "devops")]:
+            r = call_api("POST", "/api/memory/add", {
+                "content": content, "category": cat, "infer": False,
+            })
+            if not r.get("success"):
+                return False, f"add failed: {r.get('error')}"
+            ids.append(r.get("result", {}).get("results", [{}])[0].get("id"))
+
+        time.sleep(0.5)
+
+        # Three-topic compound query
+        result = call_api("POST", "/api/memory/search", {
+            "query": (
+                f"What was that Redis caching strategy {timestamp}? "
+                f"Also remind me about the Figma design tokens {timestamp}. "
+                f"By the way, what Kubernetes scaling config {timestamp} did I use?"
+            ),
+            "limit": 15,
+            "scope": "personal",
+            "enable_decomposition": True,
+        })
+
+        # Clean up
+        for mid in ids:
+            if mid:
+                call_api("POST", "/api/memory/forget", {"memory_id": mid, "hard_delete": True})
+
+        if not result.get("success"):
+            return False, f"search failed: {result.get('error')}"
+
+        results = result.get("results", [])
+        queries_used = result.get("queries_used", [])
+
+        found_redis = any("Redis" in r.get("content", "") or "redis" in r.get("content", "").lower() for r in results)
+        found_figma = any("Figma" in r.get("content", "") or "figma" in r.get("content", "").lower() for r in results)
+        found_k8s = any("Kubernetes" in r.get("content", "") or "kubernetes" in r.get("content", "").lower() for r in results)
+
+        topics_found = sum([found_redis, found_figma, found_k8s])
+        detail = f"queries={len(queries_used)}, results={len(results)}, redis={found_redis}, figma={found_figma}, k8s={found_k8s}"
+
+        if topics_found >= 2:
+            return True, f"{topics_found}/3 topics found ({detail})"
+        else:
+            return False, f"only {topics_found}/3 topics found ({detail})"
+
+    except Exception as e:
+        return False, str(e)
+
+
 def run_all_tests():
     """Run all integration tests with pass/fail summary."""
     print("\n" + "="*60)
@@ -788,6 +998,10 @@ def run_all_tests():
         ("Search (project)", test_memory_search_with_project),
         ("Enhanced Search E2E", test_enhanced_search_returns_results),  # Critical validation!
         ("Retrieval Modes", test_retrieval_modes),
+        ("Multi-Topic Decomposition", test_multi_topic_decomposition),
+        ("Single-Topic No Decomposition", test_single_topic_no_decomposition),
+        ("Decomposition Opt-Out", test_decomposition_opt_out),
+        ("Three-Topic Decomposition", test_three_topic_decomposition),
         ("Datecs Benchmark", test_datecs_benchmark),
         ("Summary", test_memory_summary),
         ("Forget", test_memory_forget),

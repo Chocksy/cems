@@ -281,9 +281,11 @@ class TestJudgeAnswer:
         )
 
         # Check the prompt sent to LLM contains temporal-specific text
+        # Official prompt has "off-by-one", custom has "off by one"
         call_args = mock_llm.complete.call_args
         prompt = call_args.kwargs.get("prompt") or call_args[1].get("prompt") or call_args[0][0]
-        assert "off by one" in prompt.lower() or "date" in prompt.lower()
+        prompt_lower = prompt.lower()
+        assert "off-by-one" in prompt_lower or "off by one" in prompt_lower or "date" in prompt_lower
 
     def test_judge_uses_correct_prompt_for_knowledge_update(self):
         from cems.eval.longmemeval_e2e import judge_answer
@@ -301,7 +303,8 @@ class TestJudgeAnswer:
 
         call_args = mock_llm.complete.call_args
         prompt = call_args.kwargs.get("prompt") or call_args[1].get("prompt") or call_args[0][0]
-        assert "UPDATED" in prompt
+        # Official prompt has "updated answer", custom has "UPDATED"
+        assert "updated" in prompt.lower()
 
 
 class TestGenerateAnswer:
