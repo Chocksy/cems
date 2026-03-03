@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>CEMS Memory Dashboard</title>
   <link rel="stylesheet" href="style.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js" integrity="sha384-9nhczxUqK87bcKHh20fSQcTGD4qq5GhayNYSYWqwBkINBhOfQLg/P5HG5lF1urn4" crossorigin="anonymous"></script>
 </head>
 <body>
   <div id="app">
@@ -27,6 +28,10 @@
         <div class="header-left">
           <h1>CEMS Memories</h1>
           <span id="total-badge" class="badge">0</span>
+          <div class="view-toggle">
+            <button class="toggle-btn active" data-view="list">List</button>
+            <button class="toggle-btn" data-view="chart">Projects</button>
+          </div>
         </div>
         <div class="header-right">
           <input type="search" id="search-input" placeholder="Search memories...">
@@ -49,6 +54,11 @@
         <button id="next-btn" disabled>Next</button>
       </div>
 
+      <!-- Chart View -->
+      <div id="chart-view" hidden>
+        <canvas id="project-chart"></canvas>
+      </div>
+
       <!-- Edit Modal -->
       <div id="edit-modal" class="modal" hidden>
         <div class="modal-content">
@@ -57,6 +67,20 @@
             <button class="modal-close">&times;</button>
           </div>
           <textarea id="edit-textarea"></textarea>
+          <div class="edit-meta-fields">
+            <div class="field-row">
+              <label for="edit-category">Category</label>
+              <input type="text" id="edit-category" placeholder="e.g. testing, debugging">
+            </div>
+            <div class="field-row">
+              <label for="edit-tags">Tags</label>
+              <input type="text" id="edit-tags" placeholder="comma-separated tags">
+            </div>
+            <div class="field-row">
+              <label for="edit-source-ref">Source Ref</label>
+              <input type="text" id="edit-source-ref" placeholder="e.g. project:org/repo">
+            </div>
+          </div>
           <div class="modal-actions">
             <button id="edit-cancel" class="btn-secondary">Cancel</button>
             <button id="edit-save" class="btn-primary">Save</button>
@@ -64,6 +88,9 @@
         </div>
       </div>
     </div>
+
+    <!-- Toast container -->
+    <div id="toast-container"></div>
   </div>
   <script src="app.js"></script>
 </body>

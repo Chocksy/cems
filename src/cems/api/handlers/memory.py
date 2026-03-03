@@ -793,20 +793,54 @@ async def api_memory_update(request: Request):
     """REST API endpoint to update a memory.
 
     POST /api/memory/update
-    Body: {"memory_id": "...", "content": "..."}
+    Body: {"memory_id": "...", "content": "...", "category": "...", "tags": [...], "source_ref": "..."}
+
+    content is optional if only metadata changes. Metadata fields are optional.
     """
     try:
         body = await request.json()
         memory_id = body.get("memory_id")
         content = body.get("content")
+        category = body.get("category")
+        tags = body.get("tags")
+        source_ref = body.get("source_ref")
+
+        # Normalize empty strings to None (don't store empty values)
+        if isinstance(category, str) and not category.strip():
+            category = None
+        if isinstance(source_ref, str) and not source_ref.strip():
+            source_ref = None
 
         if not memory_id:
             return JSONResponse({"error": "memory_id is required"}, status_code=400)
-        if not content:
-            return JSONResponse({"error": "content is required"}, status_code=400)
+
+        has_content = content and content.strip()
+        has_metadata = category is not None or tags is not None or source_ref is not None
+
+        if not has_content and not has_metadata:
+            return JSONResponse({"error": "content or metadata fields required"}, status_code=400)
 
         memory = get_memory()
-        await memory.update_async(memory_id, content)
+
+        # Update content (re-chunks + re-embeds)
+        if has_content:
+            await memory.update_async(memory_id, content)
+
+        # Update metadata fields (no re-embedding needed)
+        if has_metadata:
+            # Normalize category to canonical form if provided
+            if category:
+                from cems.llm.learning_extraction import normalize_category
+                category = normalize_category(category)
+
+            doc_store = await memory._ensure_document_store()
+            await doc_store.update_document_metadata(
+                memory_id,
+                user_id=memory.config.user_id,
+                category=category,
+                tags=tags,
+                source_ref=source_ref,
+            )
 
         return JSONResponse({
             "success": True,
@@ -815,6 +849,54 @@ async def api_memory_update(request: Request):
         })
     except Exception as e:
         logger.error(f"API memory_update error: {e}")
+        return JSONResponse({"error": "Internal server error"}, status_code=500)
+
+
+async def api_memory_restore(request: Request):
+    """REST API endpoint to restore a soft-deleted memory.
+
+    POST /api/memory/restore
+    Body: {"memory_id": "..."}
+    """
+    try:
+        body = await request.json()
+        memory_id = body.get("memory_id")
+        if not memory_id:
+            return JSONResponse({"error": "memory_id is required"}, status_code=400)
+
+        memory = get_memory()
+        doc_store = await memory._ensure_document_store()
+        restored = await doc_store.restore_document(memory_id, user_id=memory.config.user_id)
+
+        if not restored:
+            return JSONResponse({"error": "Memory not found or not deleted"}, status_code=404)
+
+        return JSONResponse({
+            "success": True,
+            "message": f"Memory {memory_id} restored",
+            "memory_id": memory_id,
+        })
+    except Exception as e:
+        logger.error(f"API memory_restore error: {e}")
+        return JSONResponse({"error": "Internal server error"}, status_code=500)
+
+
+async def api_memory_stats_projects(request: Request):
+    """GET /api/memory/stats/projects - Memory counts per project (source_ref)."""
+    try:
+        memory = get_memory()
+        doc_store = await memory._ensure_document_store()
+        user_id = memory.config.user_id
+        team_id = memory.config.team_id
+
+        projects = await doc_store.get_project_counts(user_id, team_id)
+
+        return JSONResponse({
+            "success": True,
+            "projects": projects,
+        })
+    except Exception as e:
+        logger.error(f"API memory_stats_projects error: {e}")
         return JSONResponse({"error": "Internal server error"}, status_code=500)
 
 

@@ -327,6 +327,92 @@ class DocumentStore:
                 )
                 return result == "UPDATE 1"
 
+    async def restore_document(self, document_id: str, user_id: str) -> bool:
+        """Restore a soft-deleted document by clearing deleted_at.
+
+        Checks ownership via user_id to prevent cross-user restores.
+        """
+        pool = await self._get_pool()
+
+        async with pool.acquire() as conn:
+            result = await conn.execute(
+                "UPDATE memory_documents SET deleted_at = NULL "
+                "WHERE id = $1 AND user_id = $2 AND deleted_at IS NOT NULL",
+                UUID(document_id),
+                UUID(user_id),
+            )
+            return result == "UPDATE 1"
+
+    async def update_document_metadata(
+        self,
+        document_id: str,
+        user_id: str,
+        category: str | None = None,
+        tags: list[str] | None = None,
+        source_ref: str | None = None,
+    ) -> bool:
+        """Update document metadata without re-chunking/re-embedding.
+
+        Checks ownership via user_id to prevent cross-user edits.
+        """
+        pool = await self._get_pool()
+        doc_uuid = UUID(document_id)
+
+        sets: list[str] = []
+        values: list = []
+        idx = 1
+
+        if category is not None:
+            sets.append(f"category = ${idx}")
+            values.append(category)
+            idx += 1
+        if tags is not None:
+            sets.append(f"tags = ${idx}")
+            values.append(tags)
+            idx += 1
+        if source_ref is not None:
+            sets.append(f"source_ref = ${idx}")
+            values.append(source_ref)
+            idx += 1
+
+        if not sets:
+            return False
+
+        sets.append("updated_at = NOW()")
+        values.append(doc_uuid)
+        idx += 1
+        values.append(UUID(user_id))
+
+        query = f"UPDATE memory_documents SET {', '.join(sets)} WHERE id = ${idx - 1} AND user_id = ${idx} AND deleted_at IS NULL"
+        async with pool.acquire() as conn:
+            result = await conn.execute(query, *values)
+        return result == "UPDATE 1"
+
+    async def get_project_counts(
+        self,
+        user_id: str,
+        team_id: str | None = None,
+    ) -> list[dict]:
+        """Get document counts grouped by source_ref (project)."""
+        pool = await self._get_pool()
+
+        fb = FilterBuilder(start_idx=1)
+        fb.add("deleted_at IS NULL")
+        fb.add_ownership_filter(user_id, team_id, "both")
+
+        query = f"""
+            SELECT COALESCE(source_ref, '(none)') as project, COUNT(*) as count
+            FROM memory_documents
+            WHERE {fb.build()}
+            GROUP BY COALESCE(source_ref, '(none)')
+            ORDER BY count DESC
+        """
+
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(query, *fb.values)
+
+        return [{"project": row["project"], "count": row["count"]} for row in rows]
+
     async def delete_by_source_ref(self, source_ref: str, user_id: str) -> int:
         """Hard-delete all documents with a given source_ref for a user.
 

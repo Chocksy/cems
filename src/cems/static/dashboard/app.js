@@ -12,6 +12,8 @@
   let categories = {};
   let editingId = null;
   let searchTimeout = null;
+  let projectChart = null;
+  let currentView = "list";
 
   // --- DOM refs ---
   const loginView = document.getElementById("login-view");
@@ -33,6 +35,8 @@
   const editSave = document.getElementById("edit-save");
   const editCancel = document.getElementById("edit-cancel");
   const modalClose = editModal.querySelector(".modal-close");
+  const chartView = document.getElementById("chart-view");
+  const toastContainer = document.getElementById("toast-container");
 
   // --- API helpers ---
   const baseUrl = window.location.origin;
@@ -87,6 +91,24 @@
     sessionStorage.removeItem("cems_api_key");
     apiKey = "";
     showLogin();
+  });
+
+  // --- View Toggle ---
+  document.querySelectorAll(".toggle-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      document.querySelectorAll(".toggle-btn").forEach((b) => b.classList.remove("active"));
+      btn.classList.add("active");
+      currentView = btn.dataset.view;
+
+      const isList = currentView === "list";
+      listEl.hidden = !isList;
+      filtersEl.hidden = !isList;
+      paginationEl.hidden = !isList || total <= limit;
+      searchInput.hidden = !isList;
+      chartView.hidden = isList;
+
+      if (!isList) loadProjectChart();
+    });
   });
 
   // --- Categories ---
@@ -246,13 +268,28 @@
   });
 
   // --- Edit ---
-  function openEdit(id) {
-    const card = listEl.querySelector(`.memory-card[data-id="${id}"]`);
-    if (!card) return;
-    const content = card.querySelector(".memory-content").textContent;
-    editingId = id;
-    editTextarea.value = content;
-    editModal.hidden = false;
+  async function openEdit(id) {
+    try {
+      const data = await apiFetch(`/api/memory/get?id=${id}`);
+      if (!data.success) return;
+      const doc = data.document;
+      editingId = id;
+      editTextarea.value = doc.content || "";
+      document.getElementById("edit-category").value = doc.category || "";
+      document.getElementById("edit-tags").value = (doc.tags || []).join(", ");
+      document.getElementById("edit-source-ref").value = doc.source_ref || "";
+      editModal.hidden = false;
+    } catch (e) {
+      // Fallback: grab content from the card
+      const card = listEl.querySelector(`.memory-card[data-id="${id}"]`);
+      if (!card) return;
+      editingId = id;
+      editTextarea.value = card.querySelector(".memory-content").textContent;
+      document.getElementById("edit-category").value = "";
+      document.getElementById("edit-tags").value = "";
+      document.getElementById("edit-source-ref").value = "";
+      editModal.hidden = false;
+    }
   }
 
   function closeEdit() {
@@ -269,7 +306,16 @@
   editSave.addEventListener("click", async () => {
     if (!editingId) return;
     const content = editTextarea.value.trim();
-    if (!content) return;
+    const category = document.getElementById("edit-category").value.trim() || undefined;
+    const tagsStr = document.getElementById("edit-tags").value.trim();
+    const tags = tagsStr ? tagsStr.split(",").map((t) => t.trim()).filter(Boolean) : undefined;
+    const sourceRef = document.getElementById("edit-source-ref").value.trim() || undefined;
+
+    const body = { memory_id: editingId };
+    if (content) body.content = content;
+    if (category !== undefined) body.category = category;
+    if (tags !== undefined) body.tags = tags;
+    if (sourceRef !== undefined) body.source_ref = sourceRef;
 
     editSave.disabled = true;
     editSave.textContent = "Saving...";
@@ -277,11 +323,12 @@
       const data = await apiFetch("/api/memory/update", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ memory_id: editingId, content }),
+        body: JSON.stringify(body),
       });
       if (data.success) {
         closeEdit();
         loadMemories();
+        loadCategories();
       } else {
         alert("Update failed: " + (data.error || "Unknown error"));
       }
@@ -293,10 +340,8 @@
     }
   });
 
-  // --- Delete ---
+  // --- Delete with Toast + Undo ---
   async function deleteMemory(id) {
-    if (!confirm("Delete this memory? (soft-delete, can be recovered from DB)")) return;
-
     try {
       const data = await apiFetch("/api/memory/forget", {
         method: "POST",
@@ -306,11 +351,111 @@
       if (data.success) {
         loadMemories();
         loadCategories();
+        showToast("Memory deleted.", async () => {
+          await apiFetch("/api/memory/restore", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ memory_id: id }),
+          });
+          loadMemories();
+          loadCategories();
+        });
       } else {
         alert("Delete failed: " + (data.error || "Unknown error"));
       }
     } catch (e) {
       alert("Delete failed: " + e.message);
+    }
+  }
+
+  // --- Toast ---
+  function showToast(message, undoCallback) {
+    // Remove any existing toast
+    toastContainer.innerHTML = "";
+
+    const toast = document.createElement("div");
+    toast.className = "toast";
+    toast.innerHTML = `<span>${esc(message)}</span>`;
+
+    if (undoCallback) {
+      const undoBtn = document.createElement("button");
+      undoBtn.className = "undo-btn";
+      undoBtn.textContent = "Undo";
+      undoBtn.addEventListener("click", async () => {
+        toast.remove();
+        try {
+          await undoCallback();
+        } catch (e) {
+          alert("Undo failed: " + e.message);
+        }
+      });
+      toast.appendChild(undoBtn);
+    }
+
+    toastContainer.appendChild(toast);
+
+    // Auto-dismiss after 5 seconds
+    setTimeout(() => toast.remove(), 5000);
+  }
+
+  // --- Project Chart ---
+  async function loadProjectChart() {
+    try {
+      const data = await apiFetch("/api/memory/stats/projects");
+      if (!data.success) return;
+
+      const projects = data.projects || [];
+      const labels = projects.map((p) =>
+        p.project.startsWith("project:") ? p.project.replace("project:", "") : p.project
+      );
+      const values = projects.map((p) => p.count);
+
+      const colors = [
+        "#3b82f6", "#22c55e", "#a855f7", "#f97316", "#eab308",
+        "#ef4444", "#06b6d4", "#ec4899", "#84cc16", "#6366f1",
+        "#14b8a6", "#f43f5e", "#8b5cf6", "#f59e0b", "#10b981",
+      ];
+
+      const isDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+      const textColor = isDark ? "#e5e5e5" : "#111";
+      const gridColor = isDark ? "#333" : "#ddd";
+      const subtextColor = isDark ? "#999" : "#555";
+
+      const ctx = document.getElementById("project-chart").getContext("2d");
+
+      if (projectChart) projectChart.destroy();
+
+      // Dynamic height based on number of projects
+      const chartEl = document.getElementById("project-chart");
+      chartEl.style.height = Math.max(300, projects.length * 32) + "px";
+
+      projectChart = new Chart(ctx, {
+        type: "bar",
+        data: {
+          labels: labels,
+          datasets: [{
+            label: "Memories",
+            data: values,
+            backgroundColor: labels.map((_, i) => colors[i % colors.length]),
+            borderRadius: 4,
+          }],
+        },
+        options: {
+          indexAxis: "y",
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { display: false },
+            title: { display: true, text: "Memories per Project", color: textColor, font: { size: 14 } },
+          },
+          scales: {
+            x: { ticks: { color: subtextColor }, grid: { color: gridColor } },
+            y: { ticks: { color: textColor, font: { family: "monospace", size: 11 } }, grid: { display: false } },
+          },
+        },
+      });
+    } catch (e) {
+      console.error("Failed to load project chart", e);
     }
   }
 

@@ -37,6 +37,13 @@ header{display:flex;justify-content:space-between;align-items:center;padding:.75
 #logout-btn{padding:.4rem .8rem;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg2);color:var(--fg2);cursor:pointer;font-size:.8rem}
 #logout-btn:hover{background:var(--border)}
 
+/* View Toggle */
+.view-toggle{display:flex;gap:2px;margin-left:.5rem}
+.toggle-btn{padding:.25rem .6rem;border:1px solid var(--border);background:var(--bg2);color:var(--fg2);cursor:pointer;font-size:.75rem;border-radius:var(--radius)}
+.toggle-btn:first-child{border-radius:var(--radius) 0 0 var(--radius)}
+.toggle-btn:last-child{border-radius:0 var(--radius) var(--radius) 0}
+.toggle-btn.active{background:var(--accent);color:#fff;border-color:var(--accent)}
+
 /* Filters */
 #filters{display:flex;gap:.4rem;flex-wrap:wrap;margin-bottom:1rem}
 .filter-pill{padding:.3rem .7rem;border:1px solid var(--border);border-radius:16px;background:var(--bg);color:var(--fg2);cursor:pointer;font-size:.8rem;white-space:nowrap}
@@ -49,7 +56,8 @@ header{display:flex;justify-content:space-between;align-items:center;padding:.75
 .memory-meta{display:flex;gap:.5rem;align-items:center;margin-bottom:.4rem;flex-wrap:wrap;font-size:.75rem;color:var(--fg2)}
 .memory-meta .cat{background:var(--bg2);padding:.1rem .4rem;border-radius:4px;font-weight:500}
 .memory-meta .tag{color:var(--accent);font-size:.75rem}
-.memory-meta .source-ref{background:#1a3a2a;color:#6ee7b7;padding:.1rem .4rem;border-radius:4px;font-size:.7rem;font-family:monospace}
+.memory-meta .source-ref{background:#e6f4ea;color:#137333;padding:.1rem .4rem;border-radius:4px;font-size:.7rem;font-family:monospace}
+@media(prefers-color-scheme:dark){.memory-meta .source-ref{background:#1a3a2a;color:#6ee7b7}}
 .memory-content{font-size:.87rem;white-space:pre-wrap;word-break:break-word;max-height:6rem;overflow:hidden;cursor:pointer;position:relative}
 .memory-content.expanded{max-height:none}
 .memory-content:not(.expanded)::after{content:"";position:absolute;bottom:0;left:0;right:0;height:2rem;background:linear-gradient(transparent,var(--bg))}
@@ -73,11 +81,27 @@ header{display:flex;justify-content:space-between;align-items:center;padding:.75
 .modal-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem}
 .modal-header h2{font-size:1.1rem}
 .modal-close{background:none;border:none;font-size:1.4rem;cursor:pointer;color:var(--fg2);padding:.2rem .4rem}
-#edit-textarea{flex:1;min-height:250px;padding:.8rem;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg2);color:var(--fg);font-family:inherit;font-size:.87rem;resize:vertical}
+#edit-textarea{flex:1;min-height:200px;padding:.8rem;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg2);color:var(--fg);font-family:inherit;font-size:.87rem;resize:vertical}
 .modal-actions{display:flex;gap:.5rem;justify-content:flex-end;margin-top:1rem}
 .btn-primary{padding:.45rem 1rem;background:var(--accent);color:#fff;border:none;border-radius:var(--radius);cursor:pointer;font-size:.85rem}
 .btn-primary:hover{background:var(--accent-hover)}
 .btn-secondary{padding:.45rem 1rem;background:var(--bg2);color:var(--fg);border:1px solid var(--border);border-radius:var(--radius);cursor:pointer;font-size:.85rem}
+
+/* Edit metadata fields */
+.edit-meta-fields{margin-top:.75rem;display:flex;flex-direction:column;gap:.5rem}
+.field-row{display:flex;align-items:center;gap:.5rem}
+.field-row label{min-width:80px;font-size:.8rem;color:var(--fg2)}
+.field-row input{flex:1;padding:.4rem .6rem;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg2);color:var(--fg);font-size:.85rem}
+
+/* Chart view */
+#chart-view{padding:1rem 0}
+#project-chart{max-height:500px}
+
+/* Toast */
+.toast{position:fixed;bottom:1.5rem;left:50%;transform:translateX(-50%);background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:.6rem 1.2rem;display:flex;gap:1rem;align-items:center;font-size:.85rem;box-shadow:0 4px 12px rgba(0,0,0,.3);z-index:200;animation:toast-in .2s ease}
+.toast .undo-btn{color:var(--accent);cursor:pointer;font-weight:600;background:none;border:none;font-size:.85rem}
+.toast .undo-btn:hover{text-decoration:underline}
+@keyframes toast-in{from{opacity:0;transform:translateX(-50%) translateY(10px)}to{opacity:1;transform:translateX(-50%) translateY(0)}}
 
 /* Empty state */
 .empty{text-align:center;padding:3rem 1rem;color:var(--fg2)}
