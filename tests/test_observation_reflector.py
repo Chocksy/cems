@@ -208,17 +208,17 @@ class TestObservationReflector:
 
     @pytest.mark.asyncio
     async def test_skips_projects_below_threshold(self):
-        """Should skip projects with fewer than 10 observations."""
+        """Should skip projects with fewer than 5 session summaries."""
         from cems.maintenance.observation_reflector import ObservationReflector
 
         mock_memory = MagicMock()
         mock_doc_store = AsyncMock()
 
-        # 5 observations — below threshold
+        # 3 session summaries — below threshold of 5
         obs = [
-            {"id": f"id-{i}", "content": f"Observation {i}", "source_ref": "project:test/repo",
+            {"id": f"id-{i}", "content": f"Session summary {i}", "source_ref": "project:test/repo",
              "priority": "medium", "created_at": f"2026-02-0{i+1}"}
-            for i in range(5)
+            for i in range(3)
         ]
         mock_doc_store.get_documents_by_category.return_value = obs
         mock_memory._ensure_document_store = AsyncMock(return_value=mock_doc_store)
@@ -228,8 +228,8 @@ class TestObservationReflector:
         result = await reflector.run_async()
 
         assert result["projects_processed"] == 0
-        assert result["observations_before"] == 5
-        assert result["observations_after"] == 5
+        assert result["observations_before"] == 3
+        assert result["observations_after"] == 3
 
     @pytest.mark.asyncio
     @patch("cems.maintenance.observation_reflector.reflect_observations")
@@ -277,7 +277,7 @@ class TestObservationReflector:
         # Verify new observations were stored with correct metadata
         assert mock_memory.add_async.call_count == 5
         for call in mock_memory.add_async.call_args_list:
-            assert call.kwargs["category"] == "observation"
+            assert call.kwargs["category"] == "session-summary"
             assert "reflected" in call.kwargs["tags"]
             assert call.kwargs["source_ref"] == "project:test/repo"
 
@@ -355,18 +355,18 @@ class TestObservationReflector:
              "created_at": f"2026-01-{i+10:02d}"}
             for i in range(12)
         ]
-        # Project B: 5 observations (below threshold)
+        # Project B: 3 observations (below threshold of 5)
         obs_b = [
             {"id": f"b-{i}", "content": f"Project B observation {i} with content",
              "source_ref": "project:org/repo-b", "priority": "medium",
              "created_at": f"2026-01-{i+10:02d}"}
-            for i in range(5)
+            for i in range(3)
         ]
 
         all_obs = obs_a + obs_b
 
         mock_reflect.return_value = [
-            {"content": "Consolidated A observation with sufficient length", "priority": "high", "category": "observation"}
+            {"content": "Consolidated A observation with sufficient length", "priority": "high", "category": "session-summary"}
             for _ in range(4)
         ]
 
@@ -381,11 +381,11 @@ class TestObservationReflector:
         reflector = ObservationReflector(mock_memory)
         result = await reflector.run_async()
 
-        # Only project A should be processed
+        # Only project A should be processed (B is below threshold)
         assert result["projects_processed"] == 1
-        assert result["observations_before"] == 17
-        # Project A: 4 consolidated + Project B: 5 untouched
-        assert result["observations_after"] == 9
+        assert result["observations_before"] == 15
+        # Project A: 4 consolidated + Project B: 3 untouched
+        assert result["observations_after"] == 7
         assert result["observations_removed"] == 12
 
     @pytest.mark.asyncio

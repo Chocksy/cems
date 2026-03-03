@@ -854,17 +854,30 @@ async def api_memory_maintenance(request: Request):
             from cems.maintenance.summarization import SummarizationJob
 
             results = {}
-            results["consolidation"] = await ConsolidationJob(memory).run_async(
-                full_sweep=full_sweep, limit=sweep_limit, offset=sweep_offset
-            )
-            results["summarization"] = await SummarizationJob(memory).run_async()
-            results["reindex"] = await ReindexJob(memory).run_async()
-            results["reflect"] = await ObservationReflector(memory).run_async()
+            errors = {}
+
+            jobs = [
+                ("consolidation", lambda: ConsolidationJob(memory).run_async(
+                    full_sweep=full_sweep, limit=sweep_limit, offset=sweep_offset
+                )),
+                ("summarization", lambda: SummarizationJob(memory).run_async()),
+                ("reindex", lambda: ReindexJob(memory).run_async()),
+                ("reflect", lambda: ObservationReflector(memory).run_async()),
+            ]
+
+            for name, run_fn in jobs:
+                try:
+                    results[name] = await run_fn()
+                except Exception as e:
+                    logger.error(f"Maintenance job '{name}' failed: {e}")
+                    errors[name] = str(e)
+                    results[name] = {"error": str(e)}
 
             return JSONResponse({
-                "success": True,
+                "success": len(errors) == 0,
                 "job_type": "all",
                 "results": results,
+                **({"errors": errors} if errors else {}),
             })
 
         # Single job type — run directly with user's memory

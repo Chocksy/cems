@@ -745,6 +745,7 @@ class DocumentStore:
         limit: int = 1000,
         offset: int = 0,
         category: str | None = None,
+        order: Literal["desc", "asc"] = "desc",
     ) -> list[dict[str, Any]]:
         """Get all documents for a user with pagination and filtering.
 
@@ -758,6 +759,7 @@ class DocumentStore:
             limit: Maximum results
             offset: Number of rows to skip (for pagination)
             category: Optional category filter
+            order: Sort order for created_at ("desc" newest-first, "asc" oldest-first)
 
         Returns:
             List of document dicts
@@ -774,10 +776,11 @@ class DocumentStore:
 
         limit_idx, offset_idx = fb.add_raw_values(limit, offset)
 
+        order_dir = "ASC" if order == "asc" else "DESC"
         query = f"""
             SELECT {DOCUMENT_COLUMNS} FROM memory_documents
             WHERE {fb.build()}
-            ORDER BY created_at DESC
+            ORDER BY created_at {order_dir}
             LIMIT ${limit_idx} OFFSET ${offset_idx}
         """
 

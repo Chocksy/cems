@@ -583,6 +583,7 @@ class TestSummarizationJob:
         result = _run(job.run_async())
 
         assert result["categories_updated"] == 1
+        assert result["originals_deleted"] == 4
         mock_summarize.assert_called_once()
         memory.add_async.assert_awaited_once()
 
@@ -590,6 +591,9 @@ class TestSummarizationJob:
         call_kwargs = memory.add_async.call_args[1]
         assert call_kwargs["category"] == "category-summary"
         assert "category:debugging" in call_kwargs["tags"]
+
+        # Verify originals were soft-deleted after summary was created
+        assert doc_store.delete_document.await_count == 4
 
     @patch("cems.llm.summarize_memories")
     def test_summarization_skips_small_categories(self, mock_summarize, mock_memory):
@@ -656,15 +660,17 @@ class TestReindexJob:
         assert result["total_memories"] == 0
 
     def test_reindex_refreshes_embeddings(self, mock_memory):
-        """Re-indexes all docs by calling update_async on each."""
+        """Re-indexes stale docs (>7 days) by calling update_async on each."""
         from cems.maintenance.reindex import ReindexJob
 
         memory, doc_store, _ = mock_memory
 
+        # Docs must be >7 days old to be re-indexed (fresh ones are skipped)
+        old_time = datetime.now(UTC) - timedelta(days=30)
         docs = [
-            _make_doc("doc-1", "Content 1"),
-            _make_doc("doc-2", "Content 2"),
-            _make_doc("doc-3", "Content 3"),
+            _make_doc("doc-1", "Content 1", updated_at=old_time, created_at=old_time),
+            _make_doc("doc-2", "Content 2", updated_at=old_time, created_at=old_time),
+            _make_doc("doc-3", "Content 3", updated_at=old_time, created_at=old_time),
         ]
         doc_store.get_all_documents = AsyncMock(return_value=docs)
         doc_store.delete_document = AsyncMock(return_value=True)
@@ -711,7 +717,7 @@ class TestReindexJob:
         job = ReindexJob(memory)
         _run(job.run_async())
 
-        doc_store.get_all_documents.assert_awaited_once_with(TEST_UUID, limit=5000)
+        doc_store.get_all_documents.assert_awaited_once_with(TEST_UUID, limit=5000, order="asc")
 
 
 class TestSchedulerIntegration:

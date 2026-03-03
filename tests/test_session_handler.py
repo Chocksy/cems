@@ -93,17 +93,18 @@ class TestSessionSummarizeIncrementalMode:
     @patch("cems.api.handlers.session.get_memory")
     @patch("cems.llm.session_summary_extraction.extract_session_summary")
     @pytest.mark.asyncio
-    async def test_incremental_premerges_existing_and_new(
+    async def test_incremental_replaces_document_standalone(
         self, mock_extract, mock_get_memory, mock_memory
     ):
-        """Handler should concatenate existing + new content before upsert."""
+        """Incremental mode should replace (not append) — each epoch doc is standalone.
+
+        The daemon auto-bumps epochs after N observations, so each document
+        covers a bounded window. No appending within an epoch.
+        """
         memory, doc_store = mock_memory
         mock_get_memory.return_value = memory
         mock_extract.return_value = _fake_summary("New block.")
 
-        doc_store.find_document_by_tag = AsyncMock(return_value={
-            "content": "Existing block.",
-        })
         doc_store.upsert_document_by_tag = AsyncMock(return_value=("doc-123", "replaced"))
 
         with patch("cems.chunking.chunk_document", return_value=[_fake_chunk("x")]):
@@ -117,40 +118,33 @@ class TestSessionSummarizeIncrementalMode:
 
             await api_session_summarize(request)
 
-        # Content passed to upsert should be existing + separator + new
+        # Content should be only the new extraction — no appending
         call_kwargs = doc_store.upsert_document_by_tag.call_args
         upsert_content = call_kwargs.kwargs["content"]
-        assert "Existing block." in upsert_content
-        assert "New block." in upsert_content
-        assert "\n\n---\n\n" in upsert_content
+        assert upsert_content == "New block."
+        assert "\n\n---\n\n" not in upsert_content
 
     @patch("cems.api.handlers.session.get_memory")
     @patch("cems.llm.session_summary_extraction.extract_session_summary")
     @pytest.mark.asyncio
-    async def test_incremental_no_exponential_growth(
+    async def test_incremental_no_accumulation(
         self, mock_extract, mock_get_memory, mock_memory
     ):
-        """Regression: simulate 5 incremental calls and verify linear growth.
+        """Regression: incremental calls replace (not append) the epoch document.
 
-        Before the fix, each call doubled the document. With the fix,
-        each call adds exactly one new block.
+        With auto-epoch (daemon-side), each document stays bounded.
+        The server no longer concatenates — each call replaces.
         """
         memory, doc_store = mock_memory
         mock_get_memory.return_value = memory
 
         stored_content = ""
 
-        def fake_find(**kwargs):
-            if stored_content:
-                return {"content": stored_content}
-            return None
-
         async def fake_upsert(**kwargs):
             nonlocal stored_content
             stored_content = kwargs["content"]
             return ("doc-123", "replaced")
 
-        doc_store.find_document_by_tag = AsyncMock(side_effect=fake_find)
         doc_store.upsert_document_by_tag = AsyncMock(side_effect=fake_upsert)
 
         block_sizes = []
@@ -170,18 +164,13 @@ class TestSessionSummarizeIncrementalMode:
                 await api_session_summarize(request)
                 block_sizes.append(len(stored_content))
 
-        # Verify linear growth: each step should add roughly the same amount
-        # With exponential doubling, block_sizes[4] would be ~16x block_sizes[0]
-        # With linear growth, it should be ~5x
-        growth_ratio = block_sizes[4] / block_sizes[0]
-        assert growth_ratio < 10, (
-            f"Content grew {growth_ratio:.0f}x over 5 calls — suggests exponential doubling. "
-            f"Sizes: {block_sizes}"
+        # All sizes should be roughly equal — no accumulation
+        assert all(s == block_sizes[0] for s in block_sizes), (
+            f"Content sizes should be constant (replace, not append). Sizes: {block_sizes}"
         )
 
-        # Also verify we have exactly 5 separator-delimited blocks
-        block_count = stored_content.count("\n\n---\n\n") + 1
-        assert block_count == 5, f"Expected 5 blocks, got {block_count}"
+        # No separators in final content
+        assert "\n\n---\n\n" not in stored_content
 
     @patch("cems.api.handlers.session.get_memory")
     @patch("cems.llm.session_summary_extraction.extract_session_summary")

@@ -14,6 +14,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Skip docs updated within this many days (embeddings are still fresh)
+SKIP_FRESH_DAYS = 7
+
 
 class ReindexJob:
     """Monthly maintenance job for memory re-indexing.
@@ -35,7 +38,8 @@ class ReindexJob:
         doc_store = await self.memory._ensure_document_store()
         user_id = self.config.user_id
 
-        all_docs = await doc_store.get_all_documents(user_id, limit=5000)
+        # Oldest first so we re-embed the stalest docs first
+        all_docs = await doc_store.get_all_documents(user_id, limit=5000, order="asc")
         logger.info(f"Found {len(all_docs)} documents to check for re-indexing")
 
         reindexed = await self._refresh_embeddings(all_docs)
@@ -56,6 +60,8 @@ class ReindexJob:
         1. Re-generates embeddings with the current embedding model
         2. Replaces chunks in the database
 
+        Skips docs updated within SKIP_FRESH_DAYS (embeddings are still current).
+
         Args:
             docs: List of document dicts
 
@@ -64,10 +70,31 @@ class ReindexJob:
         """
         refreshed = 0
         failed = 0
-        log_interval = 10
-        total = len(docs)
+        skipped = 0
+        log_interval = 50
+        fresh_cutoff = datetime.now(UTC) - timedelta(days=SKIP_FRESH_DAYS)
 
+        # Filter to stale docs only
+        stale_docs = []
         for doc in docs:
+            updated_at = doc.get("updated_at") or doc.get("created_at")
+            if updated_at:
+                if isinstance(updated_at, str):
+                    updated_at = datetime.fromisoformat(updated_at)
+                if updated_at.tzinfo is None:
+                    updated_at = updated_at.replace(tzinfo=UTC)
+                if updated_at >= fresh_cutoff:
+                    skipped += 1
+                    continue
+            stale_docs.append(doc)
+
+        total = len(stale_docs)
+        logger.info(
+            f"Re-indexing {total} stale docs (skipped {skipped} fresh, "
+            f"<{SKIP_FRESH_DAYS} days old)"
+        )
+
+        for doc in stale_docs:
             doc_id = doc.get("id")
             content = doc.get("content", "")
             if not doc_id or not content:
@@ -80,19 +107,29 @@ class ReindexJob:
                 else:
                     failed += 1
 
-                if refreshed % log_interval == 0:
+                if refreshed > 0 and refreshed % log_interval == 0:
                     logger.info(f"Re-indexing progress: {refreshed}/{total} documents")
             except Exception as e:
-                logger.warning(f"Failed to re-index document {doc_id}: {e}")
+                logger.warning(f"Failed to re-index document {doc_id}: {repr(e)}")
                 failed += 1
 
         logger.info(
-            f"Re-indexing complete: {refreshed} succeeded, {failed} failed out of {total}"
+            f"Re-indexing complete: {refreshed} succeeded, {failed} failed "
+            f"out of {total} stale ({skipped} skipped fresh)"
         )
         return refreshed
 
+    # Categories that should never be archived (long-lived config docs)
+    PROTECTED_CATEGORIES = {
+        "gate-rules", "guidelines", "preferences",
+        "category-summary", "session-summary",
+    }
+
     async def _archive_dead(self, doc_store, docs: list[dict]) -> int:
         """Soft-delete documents not updated in archive_days.
+
+        Skips protected categories (gate-rules, guidelines, etc.) which are
+        long-lived config docs that should never be auto-archived.
 
         Args:
             doc_store: DocumentStore instance
@@ -106,6 +143,10 @@ class ReindexJob:
         archived = 0
 
         for doc in docs:
+            # Never archive protected categories (long-lived config docs)
+            if doc.get("category", "general") in self.PROTECTED_CATEGORIES:
+                continue
+
             updated_at = doc.get("updated_at") or doc.get("created_at")
             if not updated_at:
                 continue

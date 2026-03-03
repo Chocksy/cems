@@ -1,6 +1,6 @@
-"""Observation reflector — consolidate overlapping observations per project.
+"""Session summary reflector — consolidate overlapping session summaries per project.
 
-Inspired by Mastra's Reflector Agent. Periodically reads all observations
+Inspired by Mastra's Reflector Agent. Periodically reads all session summaries
 for each project and produces a condensed, non-redundant replacement set.
 
 Trigger: nightly (after consolidation) or on-demand via maintenance API.
@@ -18,8 +18,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Minimum observations before triggering reflection
-MIN_OBSERVATIONS_THRESHOLD = 10
+# Minimum session summaries per project before triggering reflection
+MIN_OBSERVATIONS_THRESHOLD = 5
 
 
 class ObservationReflector:
@@ -42,15 +42,15 @@ class ObservationReflector:
         doc_store = await self.memory._ensure_document_store()
         user_id = self.memory.config.user_id
 
-        # Get all observations
+        # Get all session summaries (created by the observer daemon)
         all_obs = await doc_store.get_documents_by_category(
             user_id=user_id,
-            category="observation",
+            category="session-summary",
             limit=500,
         )
 
         if not all_obs:
-            logger.info("No observations found to reflect")
+            logger.info("No session summaries found to reflect")
             return {
                 "projects_processed": 0,
                 "observations_before": 0,
@@ -114,8 +114,8 @@ class ObservationReflector:
                     await self.memory.add_async(
                         content=obs["content"],
                         scope="personal",
-                        category="observation",
-                        tags=["observation", obs.get("priority", "medium"), "reflected"],
+                        category="session-summary",
+                        tags=["session-summary", obs.get("priority", "medium"), "reflected"],
                         infer=False,
                         source_ref=actual_source_ref,
                     )

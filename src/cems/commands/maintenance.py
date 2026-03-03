@@ -15,12 +15,12 @@ def maintenance() -> None:
 
 
 @maintenance.command("run")
-@click.argument("job_type", type=click.Choice(["consolidation", "summarization", "reindex", "all"]))
+@click.argument("job_type", type=click.Choice(["consolidation", "summarization", "reindex", "reflect", "all"]))
 @click.pass_context
 def run_maintenance(ctx: click.Context, job_type: str) -> None:
     """Run a maintenance job immediately.
 
-    JOB_TYPE: consolidation, summarization, reindex, or all
+    JOB_TYPE: consolidation, summarization, reindex, reflect, or all
     """
     try:
         client = get_client(ctx)

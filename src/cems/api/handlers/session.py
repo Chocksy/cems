@@ -116,29 +116,22 @@ async def api_session_summarize(request: Request):
         upsert_mode = "replace"
 
         if mode == "incremental":
-            # Check if there's existing content to append to
-            existing = await doc_store.find_document_by_tag(
-                tag=tag, user_id=user_id, category="session-summary",
-            )
-            if existing:
-                existing_content = existing.get("content", "")
-                if existing_content:
-                    upsert_content = f"{existing_content}\n\n---\n\n{summary['content']}"
-                # upsert_mode stays "replace" — handler pre-merges; upsert just stores
+            # Each epoch document is standalone. The daemon auto-bumps epochs
+            # after N observations, so each document covers a bounded window.
+            # Each incremental call replaces the epoch document with the latest
+            # LLM-extracted facts from the newest transcript chunk.
+            pass
         elif mode == "finalize":
             upsert_mode = "finalize"
 
-        # Safety cap: prevent stored summaries from growing unboundedly.
-        # Each incremental LLM summary is ~1.5-2K chars.
-        # 10K chars ≈ 5-7 incremental segments — enough context without bloat.
-        MAX_STORED_SUMMARY_CHARS = 10_000
+        # Safety cap: each document should be ~1 LLM extraction (~1.5-2K chars).
+        # With auto-epoch, documents don't accumulate. Defensive limit only.
+        MAX_STORED_SUMMARY_CHARS = 5_000
         if len(upsert_content) > MAX_STORED_SUMMARY_CHARS:
-            # Keep only the tail (most recent summaries)
-            upsert_content = upsert_content[-MAX_STORED_SUMMARY_CHARS:]
-            # Clean up: don't start mid-paragraph
-            first_sep = upsert_content.find("\n\n---\n\n")
-            if first_sep > 0:
-                upsert_content = upsert_content[first_sep + 7:]
+            upsert_content = upsert_content[:MAX_STORED_SUMMARY_CHARS]
+            last_newline = upsert_content.rfind("\n")
+            if last_newline > MAX_STORED_SUMMARY_CHARS // 2:
+                upsert_content = upsert_content[:last_newline]
             logger.warning(
                 f"Stored summary capped to ~{MAX_STORED_SUMMARY_CHARS} chars "
                 f"(session: {session_id})"

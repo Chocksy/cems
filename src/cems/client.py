@@ -280,7 +280,7 @@ class CEMSClient:
         return self._request("GET", endpoint)
 
     def maintenance(
-        self, job_type: Literal["consolidation", "summarization", "reindex", "all"]
+        self, job_type: Literal["consolidation", "summarization", "reindex", "reflect", "all"]
     ) -> dict[str, Any]:
         """Run a maintenance job.
 

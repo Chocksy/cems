@@ -4,21 +4,20 @@
 # ///
 
 """
-Stop Hook - Session End Handler
+Stop Hook - Session Logging Handler
 
-This hook runs when Claude stops and:
+This hook runs when Claude stops (fires after EVERY assistant turn) and:
 1. Logs session data (stop.json, optional chat.json)
-2. Writes a "stop" signal for the observer daemon to finalize the session summary
 
-The observer daemon handles all memory extraction (narrative summaries) via
-the /api/session/summarize endpoint. This hook just signals it.
+NOTE: We intentionally do NOT write stop signals here. Claude Code fires
+the Stop hook after every assistant turn, not just session exit. The observer
+daemon's staleness detection handles session finalization.
 """
 
 import argparse
 import json
 import os
 import sys
-import time
 from pathlib import Path
 
 # Import utilities
@@ -45,25 +44,6 @@ def read_transcript(transcript_path: str) -> list[dict] | None:
         return messages if messages else None
     except Exception:
         return None
-
-
-def write_signal(session_id: str, signal_type: str, tool: str = "claude") -> None:
-    """Write a signal file for the observer daemon to pick up.
-
-    Inlined from cems.observer.signals — hooks run standalone via uv and
-    cannot import from the cems package.
-    """
-    signals_dir = Path.home() / ".cems" / "observer" / "signals"
-    signals_dir.mkdir(parents=True, exist_ok=True)
-    signal_file = signals_dir / f"{session_id}.json"
-
-    data = {"type": signal_type, "ts": time.time(), "tool": tool}
-    try:
-        tmp = signal_file.with_suffix(".tmp")
-        tmp.write_text(json.dumps(data))
-        tmp.rename(signal_file)
-    except OSError:
-        pass
 
 
 def main():
@@ -111,9 +91,11 @@ def main():
                 with open(chat_file, "w") as f:
                     json.dump(transcript, f, indent=2)
 
-        # --- Signal the observer daemon to finalize the session summary ---
-        if session_id:
-            write_signal(session_id, "stop", "claude")
+        # NOTE: We intentionally do NOT write a "stop" signal here.
+        # Claude Code fires the Stop hook after EVERY assistant turn, not just
+        # session exit. Writing a stop signal would permanently mark the session
+        # as done (is_done=True) after the first response. The observer daemon's
+        # staleness detection handles finalization when the session truly goes idle.
 
         sys.exit(0)
 

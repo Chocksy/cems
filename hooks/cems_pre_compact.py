@@ -9,7 +9,7 @@ PreCompact Hook - Context compaction handler.
 Fires when Claude Code auto-compacts (context window fills up).
 Writes a "compact" signal for the observer daemon (triggers epoch bump).
 
-Matcher: "auto" only (manual /compact is user-controlled).
+Matcher: "" (matches both auto and manual /compact triggers).
 """
 
 from __future__ import annotations

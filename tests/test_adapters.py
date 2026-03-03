@@ -602,8 +602,11 @@ class TestHandleFinalize:
              patch("cems.observer.state.OBSERVER_STATE_DIR", state_dir):
             handle_finalize(session, state, adapter, "http://localhost:8765", "key")
 
-        assert state.is_done is True
+        # Staleness finalize is non-terminal: bumps epoch, does NOT set is_done
+        assert state.is_done is False
         assert state.last_finalized_at > 0
+        assert state.epoch == 1  # bumped from 0
+        assert state.epoch_observation_count == 0  # reset
         mock_send.assert_called_once()
         call_args = mock_send.call_args
         assert call_args.kwargs.get("mode") == "finalize"
@@ -637,6 +640,9 @@ class TestHandleFinalize:
 
         call_args = mock_send.call_args
         assert call_args.kwargs.get("epoch") == 3
+        # Non-terminal: epoch bumped from 3 to 4, session still alive
+        assert state.epoch == 4
+        assert state.is_done is False
 
 
 class TestHookSignalIntegration:

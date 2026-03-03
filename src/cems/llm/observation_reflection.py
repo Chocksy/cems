@@ -56,7 +56,7 @@ Produce a CONSOLIDATED set that:
 
 Return a JSON array:
 [
-  {{"content": "...", "priority": "high|medium|low", "category": "observation"}}
+  {{"content": "...", "priority": "high|medium|low", "category": "session-summary"}}
 ]
 
 Only return the JSON array. No other text."""
@@ -150,7 +150,7 @@ def _parse_reflected(response: str, max_count: int) -> list[dict]:
         results.append({
             "content": content,
             "priority": priority,
-            "category": "observation",
+            "category": "session-summary",
         })
 
     # Sanity check: output should be fewer than input

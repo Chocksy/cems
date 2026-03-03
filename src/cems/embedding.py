@@ -166,8 +166,8 @@ class EmbeddingClient:
             logger.error(f"Embedding API error: {e.response.status_code} - {e.response.text}")
             raise ValueError(f"Embedding API error: {e.response.status_code}") from e
         except httpx.RequestError as e:
-            logger.error(f"Embedding request failed: {e}")
-            raise ValueError(f"Embedding request failed: {e}") from e
+            logger.error(f"Embedding request failed: {type(e).__name__}: {e!r}")
+            raise ValueError(f"Embedding request failed: {type(e).__name__}: {e!r}") from e
         except (KeyError, IndexError, TypeError) as e:
             logger.error(f"Invalid API response: {e}")
             raise ValueError(f"Invalid embedding response: {e}") from e
@@ -331,8 +331,8 @@ class AsyncEmbeddingClient:
             logger.error(f"Embedding API error: {e.response.status_code} - {e.response.text}")
             raise ValueError(f"Embedding API error: {e.response.status_code}") from e
         except httpx.RequestError as e:
-            logger.error(f"Embedding request failed: {e}")
-            raise ValueError(f"Embedding request failed: {e}") from e
+            logger.error(f"Embedding request failed: {type(e).__name__}: {e!r}")
+            raise ValueError(f"Embedding request failed: {type(e).__name__}: {e!r}") from e
         except (KeyError, IndexError, TypeError) as e:
             logger.error(f"Invalid API response: {e}")
             raise ValueError(f"Invalid embedding response: {e}") from e

@@ -48,6 +48,9 @@ BACKOFF_INTERVAL = 300  # 5 minutes between cycles when backed off
 # Staleness: no file growth for 5 minutes → auto-finalize
 STALE_THRESHOLD = 300  # seconds
 
+# Auto-epoch: bump epoch after N observations to keep documents small
+OBSERVATIONS_PER_EPOCH = 5
+
 
 def send_summary(
     content: str,
@@ -142,13 +145,18 @@ def _build_project_context(session: SessionInfo) -> str | None:
 def check_staleness(state: ObservationState) -> bool:
     """Check if a session is stale (no file growth for STALE_THRESHOLD seconds).
 
-    Only triggers if the session has been observed at least once (to avoid
-    finalizing empty sessions).
+    Only triggers if:
+    - The session has been observed at least once
+    - There has been new activity since the last finalization (prevents
+      re-finalizing an already-finalized idle epoch)
     """
     if state.observation_count == 0:
         return False  # never observed, don't finalize empty
     if state.last_growth_seen_at == 0:
         return False  # first cycle for this state
+    # Don't re-finalize if we already finalized after the last observation
+    if state.last_finalized_at > 0 and state.last_finalized_at >= state.last_observed_at:
+        return False
     idle = time.time() - state.last_growth_seen_at
     return idle > STALE_THRESHOLD
 
@@ -205,6 +213,7 @@ def handle_signal(
 
     if sig.type == "compact":
         state.epoch += 1
+        state.epoch_observation_count = 0
         logger.info(f"Epoch bumped to {state.epoch} for {session.session_id[:8]}")
     elif sig.type == "stop":
         state.is_done = True
@@ -222,7 +231,11 @@ def handle_finalize(
     api_key: str,
     reason: str = "staleness",
 ) -> None:
-    """Finalize a session (from staleness or other non-signal trigger)."""
+    """Finalize the current epoch (from staleness or other non-signal trigger).
+
+    Does NOT set is_done — the session can resume if the file grows again.
+    Bumps epoch so any new activity starts a fresh document.
+    """
     logger.info(
         f"Auto-finalize ({reason}) for {session.session_id[:8]} "
         f"(epoch={state.epoch})"
@@ -232,7 +245,7 @@ def handle_finalize(
     project_context = _build_project_context(session)
 
     success = send_summary(
-        content="(session ended — auto-finalized)",
+        content="(session idle — epoch finalized)",
         session_id=session.session_id,
         source_ref=state.source_ref or session.source_ref,
         project_context=project_context,
@@ -244,9 +257,15 @@ def handle_finalize(
     if not success:
         logger.warning(f"Auto-finalize summary failed for {session.session_id[:8]}")
 
-    state.is_done = True
+    # Bump epoch so new activity gets a fresh document. Do NOT set is_done.
+    state.epoch += 1
+    state.epoch_observation_count = 0
     state.last_finalized_at = time.time()
     save_state(state)
+    logger.info(
+        f"Epoch bumped to {state.epoch} for {session.session_id[:8]} "
+        f"(post-staleness finalize)"
+    )
 
 
 def process_session_growth(
@@ -308,6 +327,17 @@ def process_session_growth(
             state.last_observed_message_id = session.extra["last_observed_message_id"]
         state.last_observed_at = time.time()
         state.observation_count += 1
+        state.epoch_observation_count += 1
+
+        # Auto-epoch: bump after N observations so each document stays small
+        if state.epoch_observation_count >= OBSERVATIONS_PER_EPOCH:
+            state.epoch += 1
+            state.epoch_observation_count = 0
+            logger.info(
+                f"Auto-epoch bump to {state.epoch} for {session.session_id[:8]} "
+                f"(after {OBSERVATIONS_PER_EPOCH} observations)"
+            )
+
         save_state(state)
 
     return success
@@ -344,13 +374,26 @@ def run_cycle(api_url: str, api_key: str) -> int:
                     state.tool = adapter.tool_name
                     save_state(state)
 
-                # Skip completed sessions
+                # Skip completed sessions — unless the file grew (resurrection)
                 if state.is_done:
-                    logger.debug(
-                        f"Skipping done session {session.session_id[:8]} "
-                        f"(tool={adapter.tool_name})"
-                    )
-                    continue
+                    if session.file_size > state.last_observed_bytes:
+                        logger.info(
+                            f"Resurrecting session {session.session_id[:8]}: "
+                            f"file grew from {state.last_observed_bytes} to "
+                            f"{session.file_size} bytes"
+                        )
+                        state.is_done = False
+                        state.epoch += 1
+                        state.epoch_observation_count = 0
+                        state.last_growth_seen_at = time.time()
+                        save_state(state)
+                        # Fall through to normal processing below
+                    else:
+                        logger.debug(
+                            f"Skipping done session {session.session_id[:8]} "
+                            f"(tool={adapter.tool_name})"
+                        )
+                        continue
 
                 # 1. Check signals (cheap file stat)
                 sig = read_signal(session.session_id)

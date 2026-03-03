@@ -33,6 +33,7 @@ class ObservationState:
     last_growth_seen_at: float = 0.0
     is_done: bool = False
     last_observed_message_id: int = 0  # SQLite adapters: max message ID seen
+    epoch_observation_count: int = 0   # Observations within current epoch (resets on epoch bump)
 
 
 def session_tag(session_id: str, epoch: int = 0) -> str:
@@ -101,10 +102,10 @@ def save_state(state: ObservationState) -> None:
 
 
 def cleanup_old_states(max_age_days: int = 7) -> int:
-    """Remove state files for sessions older than max_age_days.
+    """Remove state and signal files for sessions older than max_age_days.
 
     Args:
-        max_age_days: Delete state files older than this many days.
+        max_age_days: Delete state/signal files older than this many days.
 
     Returns:
         Number of files cleaned up.
@@ -123,6 +124,17 @@ def cleanup_old_states(max_age_days: int = 7) -> int:
         except OSError:
             continue
 
+    # Also clean up orphaned signal files
+    signals_dir = OBSERVER_STATE_DIR / "signals"
+    if signals_dir.exists():
+        for signal_file in signals_dir.glob("*.json"):
+            try:
+                if signal_file.stat().st_mtime < cutoff:
+                    signal_file.unlink()
+                    removed += 1
+            except OSError:
+                continue
+
     if removed:
-        logger.info(f"Cleaned up {removed} old observer state files")
+        logger.info(f"Cleaned up {removed} old observer state/signal files")
     return removed
