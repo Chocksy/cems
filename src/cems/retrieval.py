@@ -702,6 +702,10 @@ def apply_score_adjustments(
         time_decay = 1.0 / (1.0 + (days_since_access / 60))  # 60-day half-life
         score *= time_decay
 
+        # Shown-count boost: frequently surfaced memories get a small ranking boost (max 10%)
+        shown_boost = 1.0 + min(result.metadata.access_count, 5) * 0.02
+        score *= shown_boost
+
         # Pinned boost (10%)
         if result.metadata.pinned:
             score *= 1.1

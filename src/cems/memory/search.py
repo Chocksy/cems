@@ -33,6 +33,10 @@ def _make_search_result_from_chunk(chunk: dict, user_id: str) -> SearchResult:
     memory_id = chunk.get("document_id", chunk.get("chunk_id", ""))
     created_at = chunk.get("created_at", datetime.now(UTC))
 
+    # Use last_shown_at as last_accessed if available, otherwise fall back to created_at
+    last_shown_at = chunk.get("last_shown_at")
+    last_accessed = last_shown_at if last_shown_at else created_at
+
     metadata = MemoryMetadata(
         memory_id=memory_id,
         user_id=chunk.get("user_id", user_id),
@@ -45,10 +49,10 @@ def _make_search_result_from_chunk(chunk: dict, user_id: str) -> SearchResult:
         pinned=False,
         pin_reason=None,
         archived=False,
-        access_count=0,
+        access_count=chunk.get("shown_count", 0),
         created_at=created_at,
         updated_at=created_at,
-        last_accessed=created_at,
+        last_accessed=last_accessed,
         expires_at=None,
     )
 
@@ -83,6 +87,9 @@ def _apply_score_adjustments(results: list[SearchResult]) -> list[SearchResult]:
             days_since_access = (now - result.metadata.last_accessed).days
             time_decay = 1.0 / (1.0 + (days_since_access / 60))
             result.score *= time_decay
+            # Shown-count boost (max 10%)
+            shown_boost = 1.0 + min(result.metadata.access_count, 5) * 0.02
+            result.score *= shown_boost
             if result.metadata.pinned:
                 result.score *= 1.1
     return results

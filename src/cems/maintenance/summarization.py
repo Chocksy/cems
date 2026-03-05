@@ -39,6 +39,22 @@ def _doc_age_exceeds(doc: dict, days: int, field: str = "created_at") -> bool:
     return ts < datetime.now(UTC) - timedelta(days=days)
 
 
+def _recently_shown(doc: dict, days: int) -> bool:
+    """Check if a document was shown within the last N days.
+
+    Returns True if last_shown_at is within the threshold, preventing
+    actively-surfaced memories from being pruned.
+    """
+    ts = doc.get("last_shown_at")
+    if not ts:
+        return False
+    if isinstance(ts, str):
+        ts = datetime.fromisoformat(ts)
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=UTC)
+    return ts > datetime.now(UTC) - timedelta(days=days)
+
+
 class SummarizationJob:
     """Weekly maintenance job for memory summarization.
 
@@ -192,6 +208,7 @@ class SummarizationJob:
             d for d in all_docs
             if _doc_age_exceeds(d, stale_days, field="updated_at")
             and d.get("category", "general") not in PROTECTED_CATEGORIES
+            and not _recently_shown(d, stale_days)
         ]
         pruned = 0
 

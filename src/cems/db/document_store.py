@@ -42,7 +42,8 @@ CHUNK_COLUMNS = """
 CHUNK_WITH_DOC_COLUMNS = f"""
     {CHUNK_COLUMNS},
     d.user_id, d.team_id, d.scope, d.category, d.title, d.source, d.source_ref,
-    d.tags, d.created_at AS document_created_at
+    d.tags, d.created_at AS document_created_at,
+    d.shown_count, d.last_shown_at
 """
 
 
@@ -67,6 +68,8 @@ def chunk_row_to_result(row: asyncpg.Record, include_score: bool = False) -> dic
         "source_ref": row["source_ref"],
         "tags": row["tags"] or [],
         "created_at": row["document_created_at"],
+        "shown_count": row["shown_count"],
+        "last_shown_at": row["last_shown_at"],
     }
     if include_score and "score" in row.keys():
         result["score"] = row["score"]
@@ -832,6 +835,7 @@ class DocumentStore:
         offset: int = 0,
         category: str | None = None,
         order: Literal["desc", "asc"] = "desc",
+        tag_prefix: str | None = None,
     ) -> list[dict[str, Any]]:
         """Get all documents for a user with pagination and filtering.
 
@@ -846,6 +850,7 @@ class DocumentStore:
             offset: Number of rows to skip (for pagination)
             category: Optional category filter
             order: Sort order for created_at ("desc" newest-first, "asc" oldest-first)
+            tag_prefix: Optional tag prefix filter (matches docs with any tag starting with this)
 
         Returns:
             List of document dicts
@@ -859,6 +864,11 @@ class DocumentStore:
         )
         if category:
             fb.add_param("category = ${}", category)
+        if tag_prefix:
+            fb.add_param(
+                "EXISTS (SELECT 1 FROM unnest(tags) t WHERE t LIKE ${} || '%')",
+                tag_prefix,
+            )
 
         limit_idx, offset_idx = fb.add_raw_values(limit, offset)
 

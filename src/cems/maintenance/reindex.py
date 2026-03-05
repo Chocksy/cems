@@ -156,6 +156,16 @@ class ReindexJob:
                 updated_at = updated_at.replace(tzinfo=UTC)
 
             if updated_at < cutoff:
+                # Skip if recently shown — actively-surfaced memories shouldn't be archived
+                last_shown = doc.get("last_shown_at")
+                if last_shown:
+                    if isinstance(last_shown, str):
+                        last_shown = datetime.fromisoformat(last_shown)
+                    if last_shown.tzinfo is None:
+                        last_shown = last_shown.replace(tzinfo=UTC)
+                    if last_shown > cutoff:
+                        continue
+
                 doc_id = doc.get("id")
                 if doc_id:
                     try:
