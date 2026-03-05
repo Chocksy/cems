@@ -61,12 +61,12 @@ async def category_distribution(conn, user_filter: str, params: list):
     _section("Category Distribution")
     # Canonical categories from learning_extraction.py
     canonical = {
-        "api", "architecture", "auth", "build", "cli", "config",
-        "database", "debugging", "deployment", "devops", "documentation",
-        "error-handling", "frontend", "general", "git", "infrastructure",
-        "integration", "logging", "monitoring", "networking", "performance",
-        "refactoring", "security", "session-summary", "state-management",
-        "testing", "tooling", "workflow",
+        "api", "architecture", "auth", "config",
+        "database", "debugging", "deployment", "documentation",
+        "frontend", "general", "infrastructure",
+        "monitoring", "networking", "performance",
+        "refactoring", "security", "session-summary",
+        "testing", "workflow",
     }
     rows = await conn.fetch(f"""
         SELECT category, COUNT(*) AS cnt,
@@ -302,13 +302,14 @@ async def recommendations(conn, user_filter: str, params: list):
         SELECT COUNT(DISTINCT category) FROM memory_documents
         {user_filter} {"AND" if user_filter else "WHERE"} deleted_at IS NULL
             AND category NOT IN (
-                'api', 'architecture', 'auth', 'build', 'cli', 'config',
-                'database', 'debugging', 'deployment', 'devops', 'documentation',
-                'error-handling', 'frontend', 'general', 'git', 'infrastructure',
-                'integration', 'logging', 'monitoring', 'networking', 'performance',
-                'refactoring', 'security', 'session-summary', 'state-management',
-                'testing', 'tooling', 'workflow',
-                'gate-rules', 'guidelines', 'preferences', 'category-summary'
+                'api', 'architecture', 'auth', 'config',
+                'database', 'debugging', 'deployment', 'documentation',
+                'frontend', 'general', 'infrastructure',
+                'monitoring', 'networking', 'performance',
+                'refactoring', 'security', 'session-summary',
+                'testing', 'workflow',
+                'gate-rules', 'guidelines', 'preferences', 'category-summary',
+                'observation'
             )
     """, *params)
     if non_canonical_count and non_canonical_count > 0:

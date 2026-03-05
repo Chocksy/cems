@@ -173,7 +173,7 @@ class TestNormalizeCategory:
 
         assert normalize_category("docker") == "infrastructure"
         assert normalize_category("rails") == "general"  # no alias, falls through
-        assert normalize_category("ai") == "development"
+        assert normalize_category("ai") == "general"
         assert normalize_category("sql") == "database"
 
     def test_case_insensitive(self):
