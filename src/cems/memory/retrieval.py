@@ -304,7 +304,7 @@ class RetrievalMixin:
                 for rel in related:
                     metadata = self.get_metadata(rel["id"])
                     if metadata:
-                        base_score = rel.get("relation_similarity", 0.5) or 0.5
+                        base_score = rel.get("relation_similarity", 0.3) or 0.3
                         relation_results.append(
                             SearchResult(
                                 memory_id=rel["id"],
@@ -369,6 +369,11 @@ class RetrievalMixin:
 
         # Re-sort by adjusted score
         candidates.sort(key=lambda x: x.score, reverse=True)
+
+        # Score-gap filter: drop results far below the top score (adaptive cutoff)
+        if candidates and not is_aggregation:
+            cutoff = candidates[0].score * self.config.score_gap_ratio
+            candidates = [c for i, c in enumerate(candidates) if i < 2 or c.score >= cutoff]
 
         total_candidates = sum(len(r) for r in query_results)
         filtered_count = len(candidates)
@@ -613,7 +618,7 @@ class RetrievalMixin:
                 for rel in related:
                     metadata = await self.get_metadata_async(rel["id"])
                     if metadata:
-                        base_score = rel.get("relation_similarity", 0.5) or 0.5
+                        base_score = rel.get("relation_similarity", 0.3) or 0.3
                         relation_results.append(
                             SearchResult(
                                 memory_id=rel["id"],
@@ -711,6 +716,15 @@ class RetrievalMixin:
             )
 
         candidates.sort(key=lambda x: x.score, reverse=True)
+
+        # Score-gap filter: drop results far below the top score (adaptive cutoff)
+        if candidates and not is_aggregation:
+            cutoff = candidates[0].score * self.config.score_gap_ratio
+            before_gap = len(candidates)
+            candidates = [c for i, c in enumerate(candidates) if i < 2 or c.score >= cutoff]
+            if len(candidates) < before_gap:
+                logger.info(f"[RETRIEVAL] Score-gap filter: {before_gap} -> {len(candidates)} (cutoff={cutoff:.3f})")
+
         total_candidates = sum(len(r) for r in query_results)
         filtered_count = len(candidates)
 

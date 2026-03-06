@@ -181,8 +181,12 @@ class CEMSConfig(BaseSettings):
         description="Force query synthesis for preference/recommendation queries even when enable_query_synthesis=False",
     )
     relevance_threshold: float = Field(
-        default=0.4,  # Raised from 0.3 in Phase 2 pipeline quality (filters low-relevance noise)
+        default=0.45,  # Raised from 0.4 to reduce noise (post-RRF scores max ~0.52)
         description="Minimum similarity score to include in results (Stage 3)",
+    )
+    score_gap_ratio: float = Field(
+        default=0.5,
+        description="Adaptive cutoff: drop results scoring below this fraction of the top result",
     )
     default_max_tokens: int = Field(
         default=4000,

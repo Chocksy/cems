@@ -107,7 +107,7 @@ def search_cems(query: str, project: str | None = None) -> tuple[str | None, lis
         return None, [], []
 
     try:
-        payload = {"query": query, "scope": "both"}
+        payload = {"query": query, "scope": "both", "limit": 5}
         if project:
             payload["project"] = project  # Boosts same-project memories via source_ref scoring
 
@@ -130,7 +130,7 @@ def search_cems(query: str, project: str | None = None) -> tuple[str | None, lis
             return None, [], []
 
         # Client-side score filter: drop low-relevance results
-        results = [r for r in results if r.get("score", 0) >= 0.4]
+        results = [r for r in results if r.get("score", 0) >= 0.45]
         if not results:
             return None, [], []
 

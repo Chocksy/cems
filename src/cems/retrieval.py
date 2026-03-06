@@ -703,6 +703,7 @@ def apply_score_adjustments(
     Scoring factors applied (in order):
     1. Priority boost (1.0-2.0x from metadata)
     2. Time decay (category-aware half-life: 21d cognitive, 60d domain, 120d core)
+       - Adaptive ceiling: memories shown 10+ times get min 0.95 decay
     3. Pinned boost (1.1x)
     4. Project scoring (1.3x same-project, 0.8x different-project, 0.9x no-project-tag)
 
@@ -728,11 +729,10 @@ def apply_score_adjustments(
         days_since_access = (now - result.metadata.last_accessed).days
         half_life = _category_half_life(result.metadata.category)
         time_decay = 1.0 / (1.0 + (days_since_access / half_life))
+        # Adaptive decay ceiling: well-validated memories (shown 10+ times) resist decay
+        if result.metadata.access_count >= 10:
+            time_decay = max(time_decay, 0.95)
         score *= time_decay
-
-        # Shown-count boost: frequently surfaced memories get a small ranking boost (max 10%)
-        shown_boost = 1.0 + min(result.metadata.access_count, 5) * 0.02
-        score *= shown_boost
 
         # Pinned boost (10%)
         if result.metadata.pinned:

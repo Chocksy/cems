@@ -6,7 +6,7 @@ Install CEMS (Continuous Evolving Memory System) for your AI coding tools.
 
 - macOS or Linux
 - An API key from your CEMS admin (starts with `cems_usr_`)
-- Your CEMS server URL (e.g., `https://cems.yourcompany.com`)
+- Your CEMS server URL (e.g., `https://cems.chocksy.com`)
 
 ## One-Command Install
 

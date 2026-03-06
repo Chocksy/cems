@@ -1,134 +1,376 @@
 # CEMS Server Deployment Guide
 
-Deploy CEMS for individual or team use with persistent memory across coding sessions.
+Deploy CEMS for your team. The server runs in Docker, developers install the CLI.
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                    Docker Compose                        │
-│                                                          │
-│  ┌─────────────┐   ┌─────────────────────────────────┐  │
-│  │  PostgreSQL  │   │  CEMS Python Server (port 8765) │  │
-│  │  + pgvector  │◄──│  • REST API (Starlette)         │  │
-│  │  (vectors +  │   │  • APScheduler (in-process)     │  │
-│  │   metadata)  │   │  • Embeddings via OpenRouter     │  │
-│  └─────────────┘   └──────────────┬──────────────────┘  │
-│                                    │                     │
-│                    ┌───────────────┘                     │
-│                    ▼                                     │
-│  ┌──────────────────────────────────────────────────┐   │
-│  │  MCP Wrapper (port 8766) — optional              │   │
-│  │  Express.js, StreamableHTTP, stateless           │   │
-│  └──────────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────────┘
-                         │ HTTPS
-                         ▼
-┌─────────────────────────────────────────────────────────┐
-│                    Developer Machines                     │
-│  ┌──────────┐  ┌──────────┐  ┌──────────┐              │
-│  │  Claude   │  │  Cursor  │  │  Codex   │              │
-│  │  Code     │  │  IDE     │  │  CLI     │              │
-│  │  + Hooks  │  │          │  │          │              │
-│  └──────────┘  └──────────┘  └──────────┘              │
-└─────────────────────────────────────────────────────────┘
+  Server (Docker / Kubernetes)             Developer Machines
+  +-------------------------------+        +-------------------+
+  |  PostgreSQL + pgvector        |        |  cems CLI         |
+  |  CEMS Server (port 8765)      | <----- |  + IDE hooks      |
+  |  - REST API (Starlette)       | HTTPS  |                   |
+  |  - Scheduler (APScheduler)    |        |  Claude Code      |
+  |  - Embeddings (OpenRouter)    |        |  Cursor / Codex   |
+  +-------------------------------+        |  Goose            |
+                                           +-------------------+
 ```
 
-**Key points:**
-- Single PostgreSQL with pgvector handles vectors AND metadata (no Qdrant/Redis)
-- Maintenance scheduler runs in-process via APScheduler (no separate worker)
-- MCP wrapper is optional (Claude Code hooks talk directly to REST API)
-- Embeddings via OpenRouter `text-embedding-3-small` (1536-dim)
+- Single PostgreSQL with pgvector (no Redis/Qdrant needed)
+- Maintenance runs in-process (no separate worker)
+- Embeddings via OpenRouter `text-embedding-3-small`
 
 ## Prerequisites
 
 - Docker and Docker Compose
-- 2GB+ RAM, 10GB disk
-- OpenRouter API key
+- [OpenRouter API key](https://openrouter.ai/keys)
 
-## Quick Start
+---
 
-### 1. Clone and Configure
+## Server Setup (Docker Compose)
+
+### 1. Clone and configure
 
 ```bash
-git clone https://github.com/yourusername/cems.git
+git clone https://github.com/chocksy/cems.git
 cd cems
-
-# Create environment file
 cp deploy/.env.example .env
 ```
 
-### 2. Set Environment Variables
+Edit `.env`:
 
 ```bash
-# .env — required
 POSTGRES_PASSWORD=your_secure_password
 OPENROUTER_API_KEY=sk-or-your-key
-CEMS_ADMIN_KEY=cems_admin_your_key_here
+CEMS_ADMIN_KEY=cems_admin_random_string_here
 ```
 
-### 3. Start Services
+### 2. Start
 
 ```bash
 docker compose up -d postgres cems-server
-
-# Check health
 curl http://localhost:8765/health
-# → {"status": "healthy", ...}
 ```
 
-### 4. Create a User
+### 3. Run migrations
+
+The base schema runs automatically. Then run these once:
+
+```bash
+docker exec -i cems-postgres psql -U cems cems < scripts/migrate_docs_schema.sql
+docker exec -i cems-postgres psql -U cems cems < scripts/migrate_soft_delete_feedback.sql
+docker exec -i cems-postgres psql -U cems cems < scripts/migrate_conflicts.sql
+```
+
+### 4. Create users
 
 ```bash
 curl -X POST http://localhost:8765/admin/users \
   -H "Authorization: Bearer $CEMS_ADMIN_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"username": "yourname"}'
-# → {"api_key": "YOUR_KEY_HERE..."}
+  -d '{"username": "alice"}'
+# -> {"api_key": "cems_ak_..."}
 ```
 
-### 5. Install Client Hooks
+Give each developer their API key. That's it for the server.
+
+---
+
+## Client Setup (Developer Machines)
+
+Each developer installs the CEMS CLI and connects to your server.
+
+### Option A: One-line install
 
 ```bash
-# Install CEMS CLI + hooks on each developer machine
+curl -fsSL https://getcems.com/install.sh | bash
+```
+
+Prompts for server URL and API key, then asks which IDEs to configure.
+
+### Option B: Non-interactive
+
+```bash
+CEMS_API_KEY=cems_ak_... CEMS_API_URL=https://cems.chocksy.com \
+  curl -fsSL https://getcems.com/install.sh | bash
+```
+
+### Option C: Manual
+
+```bash
 pip install cems
-cems setup --claude --api-url https://your-server:8765 --api-key YOUR_KEY_HERE
+cems setup --api-url https://cems.chocksy.com --api-key cems_ak_...
 ```
 
-Or for non-interactive install:
+### Supported IDEs
+
+| Flag | What it installs |
+|------|-----------------|
+| `--claude` | 6 hooks, 6 skills, 2 commands, settings.json config |
+| `--cursor` | Rules and memory integration |
+| `--codex` | Commands and skills |
+| `--goose` | Extension config |
+
+Run `cems setup` without flags for interactive IDE selection.
+
+### CEMS CLI Commands
+
+Once installed, developers have these commands:
+
+```
+cems search "Docker port binding"     # Search memories
+cems add "Always use port 8080"       # Store a memory
+cems list                             # List recent memories
+cems delete <id>                      # Soft-delete a memory
+cems status                           # Check connection + stats
+cems health                           # Server health check
+cems debug                            # Debug dashboard (see what hooks inject)
+cems rule                             # Create gate rules
+cems maintenance consolidation        # Trigger maintenance manually
+cems update                           # Update CLI + re-deploy hooks
+cems uninstall                        # Remove hooks from IDE
+```
+
+Credentials are stored in `~/.cems/credentials` and read automatically by the CLI and hooks.
+
+### How hooks work
+
+After `cems setup`, your IDE automatically:
+- **On session start**: Loads your profile (preferences, guidelines, gate rules)
+- **On each prompt**: Searches memory for relevant context, injects it
+- **On tool use**: Applies gate rules (block/warn), extracts learnings
+- **On session end**: Writes an observer signal for session summarization
+
+No manual steps needed. Memories build up and improve over time.
+
+---
+
+## Updating
+
+### Server
 
 ```bash
-export CEMS_API_KEY=YOUR_KEY_HERE
-curl -sSf https://your-server/install.sh | bash
+cd cems && git pull
+docker compose build cems-server
+docker compose up -d cems-server
 ```
+
+### Client
+
+```bash
+cems update
+```
+
+This runs `uv tool install cems --force` and re-deploys hooks.
+
+---
+
+## Kubernetes
+
+Same concepts as Docker Compose, deployed as Kubernetes resources.
+
+### 1. Build and push
+
+```bash
+docker build -t your-registry.com/cems-server:latest .
+docker push your-registry.com/cems-server:latest
+```
+
+### 2. Create namespace and secrets
+
+```bash
+kubectl create namespace cems
+```
+
+```yaml
+# k8s/secrets.yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: cems-secrets
+  namespace: cems
+type: Opaque
+stringData:
+  POSTGRES_PASSWORD: "your_secure_password"
+  OPENROUTER_API_KEY: "sk-or-your-key"
+  CEMS_ADMIN_KEY: "cems_admin_random_string"
+```
+
+### 3. Deploy PostgreSQL
+
+```yaml
+# k8s/postgres.yaml
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+  namespace: cems
+spec:
+  serviceName: postgres
+  replicas: 1
+  selector:
+    matchLabels: { app: postgres }
+  template:
+    metadata:
+      labels: { app: postgres }
+    spec:
+      containers:
+        - name: postgres
+          image: pgvector/pgvector:pg16
+          ports: [{ containerPort: 5432 }]
+          env:
+            - { name: POSTGRES_USER, value: cems }
+            - { name: POSTGRES_DB, value: cems }
+            - name: POSTGRES_PASSWORD
+              valueFrom: { secretKeyRef: { name: cems-secrets, key: POSTGRES_PASSWORD } }
+          volumeMounts:
+            - { name: postgres-data, mountPath: /var/lib/postgresql/data }
+          readinessProbe:
+            exec: { command: ["pg_isready", "-U", "cems"] }
+            periodSeconds: 10
+  volumeClaimTemplates:
+    - metadata: { name: postgres-data }
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources: { requests: { storage: 10Gi } }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: postgres, namespace: cems }
+spec:
+  selector: { app: postgres }
+  ports: [{ port: 5432 }]
+  clusterIP: None
+```
+
+### 4. Deploy CEMS server
+
+```yaml
+# k8s/cems-server.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cems-server
+  namespace: cems
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: cems-server }
+  template:
+    metadata:
+      labels: { app: cems-server }
+    spec:
+      containers:
+        - name: cems-server
+          image: your-registry.com/cems-server:latest
+          ports: [{ containerPort: 8765 }]
+          env:
+            - name: CEMS_DATABASE_URL
+              value: "postgresql://cems:$(POSTGRES_PASSWORD)@postgres.cems.svc.cluster.local:5432/cems"
+            - name: POSTGRES_PASSWORD
+              valueFrom: { secretKeyRef: { name: cems-secrets, key: POSTGRES_PASSWORD } }
+            - name: OPENROUTER_API_KEY
+              valueFrom: { secretKeyRef: { name: cems-secrets, key: OPENROUTER_API_KEY } }
+            - name: CEMS_ADMIN_KEY
+              valueFrom: { secretKeyRef: { name: cems-secrets, key: CEMS_ADMIN_KEY } }
+            - { name: CEMS_MODE, value: server }
+            - { name: CEMS_SERVER_HOST, value: "0.0.0.0" }
+            - { name: CEMS_SERVER_PORT, value: "8765" }
+            - { name: CEMS_EMBEDDING_BACKEND, value: openrouter }
+            - { name: CEMS_EMBEDDING_DIMENSION, value: "1536" }
+            - { name: CEMS_RERANKER_BACKEND, value: disabled }
+          readinessProbe:
+            httpGet: { path: /health, port: 8765 }
+            initialDelaySeconds: 10
+          livenessProbe:
+            httpGet: { path: /health, port: 8765 }
+            initialDelaySeconds: 30
+          resources:
+            requests: { memory: 512Mi, cpu: 250m }
+            limits: { memory: 2Gi, cpu: "1" }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: cems-server, namespace: cems }
+spec:
+  selector: { app: cems-server }
+  ports: [{ port: 8765, targetPort: 8765 }]
+```
+
+### 5. Expose with Ingress
+
+```yaml
+# k8s/ingress.yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: cems-ingress
+  namespace: cems
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+spec:
+  tls:
+    - hosts: [cems.chocksy.com]
+      secretName: cems-tls
+  rules:
+    - host: cems.chocksy.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service: { name: cems-server, port: { number: 8765 } }
+```
+
+### 6. Apply and run migrations
+
+```bash
+kubectl apply -f k8s/
+
+# Wait for ready
+kubectl -n cems wait --for=condition=ready pod -l app=postgres --timeout=120s
+
+# Run migrations
+PG=$(kubectl -n cems get pod -l app=postgres -o jsonpath='{.items[0].metadata.name}')
+for f in scripts/migrate_docs_schema.sql scripts/migrate_soft_delete_feedback.sql scripts/migrate_conflicts.sql; do
+  kubectl -n cems cp $f $PG:/tmp/$(basename $f)
+  kubectl -n cems exec $PG -- psql -U cems cems -f /tmp/$(basename $f)
+done
+```
+
+Then create users the same way as Docker Compose (port-forward or use ingress URL).
+
+---
 
 ## Environment Variables
 
 ### Required
 
-| Variable | Description | Example |
-|----------|-------------|---------|
-| `OPENROUTER_API_KEY` | OpenRouter API key | `sk-or-your-key` |
-| `POSTGRES_PASSWORD` | PostgreSQL password | `secure_password_123` |
-| `CEMS_ADMIN_KEY` | Admin API key for user/team management | `cems_admin_xxx` |
+| Variable | Description |
+|----------|-------------|
+| `POSTGRES_PASSWORD` | PostgreSQL password |
+| `OPENROUTER_API_KEY` | OpenRouter API key |
+| `CEMS_ADMIN_KEY` | Admin key for `/admin/*` endpoints |
 
 ### Optional
 
 | Variable | Default | Description |
 |----------|---------|-------------|
+| `CEMS_DATABASE_URL` | auto | PostgreSQL connection string |
+| `CEMS_SERVER_PORT` | `8765` | Server port |
 | `CEMS_EMBEDDING_BACKEND` | `openrouter` | Embedding provider |
-| `CEMS_EMBEDDING_DIMENSION` | `1536` | Embedding vector dimension |
-| `CEMS_EMBEDDING_MODEL` | `text-embedding-3-small` | Embedding model |
-| `CEMS_RERANKER_BACKEND` | `disabled` | Reranker (disabled recommended) |
-| `CEMS_NIGHTLY_HOUR` | `3` | Hour for nightly consolidation |
-| `CEMS_WEEKLY_DAY` | `sun` | Day for weekly summarization |
-| `CEMS_WEEKLY_HOUR` | `4` | Hour for weekly summarization |
-| `CEMS_MONTHLY_DAY` | `1` | Day for monthly reindex |
-| `CEMS_MONTHLY_HOUR` | `5` | Hour for monthly reindex |
+| `CEMS_EMBEDDING_DIMENSION` | `1536` | Vector dimension |
+| `CEMS_RERANKER_BACKEND` | `disabled` | Reranker (keep disabled) |
+| `CEMS_NIGHTLY_HOUR` | `3` | Consolidation hour (UTC) |
+| `CEMS_WEEKLY_DAY` | `sun` | Summarization day |
+| `CEMS_STALE_DAYS` | `90` | Days before memory is stale |
+| `CEMS_ARCHIVE_DAYS` | `180` | Days before memory is archived |
+
+---
 
 ## API Endpoints
 
-### Memory (authenticated — `Authorization: Bearer cems_usr_xxx`)
+### Memory (requires `Authorization: Bearer <user_api_key>`)
 
 | Method | Path | Description |
 |--------|------|-------------|
@@ -136,139 +378,97 @@ curl -sSf https://your-server/install.sh | bash
 | POST | `/api/memory/search` | Search memories |
 | POST | `/api/memory/forget` | Soft-delete a memory |
 | POST | `/api/memory/update` | Update memory content |
+| POST | `/api/memory/restore` | Restore a soft-deleted memory |
 | POST | `/api/memory/maintenance` | Run maintenance job |
+| POST | `/api/memory/log-shown` | Log shown memories (feedback) |
 | GET | `/api/memory/get?id=X` | Get full document |
 | GET | `/api/memory/list` | List memories |
-| GET | `/api/memory/status` | Memory stats |
-| GET | `/api/memory/profile` | Profile context |
-| GET | `/api/memory/foundation` | Foundation guidelines |
-| GET | `/api/memory/gate-rules` | Gate rules |
-| POST | `/api/memory/log-shown` | Log shown memories |
+| GET | `/api/memory/status` | Stats + health |
+| GET | `/api/memory/profile` | Profile context (session start) |
+| GET | `/api/memory/gate-rules` | Gate rules (pre-tool-use) |
 
 ### Session & Tools
 
 | Method | Path | Description |
 |--------|------|-------------|
-| POST | `/api/session/summarize` | Summarize a session |
+| POST | `/api/session/summarize` | Summarize a coding session |
 | POST | `/api/tool/learning` | Submit tool learning |
 
-### Admin (requires `CEMS_ADMIN_KEY`)
+### Admin (requires `Authorization: Bearer <admin_key>`)
 
 | Method | Path | Description |
 |--------|------|-------------|
-| POST | `/admin/users` | Create user |
+| POST | `/admin/users` | Create user (returns API key) |
 | GET | `/admin/users` | List users |
+| DELETE | `/admin/users/{id}` | Revoke user |
 | POST | `/admin/teams` | Create team |
-| GET | `/admin/db/stats` | Database statistics |
+| GET | `/admin/db/stats` | Database stats |
 
-### Index
+---
 
-| Method | Path | Description |
-|--------|------|-------------|
-| POST | `/api/index/repo` | Index a git repo |
-| POST | `/api/index/path` | Index a local path |
+## Maintenance
 
-## Maintenance Schedule
-
-The scheduler runs in-process (APScheduler). No separate worker needed.
+Runs automatically via APScheduler. No cron or worker needed.
 
 | Job | Schedule | Description |
 |-----|----------|-------------|
-| Consolidation | Nightly 3 AM | Merge duplicate memories |
-| Reflection | Nightly 3:30 AM | Consolidate overlapping observations |
-| Summarization | Weekly Sun 4 AM | Compress old memories, prune stale |
-| Re-indexing | Monthly 1st 5 AM | Rebuild embeddings, archive dead |
+| Consolidation | Nightly 3 AM | Merge duplicates, detect conflicts |
+| Reflection | Nightly 3:30 AM | Consolidate observations |
+| Summarization | Weekly Sun 4 AM | Compress old memories |
+| Re-indexing | Monthly 1st 5 AM | Rebuild embeddings |
 
-Run manually via API:
+Trigger manually via CLI or API:
 
 ```bash
-curl -X POST http://localhost:8765/api/memory/maintenance \
+cems maintenance consolidation
+# or
+curl -X POST https://cems.chocksy.com/api/memory/maintenance \
   -H "Authorization: Bearer $CEMS_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"job_type": "consolidation"}'
 ```
 
-## Database Migrations
-
-After initial setup, run migrations in order:
-
-```bash
-# 1. Base schema (auto-runs via init.sql in Docker)
-# 2. Document+chunk model
-docker exec -i cems-postgres psql -U cems cems < deploy/migrate_docs_schema.sql
-
-# 3. Soft-delete + feedback columns
-docker exec -i cems-postgres psql -U cems cems < scripts/migrate_soft_delete_feedback.sql
-```
+---
 
 ## Backup and Restore
 
 ```bash
-# Backup PostgreSQL (includes vectors — no separate backup needed)
+# Backup
 docker exec cems-postgres pg_dump -U cems cems > backup_$(date +%Y%m%d).sql
 
 # Restore
 cat backup.sql | docker exec -i cems-postgres psql -U cems cems
 ```
 
-## Production Deployment
+---
 
-### With Coolify
+## Production Checklist
 
-```bash
-coolify context use production
-coolify app deploy cems
-```
+- [ ] Strong `POSTGRES_PASSWORD` and `CEMS_ADMIN_KEY` (32+ random chars)
+- [ ] TLS via reverse proxy, Ingress, or Coolify
+- [ ] PostgreSQL port (5432) not exposed externally
+- [ ] Automated backups (pg_dump cron)
+- [ ] Per-developer API keys (revoke with `DELETE /admin/users/{id}`)
+- [ ] Health monitoring on `GET /health`
 
-### SSL/TLS
-
-Put CEMS behind a reverse proxy (Caddy, nginx, Traefik):
-
-```nginx
-server {
-    listen 443 ssl;
-    server_name cems.yourcompany.com;
-
-    location / {
-        proxy_pass http://localhost:8765;
-        proxy_http_version 1.1;
-        proxy_set_header Host $host;
-        proxy_read_timeout 120s;
-    }
-}
-```
-
-### Health Check
-
-```bash
-curl http://localhost:8765/health
-# → {"status": "healthy", "database": "connected", ...}
-```
+---
 
 ## Troubleshooting
 
-### Server won't start
-
+**Server won't start:**
 ```bash
 docker compose logs cems-server --tail 50
-
-# Common issues:
-# - Missing OPENROUTER_API_KEY
-# - PostgreSQL not ready (wait for healthcheck)
-# - Port 8765 in use
+# Common: missing OPENROUTER_API_KEY, postgres not ready, port in use
 ```
 
-### Rebuild after code changes
-
+**Migrations failed:**
 ```bash
-docker compose build cems-server
-docker compose up -d cems-server
+docker exec cems-postgres psql -U cems cems -c "\dt memory_*"
+# Re-run — they are idempotent
 ```
 
-## Security
-
-- Keep PostgreSQL internal (don't expose port 5432 externally)
-- Use TLS in production
-- Rotate API keys regularly
-- Admin key should not be shared with developers
-- User API keys are per-developer; revoke via `DELETE /admin/users/{id}`
+**Search returns nothing:**
+```bash
+cems status   # Check document count
+cems search "test"  # Verify connectivity
+```

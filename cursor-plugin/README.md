@@ -71,7 +71,7 @@ If you run your own CEMS server, override the MCP URL in Cursor settings:
   "mcpServers": {
     "cems": {
       "type": "http",
-      "url": "https://your-server.com/mcp",
+      "url": "https://cems.chocksy.com/mcp",
       "headers": {
         "Authorization": "Bearer ${CEMS_API_KEY}"
       }

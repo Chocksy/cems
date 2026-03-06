@@ -252,7 +252,7 @@ For team usage, deploy CEMS as a server. Requires Docker Compose.
    curl -X POST http://localhost:8765/admin/users \
      -H "Authorization: Bearer $CEMS_ADMIN_KEY" \
      -H "Content-Type: application/json" \
-     -d '{"username": "yourname"}'
+     -d '{"username": "alice"}'
    # Returns: {"api_key": "cems_usr_..."}
    ```
 

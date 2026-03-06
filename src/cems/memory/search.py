@@ -90,10 +90,10 @@ def _apply_score_adjustments(results: list[SearchResult]) -> list[SearchResult]:
             days_since_access = (now - result.metadata.last_accessed).days
             half_life = _category_half_life(result.metadata.category)
             time_decay = 1.0 / (1.0 + (days_since_access / half_life))
+            # Adaptive decay ceiling: well-validated memories resist decay
+            if result.metadata.access_count >= 10:
+                time_decay = max(time_decay, 0.95)
             result.score *= time_decay
-            # Shown-count boost (max 10%)
-            shown_boost = 1.0 + min(result.metadata.access_count, 5) * 0.02
-            result.score *= shown_boost
             if result.metadata.pinned:
                 result.score *= 1.1
     return results

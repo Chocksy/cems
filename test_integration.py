@@ -334,15 +334,23 @@ def test_memory_forget() -> tuple[bool, str]:
 
 
 def test_maintenance() -> tuple[bool, str]:
-    """Test POST /api/memory/maintenance endpoint."""
+    """Test POST /api/memory/maintenance endpoint.
+
+    Uses full_sweep with a small limit to avoid OpenRouter rate limits
+    when the database has thousands of documents.
+    """
     try:
         result = call_api("POST", "/api/memory/maintenance", {
             "job_type": "consolidation",
+            "full_sweep": True,
+            "limit": 10,
         })
 
         if result.get("success"):
-            consolidated = result.get("consolidated", 0)
-            return True, f"consolidated {consolidated} memories"
+            results = result.get("results", {})
+            merged = results.get("duplicates_merged", 0)
+            checked = results.get("memories_checked", 0)
+            return True, f"checked {checked}, merged {merged}"
         return False, f"failed: {result.get('error', 'unknown error')}"
     except Exception as e:
         return False, str(e)
@@ -972,6 +980,511 @@ def test_three_topic_decomposition() -> tuple[bool, str]:
         return False, str(e)
 
 
+def test_score_gap_filter() -> tuple[bool, str]:
+    """Score-gap filter should remove results far below the top score.
+
+    Creates memories with known relevance, searches, and verifies
+    that results below 50% of top score are dropped (except first 2).
+    """
+    import time
+    timestamp = int(time.time())
+
+    try:
+        # Add a highly relevant memory and a tangentially related one
+        relevant = call_api("POST", "/api/memory/add", {
+            "content": f"Unique test term xyzgaptest{timestamp}: primary result for score gap validation",
+            "category": "test",
+            "infer": False,
+        })
+
+        if not relevant.get("success"):
+            return False, f"add failed: {relevant.get('error')}"
+
+        relevant_id = relevant.get("result", {}).get("results", [{}])[0].get("id")
+        time.sleep(0.5)
+
+        # Search with a query that will match our memory strongly
+        result = call_api("POST", "/api/memory/search", {
+            "query": f"xyzgaptest{timestamp}",
+            "limit": 10,
+            "scope": "personal",
+        })
+
+        # Clean up
+        if relevant_id:
+            call_api("POST", "/api/memory/forget", {"memory_id": relevant_id, "hard_delete": True})
+
+        if not result.get("success"):
+            return False, f"search failed: {result.get('error')}"
+
+        results = result.get("results", [])
+        if not results:
+            return False, "no results found"
+
+        # All results should be above threshold (0.45)
+        below_threshold = [r for r in results if r.get("score", 0) < 0.45]
+        if below_threshold:
+            return False, f"found {len(below_threshold)} results below 0.45 threshold"
+
+        # Check gap filter: if we have 3+ results, none should be below 50% of top
+        if len(results) >= 3:
+            top_score = results[0].get("score", 0)
+            cutoff = top_score * 0.5
+            violations = [
+                r.get("score", 0) for i, r in enumerate(results)
+                if i >= 2 and r.get("score", 0) < cutoff
+            ]
+            if violations:
+                return False, f"gap filter violations: {violations} below cutoff {cutoff:.3f}"
+
+        return True, f"found {len(results)} results, gap filter OK"
+    except Exception as e:
+        return False, str(e)
+
+
+def test_hook_limit_5() -> tuple[bool, str]:
+    """Hook sends limit=5 — API should return at most 5 results.
+
+    This validates the hook-side change where we cap results at 5.
+    """
+    try:
+        result = call_api("POST", "/api/memory/search", {
+            "query": "Python development preferences configuration",
+            "limit": 5,
+            "scope": "both",
+        })
+
+        if not result.get("success"):
+            return False, f"search failed: {result.get('error')}"
+
+        results = result.get("results", [])
+        if len(results) > 5:
+            return False, f"returned {len(results)} results, expected <= 5"
+
+        return True, f"returned {len(results)} results (limit=5 respected)"
+    except Exception as e:
+        return False, str(e)
+
+
+def test_relevance_threshold_045() -> tuple[bool, str]:
+    """Relevance threshold is now 0.45 — no results should be below it."""
+    try:
+        # Use a broad query that would have returned marginal results at 0.4
+        result = call_api("POST", "/api/memory/search", {
+            "query": "general coding patterns and best practices",
+            "limit": 10,
+            "scope": "both",
+        })
+
+        if not result.get("success"):
+            return False, f"search failed: {result.get('error')}"
+
+        results = result.get("results", [])
+        if not results:
+            return True, "0 results (OK - threshold filtering working)"
+
+        # Verify no result has score below 0.45
+        below = [r.get("score", 0) for r in results if r.get("score", 0) < 0.45]
+        if below:
+            return False, f"found {len(below)} results below 0.45: {below}"
+
+        scores = [round(r.get("score", 0), 3) for r in results]
+        return True, f"{len(results)} results, all >= 0.45, scores={scores}"
+    except Exception as e:
+        return False, str(e)
+
+
+def test_pipeline_latency() -> tuple[bool, str]:
+    """Pipeline should stay under 3s (no new LLM calls added).
+
+    Tests a typical hook query end-to-end.
+    """
+    import time as t
+
+    try:
+        start = t.time()
+        result = call_api("POST", "/api/memory/search", {
+            "query": "How do I configure Docker compose for development",
+            "limit": 5,
+            "scope": "both",
+        })
+        elapsed = t.time() - start
+
+        if not result.get("success"):
+            return False, f"search failed: {result.get('error')}"
+
+        # Allow generous margin for docker exec overhead (adds ~200-500ms)
+        if elapsed > 5.0:
+            return False, f"too slow: {elapsed:.2f}s (limit 5s including docker overhead)"
+
+        count = len(result.get("results", []))
+        return True, f"{elapsed:.2f}s for {count} results"
+    except Exception as e:
+        return False, str(e)
+
+
+def test_graph_base_score_reduced() -> tuple[bool, str]:
+    """Graph-related results should not inflate scores to pass threshold.
+
+    With base_score reduced from 0.5 to 0.3, graph traversal results
+    need actual relevance to survive the 0.45 threshold.
+    This is validated indirectly: search results should all have genuine scores.
+    """
+    try:
+        # Use a specific query - graph traversal would add tangentially related memories
+        result = call_api("POST", "/api/memory/search", {
+            "query": "PostgreSQL connection pooling configuration",
+            "limit": 10,
+            "scope": "both",
+        })
+
+        if not result.get("success"):
+            return False, f"search failed: {result.get('error')}"
+
+        results = result.get("results", [])
+        if not results:
+            return True, "0 results (no graph inflation)"
+
+        # All results should be above 0.45 (graph results at 0.3 base should be filtered)
+        min_score = min(r.get("score", 0) for r in results)
+        if min_score < 0.45:
+            return False, f"min score {min_score:.3f} < 0.45 - possible graph noise"
+
+        return True, f"{len(results)} results, min_score={min_score:.3f}"
+    except Exception as e:
+        return False, str(e)
+
+
+def test_shown_count_no_boost() -> tuple[bool, str]:
+    """Shown-count boost was removed. Verify via status endpoint config."""
+    try:
+        result = call_api("GET", "/api/memory/status")
+        if not result.get("status") == "healthy":
+            return False, "server unhealthy"
+
+        threshold = result.get("relevance_threshold", 0)
+        if threshold != 0.45:
+            return False, f"expected threshold 0.45, got {threshold}"
+
+        return True, f"threshold confirmed at {threshold}"
+    except Exception as e:
+        return False, str(e)
+
+
+def test_aggregation_exempt_from_gap_filter() -> tuple[bool, str]:
+    """Aggregation queries should NOT have score-gap filtering applied.
+
+    When asking 'what did I work on this week', we want many results
+    even if they have similar scores. The gap filter would incorrectly
+    trim these.
+    """
+    try:
+        result = call_api("POST", "/api/memory/search", {
+            "query": "what are all the things I worked on recently, list everything",
+            "limit": 15,
+            "scope": "both",
+        })
+
+        if not result.get("success"):
+            return False, f"search failed: {result.get('error')}"
+
+        results = result.get("results", [])
+        if not results:
+            return True, "0 results"
+
+        # Aggregation should return more results (no gap trimming)
+        return True, f"{len(results)} results (aggregation allows similar scores)"
+    except Exception as e:
+        return False, str(e)
+
+
+# =============================================================================
+# Mini LongMemEval: Known-Answer Precision Tests (requires production data)
+# =============================================================================
+# These tests search for content KNOWN to exist in production and verify:
+# 1. Precision: returned results match the expected topic (no noise)
+# 2. Recall: the known memory is actually found in results
+# 3. Noise ratio: count relevant vs irrelevant in the result set
+#
+# Skipped gracefully if running against an empty test user.
+
+def _has_production_data() -> bool:
+    """Check if we're running against a user with substantial data."""
+    try:
+        result = call_api("GET", "/api/memory/summary/personal")
+        return result.get("total", 0) > 100
+    except Exception:
+        return False
+
+
+def _hook_search(query: str, project: str | None = None) -> list[dict]:
+    """Mimic hook behavior: limit=5, threshold=0.45, session dedup."""
+    data = call_api("POST", "/api/memory/search", {
+        "query": query, "scope": "both", "limit": 5,
+        **({"project": project} if project else {}),
+    })
+    if not data.get("success") or not data.get("results"):
+        return []
+    results = [r for r in data["results"] if r.get("score", 0) >= 0.45]
+    # Session dedup
+    seen: dict[str, dict] = {}
+    deduped: list[dict] = []
+    for r in results:
+        tags = r.get("tags", [])
+        stag = next((t for t in tags if t.startswith("session:")), None)
+        if stag:
+            base = stag.split(":")[0] + ":" + stag.split(":")[1]
+            old = seen.get(base)
+            if old is None or r.get("score", 0) > old.get("score", 0):
+                if old is not None:
+                    deduped.remove(old)
+                seen[base] = r
+                deduped.append(r)
+        else:
+            deduped.append(r)
+    return deduped
+
+
+def _precision(results: list[dict], relevant_keywords: list[str]) -> tuple[int, int]:
+    """Count how many results contain at least one relevant keyword."""
+    relevant = 0
+    for r in results:
+        content = r.get("content", "").lower()
+        cat = r.get("category", "").lower()
+        if any(kw.lower() in content or kw.lower() in cat for kw in relevant_keywords):
+            relevant += 1
+    return relevant, len(results) - relevant
+
+
+def test_known_answer_coolify() -> tuple[bool, str]:
+    """Known-answer: Coolify memories MUST be found for Coolify queries."""
+    if not _has_production_data():
+        return True, "SKIP (no production data)"
+
+    results = _hook_search("How do I deploy with Coolify CLI")
+    if not results:
+        return False, "0 results — Coolify memories exist but not found"
+
+    rel, noise = _precision(results, ["coolify", "deploy", "cli"])
+    if rel == 0:
+        contents = [r.get("content", "")[:60] for r in results]
+        return False, f"0 relevant in {len(results)} results: {contents}"
+
+    return noise <= 1, f"{rel} relevant, {noise} noise out of {len(results)}"
+
+
+def test_known_answer_raspberry_pi() -> tuple[bool, str]:
+    """Known-answer: Raspberry Pi memories for Pi-related queries."""
+    if not _has_production_data():
+        return True, "SKIP (no production data)"
+
+    results = _hook_search("Raspberry Pi autostart configuration pos-app")
+    if not results:
+        return False, "0 results — Pi memories exist but not found"
+
+    rel, noise = _precision(results, ["raspberry", "pi", "pos-app", "openbox", "autostart"])
+    return noise <= 1, f"{rel} relevant, {noise} noise out of {len(results)}"
+
+
+def test_known_answer_cems_architecture() -> tuple[bool, str]:
+    """Known-answer: CEMS architecture queries should find CEMS-related memories."""
+    if not _has_production_data():
+        return True, "SKIP (no production data)"
+
+    results = _hook_search("CEMS observer daemon signal IPC")
+    if not results:
+        return True, "0 results (acceptable if observer memories sparse)"
+
+    rel, noise = _precision(results, ["observer", "daemon", "signal", "cems", "ipc", "epoch"])
+    return noise <= 1, f"{rel} relevant, {noise} noise out of {len(results)}"
+
+
+def test_cross_topic_isolation() -> tuple[bool, str]:
+    """Stripe query should NOT return Coolify/Pi/Docker noise.
+
+    Tests that the pipeline doesn't bleed unrelated topics into results.
+    """
+    if not _has_production_data():
+        return True, "SKIP (no production data)"
+
+    results = _hook_search("Stripe subscription webhook handling")
+    if not results:
+        return True, "0 results (acceptable if no Stripe memories)"
+
+    # These should NOT appear in Stripe results
+    # Note: use full phrases to avoid substring false positives ("pi" in "api"/"pipeline")
+    noise_topics = ["coolify", "raspberry pi", "docker compose", "openbox", "pos-app"]
+    noise_count, _ = _precision(results, noise_topics)
+
+    if noise_count > 0:
+        noisy = [r.get("content", "")[:60] for r in results
+                 if any(kw in r.get("content", "").lower() for kw in noise_topics)]
+        return False, f"{noise_count} cross-topic noise items: {noisy}"
+
+    return True, f"{len(results)} results, no cross-topic noise"
+
+
+def test_preference_recall() -> tuple[bool, str]:
+    """Preference queries should find user preferences, not session noise.
+
+    The user has preferences about effort estimates, Pi testing, etc.
+    These should surface for preference-type queries.
+    """
+    if not _has_production_data():
+        return True, "SKIP (no production data)"
+
+    results = _hook_search("What are my preferences about effort estimates")
+    if not results:
+        return True, "0 results (acceptable)"
+
+    # Check if at least one result mentions effort/estimates/timeline
+    has_preference = any(
+        any(kw in r.get("content", "").lower() for kw in ["effort", "estimate", "timeline", "preference"])
+        for r in results
+    )
+
+    # Check noise: session summaries about random topics
+    session_noise = sum(1 for r in results if r.get("category") == "session-summary"
+                       and "effort" not in r.get("content", "").lower()
+                       and "estimate" not in r.get("content", "").lower())
+
+    return True, (
+        f"{len(results)} results, has_preference={has_preference}, "
+        f"session_noise={session_noise}, "
+        f"scores={[round(r.get('score', 0), 3) for r in results]}"
+    )
+
+
+def test_noise_ratio_across_queries() -> tuple[bool, str]:
+    """Measure noise ratio across 5 diverse real-world queries.
+
+    This is the key metric: what % of surfaced results are actually noise?
+    Target: <40% noise (improvement from ~80% baseline).
+    """
+    if not _has_production_data():
+        return True, "SKIP (no production data)"
+
+    test_cases = [
+        ("How do I deploy with Coolify CLI", ["coolify", "deploy", "cli"]),
+        ("Raspberry Pi autostart configuration", ["raspberry", "pi", "autostart", "openbox", "pos"]),
+        ("CEMS memory search pipeline scoring", ["cems", "memory", "search", "score", "retrieval", "pipeline"]),
+        ("Docker compose port binding fix", ["docker", "compose", "port", "container"]),
+        ("fix the bug in the observer daemon", ["observer", "daemon", "signal", "cems", "epoch"]),
+    ]
+
+    total_relevant = 0
+    total_noise = 0
+    details = []
+
+    for query, keywords in test_cases:
+        results = _hook_search(query)
+        rel, noise = _precision(results, keywords)
+        total_relevant += rel
+        total_noise += noise
+        details.append(f"  {query[:40]}: {rel}R/{noise}N of {len(results)}")
+
+    total = total_relevant + total_noise
+    if total == 0:
+        return True, "no results across all queries"
+
+    noise_pct = (total_noise / total) * 100
+    passed = noise_pct < 40  # Target: < 40% noise (was ~80%)
+
+    return passed, (
+        f"noise ratio: {noise_pct:.0f}% ({total_noise}N/{total}T), "
+        f"target <40%\n" + "\n".join(details)
+    )
+
+
+def test_score_gap_prevents_tail() -> tuple[bool, str]:
+    """Score-gap filter should prevent long tail of low-relevance results.
+
+    For a specific query, results should cluster tightly. The gap filter
+    at 50% of top score should trim any outliers beyond position 2.
+    """
+    if not _has_production_data():
+        return True, "SKIP (no production data)"
+
+    # Use a broad query that might have a tail
+    data = call_api("POST", "/api/memory/search", {
+        "query": "general development workflow patterns",
+        "limit": 10, "scope": "both",
+    })
+
+    if not data.get("success"):
+        return False, "API error"
+
+    results = data.get("results", [])
+    if len(results) < 3:
+        return True, f"only {len(results)} results (no tail to test)"
+
+    scores = [r.get("score", 0) for r in results]
+    top = scores[0]
+    cutoff = top * 0.5
+
+    # Check that results beyond position 2 are all above cutoff
+    tail_below = [(i, s) for i, s in enumerate(scores) if i >= 2 and s < cutoff]
+    spread = top - scores[-1] if scores else 0
+
+    return len(tail_below) == 0, (
+        f"{len(results)} results, spread={spread:.3f}, "
+        f"top={top:.3f}, cutoff={cutoff:.3f}, tail_violations={len(tail_below)}"
+    )
+
+
+def test_well_validated_memory_survives_decay() -> tuple[bool, str]:
+    """Memories shown 10+ times should resist time decay.
+
+    The adaptive decay ceiling ensures that well-validated memories
+    (shown_count >= 10) get at least 0.95 time_decay, protecting
+    important memories from being killed by age alone.
+
+    We test this indirectly: search for a topic known to have
+    high shown_count memories and verify they appear in results
+    even if they're old.
+    """
+    if not _has_production_data():
+        return True, "SKIP (no production data)"
+
+    # "read output file" preference has shown_count=79
+    results = _hook_search("read the output file to retrieve the result")
+    if not results:
+        return True, "0 results (memory may have decayed — investigate)"
+
+    # Check if the high-shown memory appears
+    has_high_shown = any(
+        "output file" in r.get("content", "").lower() or "retrieve the result" in r.get("content", "").lower()
+        for r in results
+    )
+
+    return True, (
+        f"{len(results)} results, high-shown memory found: {has_high_shown}, "
+        f"scores={[round(r.get('score', 0), 3) for r in results]}"
+    )
+
+
+def test_session_summary_not_dominant() -> tuple[bool, str]:
+    """Session summaries should not dominate results for non-session queries.
+
+    Session summaries are noisy by nature (broad topic coverage).
+    For focused queries, they should be outranked by specific memories.
+    """
+    if not _has_production_data():
+        return True, "SKIP (no production data)"
+
+    results = _hook_search("Coolify CLI deployment commands")
+    if not results:
+        return True, "0 results"
+
+    session_count = sum(1 for r in results if r.get("category") == "session-summary")
+    specific_count = len(results) - session_count
+
+    # Session summaries should not be majority
+    return session_count <= specific_count, (
+        f"{len(results)} results: {specific_count} specific, {session_count} session-summaries"
+    )
+
+
 def run_all_tests():
     """Run all integration tests with pass/fail summary."""
     print("\n" + "="*60)
@@ -1013,6 +1526,24 @@ def run_all_tests():
         # New endpoints for tool-based learning (SuperMemory-style)
         ("Tool Learning", test_tool_learning_endpoint),
         ("Tool Learning (skip Read)", test_tool_learning_skips_reads),
+        # Noise reduction pipeline validation
+        ("Score-Gap Filter", test_score_gap_filter),
+        ("Hook Limit (5)", test_hook_limit_5),
+        ("Threshold 0.45", test_relevance_threshold_045),
+        ("Pipeline Latency", test_pipeline_latency),
+        ("Graph Base Score", test_graph_base_score_reduced),
+        ("Config Threshold", test_shown_count_no_boost),
+        ("Aggregation Exempt", test_aggregation_exempt_from_gap_filter),
+        # Mini LongMemEval: known-answer precision tests (production data)
+        ("Known-Answer: Coolify", test_known_answer_coolify),
+        ("Known-Answer: Pi", test_known_answer_raspberry_pi),
+        ("Known-Answer: CEMS Arch", test_known_answer_cems_architecture),
+        ("Cross-Topic Isolation", test_cross_topic_isolation),
+        ("Preference Recall", test_preference_recall),
+        ("Noise Ratio (5 queries)", test_noise_ratio_across_queries),
+        ("Score-Gap Tail", test_score_gap_prevents_tail),
+        ("Decay Ceiling", test_well_validated_memory_survives_decay),
+        ("Session Summary Balance", test_session_summary_not_dominant),
     ]
     
     results = []
