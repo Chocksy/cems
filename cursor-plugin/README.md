@@ -13,7 +13,7 @@ Give your Cursor AI agent persistent memory across sessions. CEMS stores prefere
 
 ### 1. Get an API Key
 
-Sign up at [cems.chocksy.com](https://cems.chocksy.com) to get your API key.
+Get an API key from your CEMS admin (see [Deployment Guide](../docs/DEPLOYMENT.md)).
 
 ### 2. Set Environment Variable
 
@@ -71,7 +71,7 @@ If you run your own CEMS server, override the MCP URL in Cursor settings:
   "mcpServers": {
     "cems": {
       "type": "http",
-      "url": "https://cems.chocksy.com/mcp",
+      "url": "https://cems.example.com/mcp",
       "headers": {
         "Authorization": "Bearer ${CEMS_API_KEY}"
       }
@@ -102,7 +102,7 @@ For shared team memory, add the `X-Team-ID` header:
   "mcpServers": {
     "cems": {
       "type": "http",
-      "url": "https://mcp-cems.chocksy.com/mcp",
+      "url": "https://mcp-cems.example.com/mcp",
       "headers": {
         "Authorization": "Bearer ${CEMS_API_KEY}",
         "X-Team-ID": "your-team-name"

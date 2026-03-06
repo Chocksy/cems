@@ -80,6 +80,8 @@ Give each developer their API key. That's it for the server.
 
 Each developer installs the CEMS CLI and connects to your server.
 
+Replace `cems.example.com` below with your actual server address — either your domain or `localhost:8765` for local Docker.
+
 ### Option A: One-line install
 
 ```bash
@@ -91,7 +93,7 @@ Prompts for server URL and API key, then asks which IDEs to configure.
 ### Option B: Non-interactive
 
 ```bash
-CEMS_API_KEY=cems_ak_... CEMS_API_URL=https://cems.chocksy.com \
+CEMS_API_KEY=cems_ak_... CEMS_API_URL=https://cems.example.com \
   curl -fsSL https://getcems.com/install.sh | bash
 ```
 
@@ -99,7 +101,7 @@ CEMS_API_KEY=cems_ak_... CEMS_API_URL=https://cems.chocksy.com \
 
 ```bash
 pip install cems
-cems setup --api-url https://cems.chocksy.com --api-key cems_ak_...
+cems setup --api-url https://cems.example.com --api-key cems_ak_...
 ```
 
 ### Supported IDEs
@@ -310,10 +312,10 @@ metadata:
     cert-manager.io/cluster-issuer: letsencrypt-prod
 spec:
   tls:
-    - hosts: [cems.chocksy.com]
+    - hosts: [cems.example.com]
       secretName: cems-tls
   rules:
-    - host: cems.chocksy.com
+    - host: cems.example.com
       http:
         paths:
           - path: /
@@ -422,7 +424,7 @@ Trigger manually via CLI or API:
 ```bash
 cems maintenance consolidation
 # or
-curl -X POST https://cems.chocksy.com/api/memory/maintenance \
+curl -X POST https://cems.example.com/api/memory/maintenance \
   -H "Authorization: Bearer $CEMS_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"job_type": "consolidation"}'
