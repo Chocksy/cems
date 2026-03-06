@@ -11,7 +11,7 @@
 #
 # Environment variables:
 #   CEMS_API_KEY   — Your CEMS API key (required for non-interactive)
-#   CEMS_API_URL   — CEMS server URL (default: https://cems.chocksy.com)
+#   CEMS_API_URL   — CEMS server URL (required, e.g. https://cems.example.com)
 #   CEMS_TOOL      — Which tool to configure: claude, cursor, goose, all (default: claude)
 #
 # What it does:

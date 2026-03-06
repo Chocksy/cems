@@ -181,9 +181,12 @@ def main():
         pass
 
     # Credentials file takes priority for daemon (env vars may be stale/session-specific)
-    api_url = _file_creds.get("CEMS_API_URL") or os.getenv("CEMS_API_URL", "https://cems.chocksy.com")
+    api_url = _file_creds.get("CEMS_API_URL") or os.getenv("CEMS_API_URL", "")
     api_key = _file_creds.get("CEMS_API_KEY") or os.getenv("CEMS_API_KEY", "")
 
+    if not api_url:
+        print("Error: Set CEMS_API_URL in ~/.cems/credentials or environment", file=sys.stderr)
+        sys.exit(1)
     if not api_key:
         print("Error: Set CEMS_API_KEY in ~/.cems/credentials or environment", file=sys.stderr)
         sys.exit(1)

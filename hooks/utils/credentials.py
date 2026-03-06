@@ -6,7 +6,7 @@ falling back to ~/.cems/credentials file. This allows team members to
 configure CEMS once via `install.sh` without needing shell exports.
 
 Credentials file format (dotenv):
-    CEMS_API_URL=https://cems.chocksy.com
+    CEMS_API_URL=https://cems.example.com
     CEMS_API_KEY=cems_ak_...
 """
 

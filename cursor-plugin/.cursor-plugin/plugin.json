@@ -17,7 +17,7 @@
   "mcpServers": {
     "cems": {
       "type": "http",
-      "url": "https://mcp-cems.chocksy.com/mcp",
+      "url": "https://cems.example.com/mcp",
       "headers": {
         "Authorization": "Bearer ${CEMS_API_KEY}"
       }
