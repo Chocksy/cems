@@ -76,6 +76,12 @@ curl -X POST http://localhost:8765/api/memory/search \
 
 ### Create a user (admin)
 
+**CLI (recommended):**
+```bash
+cems admin --admin-key $CEMS_ADMIN_KEY users create alice
+```
+
+**curl:**
 ```bash
 curl -X POST http://localhost:8765/admin/users \
   -H "Authorization: Bearer $CEMS_ADMIN_KEY" \

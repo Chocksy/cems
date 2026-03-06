@@ -71,11 +71,8 @@ done
 ### 2. Create users
 
 ```bash
-curl -X POST http://localhost:8765/admin/users \
-  -H "Authorization: Bearer $CEMS_ADMIN_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"username": "alice"}'
-# Returns: {"api_key": "cems_ak_..."}
+cems admin --admin-key $CEMS_ADMIN_KEY users create alice
+# Returns the API key — save it, shown only once!
 ```
 
 ### 3. Install the client

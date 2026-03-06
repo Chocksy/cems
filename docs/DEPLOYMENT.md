@@ -84,12 +84,11 @@ done
 ### Create users
 
 ```bash
-curl -X POST http://localhost:8765/admin/users \
-  -H "Authorization: Bearer $CEMS_ADMIN_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"username": "alice"}'
-# -> {"api_key": "cems_ak_..."}
+cems admin --admin-key $CEMS_ADMIN_KEY users create alice
+# Returns the API key — save it, shown only once!
 ```
+
+Or with email: `cems admin --admin-key $CEMS_ADMIN_KEY users create alice --email alice@example.com`
 
 Give each developer their API key. That's it for the server.
 
