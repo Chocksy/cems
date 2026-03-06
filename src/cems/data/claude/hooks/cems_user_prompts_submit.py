@@ -58,6 +58,37 @@ def is_confirmatory(prompt: str) -> bool:
     return False
 
 
+_URL_RE = re.compile(r'https?://\S+')
+_CODE_BLOCK_RE = re.compile(r'```[\s\S]*?```')
+_INLINE_CODE_RE = re.compile(r'`[^`]{10,}`')  # Only strip long inline code (10+ chars)
+_FILE_PATH_RE = re.compile(r'(?:^|\s)(?:/[\w./-]+|~[\w./-]+)')
+_FILLER_RE = re.compile(
+    r'^(?:ok(?:ay)?|alright|so|now|also|and|but|well|right|cool|great|nice|perfect|awesome)'
+    r'(?:\s+(?:all good|good|then|let\'?s|,|\.))?\s*[.,;]?\s*',
+    re.IGNORECASE,
+)
+
+
+def _clean_search_query(text: str) -> str:
+    """Clean raw user text into a better search query.
+
+    Strips URLs, code blocks, file paths, and conversational filler
+    that hurt embedding similarity. Conservative — only removes
+    patterns that are clearly noise for search.
+    """
+    cleaned = _URL_RE.sub('', text)
+    cleaned = _CODE_BLOCK_RE.sub('', cleaned)
+    cleaned = _INLINE_CODE_RE.sub('', cleaned)
+    cleaned = _FILE_PATH_RE.sub(' ', cleaned)
+    cleaned = _FILLER_RE.sub('', cleaned)
+    # Collapse whitespace
+    cleaned = re.sub(r'\s+', ' ', cleaned).strip()
+    # If cleaning removed too much, fall back to original
+    if len(cleaned) < 10:
+        return text.strip()
+    return cleaned
+
+
 def search_cems(query: str, project: str | None = None) -> tuple[str | None, list[str], list[dict]]:
     """
     Search CEMS for relevant memories.
@@ -452,7 +483,8 @@ def main():
                 assistant_text = read_last_assistant_message(transcript_path, max_chars=5000)
                 if assistant_text and len(assistant_text.strip()) >= 3:
                     project = get_project_id(cwd) if cwd else None
-                    memories, memory_ids, _ = search_cems(assistant_text.strip(), project=project)
+                    clean_assistant = _clean_search_query(assistant_text.strip())
+                    memories, memory_ids, _ = search_cems(clean_assistant, project=project)
                     if memories:
                         output_parts.append(f"""<memory-recall>
 CONTEXT for confirmed action:
@@ -489,12 +521,13 @@ Review these memories before proceeding.
         # This ensures PreToolUse hook has cached gate rules to check
         populate_gate_cache(project)
 
-        # 1. Memory awareness - search CEMS (user_text already has XML tags stripped)
+        # 1. Memory awareness - search CEMS (clean query for better embedding match)
         if len(user_text) >= 3:
-            memories, memory_ids, score_details = search_cems(user_text, project=project)
+            search_query = _clean_search_query(user_text)
+            memories, memory_ids, score_details = search_cems(search_query, project=project)
             if memories:
                 memory_context = f"""<memory-recall>
-RELEVANT MEMORIES found for "{user_text}":
+RELEVANT MEMORIES found for "{search_query}":
 
 {memories}
 

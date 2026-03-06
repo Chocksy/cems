@@ -7,8 +7,11 @@ Subsequent calls only read from byte_offset to EOF (append-only file).
 from __future__ import annotations
 
 import json
+import logging
 import os
 import time
+import urllib.request
+import urllib.error
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -307,6 +310,40 @@ class EventIndex:
             "pending_signals": pending_signals,
         }
 
+    def get_observer_session_memories(self, sid: str) -> list[dict]:
+        """Fetch stored memories for an observer session via CEMS API.
+
+        Uses credentials from ~/.cems/credentials to call the CEMS API's
+        /api/memory/list endpoint with tag_prefix filter.
+        Falls back to client-side filtering if server doesn't support tag_prefix.
+        """
+        creds = _load_cems_credentials()
+        if not creds["url"] or not creds["key"]:
+            return []
+
+        short_id = sid[:12]
+        tag_prefix = f"session:{short_id}"
+        url = (
+            f"{creds['url'].rstrip('/')}/api/memory/list"
+            f"?category=session-summary&tag_prefix={tag_prefix}&limit=50"
+        )
+        req = urllib.request.Request(url, headers={
+            "Authorization": f"Bearer {creds['key']}",
+        })
+        try:
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                data = json.loads(resp.read())
+                results = data.get("results", [])
+                # Client-side filter: ensure tags actually match the prefix
+                # (handles older API servers that ignore tag_prefix)
+                return [
+                    m for m in results
+                    if any(t.startswith(tag_prefix) for t in m.get("tags", []))
+                ]
+        except (urllib.error.URLError, json.JSONDecodeError, OSError) as e:
+            logging.getLogger(__name__).debug(f"Failed to fetch memories for {sid}: {e}")
+            return []
+
     def get_status(self) -> dict:
         """Return system status info — file sizes, daemon, caches."""
         self.refresh()
@@ -404,3 +441,38 @@ def _list_gate_caches() -> list[dict]:
         except (json.JSONDecodeError, OSError):
             pass
     return caches
+
+
+_cems_creds_cache: dict[str, str] | None = None
+
+
+def _load_cems_credentials() -> dict[str, str]:
+    """Load CEMS API URL and key from env vars or ~/.cems/credentials."""
+    global _cems_creds_cache
+    if _cems_creds_cache is not None:
+        return _cems_creds_cache
+
+    url = os.environ.get("CEMS_API_URL", "")
+    key = os.environ.get("CEMS_API_KEY", "")
+
+    if not url or not key:
+        creds_file = Path.home() / ".cems" / "credentials"
+        try:
+            if creds_file.exists():
+                for line in creds_file.read_text().splitlines():
+                    line = line.strip()
+                    if not line or line.startswith("#"):
+                        continue
+                    if "=" in line:
+                        k, _, v = line.partition("=")
+                        k = k.strip()
+                        v = v.strip().strip("'\"")
+                        if k == "CEMS_API_URL" and not url:
+                            url = v
+                        elif k == "CEMS_API_KEY" and not key:
+                            key = v
+        except OSError:
+            pass
+
+    _cems_creds_cache = {"url": url, "key": key}
+    return _cems_creds_cache

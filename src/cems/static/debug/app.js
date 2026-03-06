@@ -577,7 +577,10 @@
     setActiveNav("observer");
     views["observer-detail"].innerHTML = '<div class="loading">Loading observer session...</div>';
 
-    const data = await api(`/api/observer/sessions/${sid}`);
+    const [data, memories] = await Promise.all([
+      api(`/api/observer/sessions/${sid}`),
+      api(`/api/observer/sessions/${sid}/memories`),
+    ]);
 
     if (data.error) {
       views["observer-detail"].innerHTML = `<div class="empty">${esc(data.error)}</div>`;
@@ -620,6 +623,37 @@
           <span class="status-val">${esc(sessionTag)}</span>
         </div>
       </div>`;
+
+    // Stored memories section
+    const memList = Array.isArray(memories) ? memories : [];
+    html += `<div class="status-section">
+      <h3>Stored Memories <span class="badge badge-blue">${memList.length}</span></h3>`;
+
+    if (memList.length) {
+      // Sort by created_at descending (newest first)
+      memList.sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""));
+
+      for (const mem of memList) {
+        const tags = (mem.tags || []).filter(t => t.startsWith("session:"));
+        const epochTag = tags.find(t => t.includes(":e")) || tags[0] || "";
+        const epochLabel = epochTag.includes(":e")
+          ? "epoch " + epochTag.split(":e")[1]
+          : "epoch 0";
+
+        html += `<div class="memory-card">
+          <div class="memory-card-header">
+            <span class="badge badge-purple">${esc(epochLabel)}</span>
+            <span class="badge badge-gray">${esc(mem.category || "")}</span>
+            ${mem.source_ref ? `<span class="badge badge-green">${esc(mem.source_ref)}</span>` : ""}
+            <span style="color:var(--fg3);font-size:.72rem;margin-left:auto">${esc(mem.created_at || "")}</span>
+          </div>
+          <pre class="memory-card-content">${esc(mem.content || "")}</pre>
+        </div>`;
+      }
+    } else {
+      html += `<div style="color:var(--fg3);font-size:.82rem">No stored memories found for this session. Check CEMS credentials in ~/.cems/credentials.</div>`;
+    }
+    html += `</div>`;
 
     // Daemon log lines
     const logLines = data.daemon_log || [];

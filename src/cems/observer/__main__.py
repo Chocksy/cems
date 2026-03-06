@@ -129,10 +129,18 @@ def main():
     parser.add_argument("--verbose", "-v", action="store_true", help="Enable debug logging")
     args = parser.parse_args()
 
-    logging.basicConfig(
-        level=logging.DEBUG if args.verbose else logging.INFO,
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    )
+    log_level = logging.DEBUG if args.verbose else logging.INFO
+    log_format = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    logging.basicConfig(level=log_level, format=log_format)
+
+    # Also log to daemon.log file (for debug dashboard visibility)
+    if not args.once:
+        log_dir = Path.home() / ".cems" / "observer"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        file_handler = logging.FileHandler(log_dir / "daemon.log")
+        file_handler.setLevel(logging.INFO)
+        file_handler.setFormatter(logging.Formatter(log_format))
+        logging.getLogger("cems.observer").addHandler(file_handler)
 
     # Singleton enforcement: only one daemon can run at a time
     if not args.once:

@@ -82,7 +82,18 @@ class DebugHandler(SimpleHTTPRequestHandler):
             self._json_response(data)
 
         elif path.startswith("/api/observer/sessions/"):
-            sid = path.split("/api/observer/sessions/")[1]
+            rest = path.split("/api/observer/sessions/")[1]
+            # Check for /memories sub-resource
+            if rest.endswith("/memories"):
+                sid = rest[:-9]  # strip "/memories"
+                if "/" in sid or "\\" in sid or ".." in sid:
+                    self._json_response({"error": "Invalid session ID"}, 400)
+                    return
+                data = self.index.get_observer_session_memories(sid)
+                self._json_response(data)
+                return
+
+            sid = rest
             if "/" in sid or "\\" in sid or ".." in sid:
                 self._json_response({"error": "Invalid session ID"}, 400)
                 return

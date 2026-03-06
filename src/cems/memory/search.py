@@ -79,13 +79,17 @@ def _apply_score_adjustments(results: list[SearchResult]) -> list[SearchResult]:
     """Apply priority boost and time decay to scores in-place.
 
     Mutates scores on each result and returns the same list for chaining.
+    Uses category-aware decay from retrieval module.
     """
+    from cems.retrieval import _category_half_life
+
     now = datetime.now(UTC)
     for result in results:
         if result.metadata:
             result.score *= result.metadata.priority
             days_since_access = (now - result.metadata.last_accessed).days
-            time_decay = 1.0 / (1.0 + (days_since_access / 60))
+            half_life = _category_half_life(result.metadata.category)
+            time_decay = 1.0 / (1.0 + (days_since_access / half_life))
             result.score *= time_decay
             # Shown-count boost (max 10%)
             shown_boost = 1.0 + min(result.metadata.access_count, 5) * 0.02

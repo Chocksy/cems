@@ -1195,16 +1195,17 @@ async def api_memory_log_shown(request: Request):
 async def api_memory_list(request: Request):
     """REST API endpoint to list memories with pagination and filtering.
 
-    GET /api/memory/list?limit=50&offset=0&category=testing&scope=personal&q=search
+    GET /api/memory/list?limit=50&offset=0&category=testing&scope=personal&q=search&tag_prefix=session:abc
 
     Returns paginated results for browsing. If `q` is provided, uses semantic search
-    instead of listing.
+    instead of listing. `tag_prefix` filters for docs with any tag starting with the prefix.
     """
     try:
         limit = min(int(request.query_params.get("limit", "50")), 200)
         offset = int(request.query_params.get("offset", "0"))
         category = request.query_params.get("category")
         scope = request.query_params.get("scope")
+        tag_prefix = request.query_params.get("tag_prefix")
         q = request.query_params.get("q", "").strip()
 
         memory = get_memory()
@@ -1248,6 +1249,7 @@ async def api_memory_list(request: Request):
             limit=limit,
             offset=offset,
             category=category,
+            tag_prefix=tag_prefix,
         )
         total = await doc_store.count_documents(
             user_id=user_id,

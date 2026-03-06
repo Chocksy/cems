@@ -665,6 +665,31 @@ def deduplicate_results(results: list["SearchResult"]) -> list["SearchResult"]:
 # =============================================================================
 
 
+# Category-based decay tiers (inspired by AuraSDK's 4-level hierarchy).
+# Maps categories to half-life values for time decay scoring.
+# Core categories (preferences, guidelines) persist longer than session notes.
+_CATEGORY_HALF_LIFE: dict[str, int] = {
+    # Core tier — long-lived user facts (120-day half-life)
+    "preferences": 120,
+    "guidelines": 120,
+    "gate-rules": 120,
+    # Cognitive tier — ephemeral session/tool notes (21-day half-life)
+    "session-summary": 21,
+    "tool-learning": 21,
+    "category-summary": 21,
+    "observation": 21,
+}
+# All other categories use the default domain tier (60-day half-life).
+_DEFAULT_HALF_LIFE = 60
+
+
+def _category_half_life(category: str | None) -> int:
+    """Return the decay half-life (in days) for a memory category."""
+    if not category:
+        return _DEFAULT_HALF_LIFE
+    return _CATEGORY_HALF_LIFE.get(category, _DEFAULT_HALF_LIFE)
+
+
 def apply_score_adjustments(
     result: "SearchResult",
     project: str | None = None,
@@ -677,7 +702,7 @@ def apply_score_adjustments(
 
     Scoring factors applied (in order):
     1. Priority boost (1.0-2.0x from metadata)
-    2. Time decay (60-day half-life)
+    2. Time decay (category-aware half-life: 21d cognitive, 60d domain, 120d core)
     3. Pinned boost (1.1x)
     4. Project scoring (1.3x same-project, 0.8x different-project, 0.9x no-project-tag)
 
@@ -695,11 +720,14 @@ def apply_score_adjustments(
         # Priority boost (1.0 default, up to 2.0 for hot memories)
         score *= result.metadata.priority
 
-        # Time decay: 50% penalty per 2 months since last access
-        # Slower decay helps with temporal reasoning queries over longer periods
+        # Time decay with category-aware half-life.
+        # Core categories (preferences, guidelines) decay slowly (120d).
+        # Domain categories (general, api, ...) use default (60d).
+        # Cognitive categories (session-summary, tool-learning) decay fast (21d).
         now = datetime.now(UTC)
         days_since_access = (now - result.metadata.last_accessed).days
-        time_decay = 1.0 / (1.0 + (days_since_access / 60))  # 60-day half-life
+        half_life = _category_half_life(result.metadata.category)
+        time_decay = 1.0 / (1.0 + (days_since_access / half_life))
         score *= time_decay
 
         # Shown-count boost: frequently surfaced memories get a small ranking boost (max 10%)

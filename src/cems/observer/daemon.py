@@ -430,10 +430,14 @@ def run_cycle(api_url: str, api_key: str) -> int:
     return observations_triggered
 
 
+_shutdown_requested = False
+
+
 def _handle_sigterm(signum, frame):
     """Handle SIGTERM for graceful shutdown."""
+    global _shutdown_requested
     logger.info("SIGTERM received, shutting down...")
-    raise SystemExit(0)
+    _shutdown_requested = True
 
 
 def run_daemon(api_url: str, api_key: str) -> None:
@@ -442,6 +446,8 @@ def run_daemon(api_url: str, api_key: str) -> None:
     Polls every POLL_INTERVAL seconds, processes active sessions
     across all tool adapters, and periodically cleans up old state files.
     """
+    global _shutdown_requested
+    _shutdown_requested = False
     signal.signal(signal.SIGTERM, _handle_sigterm)
 
     adapters = get_adapters()
@@ -456,7 +462,7 @@ def run_daemon(api_url: str, api_key: str) -> None:
     cycle = 0
     consecutive_failures = 0
 
-    while True:
+    while not _shutdown_requested:
         try:
             triggered = run_cycle(api_url, api_key)
 
@@ -474,6 +480,9 @@ def run_daemon(api_url: str, api_key: str) -> None:
         except Exception as e:
             logger.error(f"Error in observer cycle: {e}")
             consecutive_failures += 1
+
+        if _shutdown_requested:
+            break
 
         if consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
             if consecutive_failures == MAX_CONSECUTIVE_FAILURES:
