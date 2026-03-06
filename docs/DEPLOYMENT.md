@@ -29,40 +29,59 @@ Deploy CEMS for your team. The server runs in Docker, developers install the CLI
 
 ## Server Setup (Docker Compose)
 
-### 1. Clone and configure
+### Option A: Docker Hub image (recommended)
 
-```bash
-git clone https://github.com/chocksy/cems.git
-cd cems
-cp deploy/.env.example .env
-```
+No git clone needed. Just create two files:
 
-Edit `.env`:
-
+**`.env`**
 ```bash
 POSTGRES_PASSWORD=your_secure_password
 OPENROUTER_API_KEY=sk-or-your-key
 CEMS_ADMIN_KEY=cems_admin_random_string_here
 ```
 
-### 2. Start
+**`docker-compose.yml`** — download or copy from [`deploy/docker-compose.yml`](../deploy/docker-compose.yml):
 
 ```bash
-docker compose up -d postgres cems-server
-curl http://localhost:8765/health
+curl -fsSLO https://raw.githubusercontent.com/chocksy/cems/main/deploy/docker-compose.yml
 ```
 
-### 3. Run migrations
+Start:
 
-The base schema runs automatically. Then run these once:
+```bash
+docker compose up -d
+```
 
+### Option B: Build from source
+
+```bash
+git clone https://github.com/chocksy/cems.git
+cd cems
+cp deploy/.env.example .env
+# Edit .env with your credentials
+docker compose up -d postgres cems-server
+```
+
+### Run migrations
+
+After starting the server (either option), run these once:
+
+**If you cloned the repo:**
 ```bash
 docker exec -i cems-postgres psql -U cems cems < scripts/migrate_docs_schema.sql
 docker exec -i cems-postgres psql -U cems cems < scripts/migrate_soft_delete_feedback.sql
 docker exec -i cems-postgres psql -U cems cems < scripts/migrate_conflicts.sql
 ```
 
-### 4. Create users
+**If using Docker Hub image (no clone):**
+```bash
+for f in migrate_docs_schema.sql migrate_soft_delete_feedback.sql migrate_conflicts.sql; do
+  curl -fsSL "https://raw.githubusercontent.com/chocksy/cems/main/scripts/$f" | \
+    docker exec -i cems-postgres psql -U cems cems
+done
+```
+
+### Create users
 
 ```bash
 curl -X POST http://localhost:8765/admin/users \
@@ -151,6 +170,13 @@ No manual steps needed. Memories build up and improve over time.
 
 ### Server
 
+**Docker Hub:**
+```bash
+docker compose pull cems-server
+docker compose up -d cems-server
+```
+
+**From source:**
 ```bash
 cd cems && git pull
 docker compose build cems-server
@@ -171,9 +197,15 @@ This runs `uv tool install cems --force` and re-deploys hooks.
 
 Same concepts as Docker Compose, deployed as Kubernetes resources.
 
-### 1. Build and push
+### 1. Image
+
+Use the public Docker Hub image or build your own:
 
 ```bash
+# Public image (no build needed)
+docker pull chocksy/cems-server:latest
+
+# Or build and push to your private registry
 docker build -t your-registry.com/cems-server:latest .
 docker push your-registry.com/cems-server:latest
 ```
@@ -264,7 +296,7 @@ spec:
     spec:
       containers:
         - name: cems-server
-          image: your-registry.com/cems-server:latest
+          image: chocksy/cems-server:latest  # or your-registry.com/cems-server:latest
           ports: [{ containerPort: 8765 }]
           env:
             - name: CEMS_DATABASE_URL
