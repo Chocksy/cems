@@ -402,15 +402,24 @@ def _merge_settings(claude_dir: Path, template_path: Path) -> None:
             existing_hooks[event_name] = cems_entries
         else:
             # Event exists — check if CEMS hooks are already registered
-            existing_commands = set()
+            # Match on script filename (not full command) to catch different runners
+            # e.g. "uv run ~/.claude/hooks/cems_stop.py" and
+            #      "$HOME/.claude/hooks/run_with_uv.sh $HOME/.claude/hooks/cems_stop.py"
+            # both resolve to cems_stop.py
+            def _script_names(cmd: str) -> set[str]:
+                """Extract cems_*.py script names from a hook command."""
+                return {part.rsplit("/", 1)[-1] for part in cmd.split() if part.endswith(".py") and "cems_" in part}
+
+            existing_scripts: set[str] = set()
             for entry in existing_hooks[event_name]:
                 for hook in entry.get("hooks", []):
-                    existing_commands.add(hook.get("command", ""))
+                    existing_scripts |= _script_names(hook.get("command", ""))
 
             for cems_entry in cems_entries:
-                # Idempotency: match on command string to detect existing CEMS hooks
-                entry_commands = {h.get("command", "") for h in cems_entry.get("hooks", [])}
-                if not entry_commands & existing_commands:
+                entry_scripts: set[str] = set()
+                for h in cems_entry.get("hooks", []):
+                    entry_scripts |= _script_names(h.get("command", ""))
+                if not entry_scripts & existing_scripts:
                     existing_hooks[event_name].append(cems_entry)
 
     settings_file.write_text(json.dumps(existing, indent=2) + "\n")
