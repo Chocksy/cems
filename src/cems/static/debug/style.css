@@ -129,6 +129,11 @@ header h1 span{color:var(--accent);font-weight:400}
 .memory-card-header{display:flex;align-items:center;gap:.5rem;padding:.5rem .75rem;border-bottom:1px solid var(--border);flex-wrap:wrap}
 .memory-card-content{padding:.6rem .75rem;font-size:.78rem;font-family:var(--mono);color:var(--fg2);white-space:pre-wrap;word-break:break-word;line-height:1.5;max-height:300px;overflow-y:auto;margin:0}
 
+/* Tool batch (compacted tool events) */
+.tool-batch .event-body{padding:.4rem .75rem}
+.tool-batch-item{display:flex;align-items:center;gap:.5rem;padding:.15rem 0;border-bottom:1px solid var(--border)}
+.tool-batch-item:last-child{border-bottom:none}
+
 /* Conflict cards */
 .conflict-card{border:1px solid var(--border);border-radius:var(--radius);margin-bottom:.75rem;background:var(--bg2);overflow:hidden}
 .conflict-header{display:flex;align-items:center;gap:.6rem;padding:.5rem .75rem;border-bottom:1px solid var(--border)}

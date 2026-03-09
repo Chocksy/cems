@@ -235,8 +235,67 @@
       </div>
       <div class="timeline">`;
 
-    for (const evt of session.events) {
+    // Group consecutive tool events into collapsible batches
+    const isToolEvent = (e) => e.event === "PreToolUse" || e.event === "PostToolUse";
+    let i = 0;
+    while (i < session.events.length) {
+      const evt = session.events[i];
       const evtType = evt.event;
+
+      // Collect consecutive tool events into a batch
+      if (isToolEvent(evt)) {
+        const batch = [];
+        while (i < session.events.length && isToolEvent(session.events[i])) {
+          batch.push(session.events[i]);
+          i++;
+        }
+
+        // Summarize: count by tool name
+        const toolCounts = {};
+        for (const b of batch) {
+          const t = b.tool || "unknown";
+          toolCounts[t] = (toolCounts[t] || 0) + 1;
+        }
+        // Each Pre+Post pair = 1 call, so divide by 2 for display
+        const totalCalls = Math.ceil(batch.length / 2);
+        const summary = Object.entries(toolCounts).map(([t, n]) => `${t} x${Math.ceil(n / 2)}`).join(", ");
+        const firstTs = batch[batch.length - 1].ts; // oldest (events are newest-first)
+        const lastTs = batch[0].ts; // newest
+
+        html += `<div class="event-card tool-batch" data-event="ToolBatch">
+          <div class="event-header">
+            <div class="event-dot PreToolUse"></div>
+            <span class="event-type">Tools</span>
+            <span class="event-ts">${formatTime(firstTs)}${firstTs !== lastTs ? " – " + formatTime(lastTs) : ""}</span>
+            <span class="badge badge-blue">${totalCalls} calls</span>
+            <span class="event-tool">${esc(summary)}</span>
+            <span class="event-expand">&#9654;</span>
+          </div>
+          <div class="event-body">`;
+
+        // Render individual tool events inside the batch
+        for (const b of batch) {
+          const vKey = `${b.ts}|${b.event}|${b.tool || ""}`;
+          const vd = verboseMap[vKey];
+          html += `<div class="tool-batch-item">
+            <span class="event-dot ${esc(b.event)}" style="display:inline-block;width:6px;height:6px"></span>
+            <span class="event-type" style="min-width:90px;font-size:.72rem">${esc(b.event)}</span>
+            <span class="event-ts" style="font-size:.7rem">${formatTime(b.ts)}</span>
+            <span class="event-tool" style="font-size:.72rem">${esc(b.tool || "")}</span>`;
+          if (vd && vd.tool_input) {
+            const inp = typeof vd.tool_input === "string" ? vd.tool_input : JSON.stringify(vd.tool_input);
+            const preview = inp.length > 120 ? inp.slice(0, 120) + "..." : inp;
+            html += `<span style="color:var(--fg3);font-size:.7rem;font-family:var(--mono);margin-left:.5rem">${esc(preview)}</span>`;
+          }
+          html += `</div>`;
+        }
+
+        html += `</div></div>`;
+        continue;
+      }
+
+      // Non-tool event: render normally
+      i++;
       const verboseKey = `${evt.ts}|${evtType}|${evt.tool || ""}`;
       const vData = verboseMap[verboseKey];
 
@@ -253,7 +312,6 @@
 
       // Show extra info inline
       if (evtType === "MemoryRetrieval") {
-        const q = evt.extra.query || "";
         const top = evt.extra.top_score || 0;
         const scoreClass = top >= 0.7 ? "score-high" : top >= 0.5 ? "score-mid" : "score-low";
         html += `<span class="badge badge-purple">${evt.extra.result_count} results</span>`;
@@ -301,8 +359,6 @@
         html += renderVerboseDetail(vData);
       } else if (evtType === "UserPromptSubmit" && vData) {
         html += renderVerboseDetail(vData);
-      } else if ((evtType === "PreToolUse" || evtType === "PostToolUse") && vData) {
-        html += renderToolDetail(vData);
       } else if (evtType === "SessionStartOutput") {
         html += renderSessionStartOutput(evt.extra);
       } else if (evtType === "UserPromptSubmitOutput") {
