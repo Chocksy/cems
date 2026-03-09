@@ -730,9 +730,21 @@ def apply_score_adjustments(
         half_life = _category_half_life(result.metadata.category)
         time_decay = 1.0 / (1.0 + (days_since_access / half_life))
         # Adaptive decay ceiling: well-validated memories (shown 10+ times) resist decay
+        # Require decent relevance before granting decay resistance
+        relevant_count = getattr(result, "_relevant_count", 0)
+        noise_count = getattr(result, "_noise_count", 0)
         if result.metadata.access_count >= 10:
-            time_decay = max(time_decay, 0.95)
+            total_fb = relevant_count + noise_count
+            if total_fb == 0 or relevant_count / total_fb >= 0.5:
+                time_decay = max(time_decay, 0.95)
         score *= time_decay
+
+        # Relevance feedback adjustment (min 3 signals to act)
+        total_feedback = relevant_count + noise_count
+        if total_feedback >= 3:
+            relevance_ratio = relevant_count / total_feedback
+            # Scale: 0.85 (all noise) → 1.0 (50/50) → 1.15 (all relevant)
+            score *= 0.85 + 0.30 * relevance_ratio
 
         # Pinned boost (10%)
         if result.metadata.pinned:

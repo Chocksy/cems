@@ -89,12 +89,16 @@ def make_stop_input(
     session_id: str = "test-session-001",
     cwd: str = "/tmp/test-project",
     transcript_path: str = "",
+    last_assistant_message: str = "",
 ) -> dict:
-    return {
+    d = {
         "session_id": session_id,
         "cwd": cwd,
         "transcript_path": transcript_path,
     }
+    if last_assistant_message:
+        d["last_assistant_message"] = last_assistant_message
+    return d
 
 
 def make_post_tool_use_input(
@@ -926,6 +930,207 @@ class TestStop:
         )
 
         assert result.exit_code == 0
+
+
+# ============================================================================
+# Relevance Feedback tests (parse_relevance_line unit tests + hook integration)
+# ============================================================================
+
+
+class TestParseRelevanceLine:
+    """Unit tests for the parse_relevance_line function in cems_stop.py."""
+
+    @staticmethod
+    def _parse(text: str):
+        """Import and call parse_relevance_line."""
+        import importlib.util
+        import sys as _sys
+        spec = importlib.util.spec_from_file_location(
+            "cems_stop", str(Path(__file__).parent.parent / "hooks" / "cems_stop.py"),
+        )
+        mod = importlib.util.module_from_spec(spec)
+        # Avoid re-importing if already loaded
+        if "cems_stop_test" not in _sys.modules:
+            _sys.modules["cems_stop_test"] = mod
+            spec.loader.exec_module(mod)
+        else:
+            mod = _sys.modules["cems_stop_test"]
+        return mod.parse_relevance_line(text)
+
+    def test_standard_relevant_and_noise(self):
+        text = "Some response.\n\nMemory relevance: #1 #3 were relevant, #2 #4 were noise"
+        result = self._parse(text)
+        assert result is not None
+        assert sorted(result["relevant"]) == [1, 3]
+        assert sorted(result["noise"]) == [2, 4]
+
+    def test_none_were_relevant(self):
+        text = "Done.\n\nMemory relevance: none were relevant to this task"
+        result = self._parse(text)
+        assert result is not None
+        assert result.get("all_noise") is True
+
+    def test_rest_were_noise(self):
+        text = "Memory relevance: #1 was relevant, rest were noise"
+        result = self._parse(text)
+        assert result is not None
+        assert result["relevant"] == [1]
+        assert result.get("rest_noise") is True
+
+    def test_no_relevance_line(self):
+        text = "Just a normal response with no relevance line."
+        result = self._parse(text)
+        assert result is None
+
+    def test_parenthetical_reasons(self):
+        text = "Memory relevance: #1 #2 were relevant (helped with config), #3 was noise"
+        result = self._parse(text)
+        assert result is not None
+        assert sorted(result["relevant"]) == [1, 2]
+        assert result["noise"] == [3]
+
+    def test_single_relevant(self):
+        text = "Memory relevance: #2 was relevant, #1 #3 were noise"
+        result = self._parse(text)
+        assert result is not None
+        assert result["relevant"] == [2]
+        assert sorted(result["noise"]) == [1, 3]
+
+    def test_all_relevant(self):
+        text = "Memory relevance: #1 #2 #3 were relevant"
+        result = self._parse(text)
+        assert result is not None
+        assert sorted(result["relevant"]) == [1, 2, 3]
+        assert result["noise"] == []
+
+    def test_case_insensitive(self):
+        text = "memory relevance: #1 Was Relevant, #2 Was Noise"
+        result = self._parse(text)
+        assert result is not None
+        assert result["relevant"] == [1]
+        assert result["noise"] == [2]
+
+
+class TestStopRelevanceFeedback:
+    """Integration tests for relevance feedback in the stop hook."""
+
+    def test_sends_relevance_feedback(self, cems_server: RecordingServer, tmp_path):
+        """Stop hook should POST relevance feedback when mapping file exists."""
+        # Write a mapping file
+        cache_dir = tmp_path / ".cems" / "cache" / "relevance"
+        cache_dir.mkdir(parents=True)
+        mapping = {
+            "memory_ids": ["mem-aaa", "mem-bbb", "mem-ccc"],
+            "ts": time.time(),
+        }
+        (cache_dir / "test-session.json").write_text(json.dumps(mapping))
+
+        cems_server.set_response("/api/memory/log-relevance", CannedResponse(
+            body={"success": True, "relevant_updated": 2, "noise_updated": 1}
+        ))
+
+        result = run_hook(
+            "cems_stop.py",
+            make_stop_input(
+                session_id="test-session-001",
+                cwd=str(tmp_path),
+                last_assistant_message="Here's the answer.\n\nMemory relevance: #1 #2 were relevant, #3 was noise",
+            ),
+            server=cems_server,
+            extra_env={"HOME": str(tmp_path)},
+        )
+
+        assert result.exit_code == 0
+
+        # Verify the log-relevance API was called
+        rel_reqs = cems_server.get_requests("/api/memory/log-relevance")
+        assert len(rel_reqs) == 1
+        body = rel_reqs[0].body
+        assert sorted(body["relevant_ids"]) == ["mem-aaa", "mem-bbb"]
+        assert body["noise_ids"] == ["mem-ccc"]
+
+        # Mapping file should be cleaned up
+        assert not (cache_dir / "test-session.json").exists()
+
+    def test_no_feedback_without_relevance_line(self, cems_server: RecordingServer, tmp_path):
+        """No relevance line in response → no API call."""
+        cache_dir = tmp_path / ".cems" / "cache" / "relevance"
+        cache_dir.mkdir(parents=True)
+        mapping = {"memory_ids": ["mem-aaa"], "ts": time.time()}
+        (cache_dir / "test-session.json").write_text(json.dumps(mapping))
+
+        result = run_hook(
+            "cems_stop.py",
+            make_stop_input(
+                session_id="test-session-001",
+                cwd=str(tmp_path),
+                last_assistant_message="Just a plain response.",
+            ),
+            server=cems_server,
+            extra_env={"HOME": str(tmp_path)},
+        )
+
+        assert result.exit_code == 0
+        rel_reqs = cems_server.get_requests("/api/memory/log-relevance")
+        assert len(rel_reqs) == 0
+
+    def test_none_relevant_marks_all_noise(self, cems_server: RecordingServer, tmp_path):
+        """'none were relevant' should mark all shown memories as noise."""
+        cache_dir = tmp_path / ".cems" / "cache" / "relevance"
+        cache_dir.mkdir(parents=True)
+        mapping = {
+            "memory_ids": ["mem-aaa", "mem-bbb"],
+            "ts": time.time(),
+        }
+        (cache_dir / "test-session.json").write_text(json.dumps(mapping))
+
+        cems_server.set_response("/api/memory/log-relevance", CannedResponse(
+            body={"success": True, "relevant_updated": 0, "noise_updated": 2}
+        ))
+
+        result = run_hook(
+            "cems_stop.py",
+            make_stop_input(
+                session_id="test-session-001",
+                cwd=str(tmp_path),
+                last_assistant_message="Done.\n\nMemory relevance: none were relevant to this task",
+            ),
+            server=cems_server,
+            extra_env={"HOME": str(tmp_path)},
+        )
+
+        assert result.exit_code == 0
+        rel_reqs = cems_server.get_requests("/api/memory/log-relevance")
+        assert len(rel_reqs) == 1
+        body = rel_reqs[0].body
+        assert body["relevant_ids"] == []
+        assert sorted(body["noise_ids"]) == ["mem-aaa", "mem-bbb"]
+
+    def test_stale_mapping_skipped(self, cems_server: RecordingServer, tmp_path):
+        """Mapping files older than 60s should be skipped."""
+        cache_dir = tmp_path / ".cems" / "cache" / "relevance"
+        cache_dir.mkdir(parents=True)
+        mapping = {
+            "memory_ids": ["mem-aaa"],
+            "ts": time.time() - 120,  # 2 minutes old
+        }
+        (cache_dir / "test-session.json").write_text(json.dumps(mapping))
+
+        result = run_hook(
+            "cems_stop.py",
+            make_stop_input(
+                session_id="test-session-001",
+                cwd=str(tmp_path),
+                last_assistant_message="Memory relevance: #1 was relevant",
+            ),
+            server=cems_server,
+            extra_env={"HOME": str(tmp_path)},
+        )
+
+        assert result.exit_code == 0
+        # No API call because mapping was stale
+        rel_reqs = cems_server.get_requests("/api/memory/log-relevance")
+        assert len(rel_reqs) == 0
 
 
 # ============================================================================

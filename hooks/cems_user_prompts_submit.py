@@ -25,6 +25,7 @@ import json
 import os
 import re
 import sys
+import time
 from pathlib import Path
 
 import httpx
@@ -209,6 +210,47 @@ def log_shown_memories(memory_ids: list[str]) -> None:
         )
     except (httpx.RequestError, httpx.TimeoutException):
         pass
+
+
+# =============================================================================
+# Relevance Mapping File
+# =============================================================================
+
+RELEVANCE_CACHE_DIR = Path.home() / ".cems" / "cache" / "relevance"
+
+
+def write_relevance_mapping(session_id: str, memory_ids: list[str]) -> None:
+    """Write a mapping file so the Stop hook can map #N → memory_id.
+
+    The mapping file maps positional numbers (#1, #2, ...) to memory IDs.
+    The Stop hook reads this to resolve Claude's relevance feedback line.
+
+    Also cleans up stale mapping files (>1 hour old).
+    """
+    if not session_id or not memory_ids:
+        return
+
+    try:
+        RELEVANCE_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+
+        # Clean stale files (>1 hour old)
+        cutoff = time.time() - 3600
+        for f in RELEVANCE_CACHE_DIR.glob("*.json"):
+            try:
+                if f.stat().st_mtime < cutoff:
+                    f.unlink()
+            except OSError:
+                pass
+
+        # Write mapping: index 0 = #1, index 1 = #2, etc.
+        mapping = {
+            "memory_ids": memory_ids,
+            "ts": time.time(),
+        }
+        mapping_path = RELEVANCE_CACHE_DIR / f"{session_id[:12]}.json"
+        mapping_path.write_text(json.dumps(mapping))
+    except Exception:
+        pass  # Non-critical — never block prompts
 
 
 # =============================================================================
@@ -494,6 +536,7 @@ CONTEXT for confirmed action:
 Review these memories before proceeding.
 </memory-recall>""")
                         log_shown_memories(memory_ids)
+                        write_relevance_mapping(session_id, memory_ids)
 
             if output_parts:
                 combined = '\n\n'.join(output_parts)
@@ -548,6 +591,9 @@ After responding, note which memories (by number) were relevant vs noise.
 
                 # Log that these memories were shown (fire-and-forget)
                 log_shown_memories(memory_ids)
+
+                # Write mapping file for Stop hook relevance feedback
+                write_relevance_mapping(session_id, memory_ids)
 
         # 2. Ultrathink flag
         if user_text.endswith('-u'):

@@ -7,6 +7,7 @@
     detail: document.getElementById("view-detail"),
     observer: document.getElementById("view-observer"),
     "observer-detail": document.getElementById("view-observer-detail"),
+    conflicts: document.getElementById("view-conflicts"),
     status: document.getElementById("view-status"),
   };
 
@@ -16,6 +17,7 @@
       const view = btn.dataset.view;
       if (view === "sessions") navigate("#/");
       else if (view === "observer") navigate("#/observer");
+      else if (view === "conflicts") navigate("#/conflicts");
       else if (view === "status") navigate("#/status");
     });
   });
@@ -63,6 +65,11 @@
 
     if (hash === "#/observer") {
       showObserver();
+      return;
+    }
+
+    if (hash === "#/conflicts") {
+      showConflicts();
       return;
     }
 
@@ -275,6 +282,14 @@
         html += `<span class="badge ${badge}">${esc(action)}</span>`;
       }
 
+      if (evtType === "RelevanceFeedback") {
+        const rc = evt.extra.relevant_count || 0;
+        const nc = evt.extra.noise_count || 0;
+        if (rc > 0) html += `<span class="badge badge-green">${rc} relevant</span>`;
+        if (nc > 0) html += `<span class="badge badge-red">${nc} noise</span>`;
+        if (evt.extra.all_noise) html += `<span class="badge badge-red">all noise</span>`;
+      }
+
       html += `<span class="event-expand">&#9654;</span>
         </div>
         <div class="event-body">`;
@@ -294,6 +309,8 @@
         html += renderHookOutput(evt.extra, vData);
       } else if (evtType === "GateTriggered") {
         html += renderGateTriggered(evt.extra);
+      } else if (evtType === "RelevanceFeedback") {
+        html += renderRelevanceFeedback(evt.extra);
       } else if (evtType === "Stop") {
         html += renderStopDetail(evt.extra);
       } else {
@@ -468,6 +485,20 @@
       <div><strong>Pattern:</strong> <code>${esc(extra.pattern || "")}</code></div>
       <div><strong>Tool:</strong> ${esc(extra.tool || "")}</div>
     </div>`;
+  }
+
+  function renderRelevanceFeedback(extra) {
+    const rc = extra.relevant_count || 0;
+    const nc = extra.noise_count || 0;
+    let html = `<div>`;
+    if (extra.all_noise) {
+      html += `<span class="badge badge-red">ALL NOISE</span> <span style="color:var(--fg2)">None of the surfaced memories were relevant</span>`;
+    } else {
+      if (rc > 0) html += `<span class="badge badge-green">${rc} relevant</span> `;
+      if (nc > 0) html += `<span class="badge badge-red">${nc} noise</span>`;
+    }
+    html += `</div>`;
+    return html;
   }
 
   function renderStopDetail(extra) {
@@ -693,6 +724,55 @@
   function toolBadge(name) {
     const t = (name || "unknown").toLowerCase();
     return `<span class="tool-badge tool-${esc(t)}">${esc(t)}</span>`;
+  }
+
+  // --- Conflicts ---
+  async function showConflicts() {
+    setActiveNav("conflicts");
+    showView("conflicts");
+    views.conflicts.innerHTML = '<div class="loading">Loading conflicts...</div>';
+
+    const conflicts = await api("/api/conflicts");
+
+    if (conflicts.error) {
+      views.conflicts.innerHTML = `<div class="empty">Error: ${esc(conflicts.error)}</div>`;
+      return;
+    }
+
+    if (!conflicts.length) {
+      views.conflicts.innerHTML = '<div class="empty">No open conflicts found.</div>';
+      return;
+    }
+
+    let html = `
+      <div class="stats-bar">
+        <div class="stat">Open conflicts: <span class="stat-value">${conflicts.length}</span></div>
+      </div>`;
+
+    for (const c of conflicts) {
+      const memA = c.memory_a || {};
+      const memB = c.memory_b || {};
+      html += `<div class="conflict-card">
+        <div class="conflict-header">
+          <span class="badge badge-orange">conflict</span>
+          <span class="conflict-id" style="color:var(--fg3);font-size:.72rem">${esc(c.id || "")}</span>
+          <span style="color:var(--fg3);font-size:.72rem;margin-left:auto">${esc(c.created_at || "")}</span>
+        </div>
+        <div class="conflict-reason">${esc(c.reason || "No reason provided")}</div>
+        <div class="conflict-memories">
+          <div class="conflict-memory">
+            <div class="conflict-memory-label">Memory A <span class="badge badge-gray">${esc(memA.category || "")}</span></div>
+            <pre class="context-block">${esc(memA.content || memA.id || "")}</pre>
+          </div>
+          <div class="conflict-memory">
+            <div class="conflict-memory-label">Memory B <span class="badge badge-gray">${esc(memB.category || "")}</span></div>
+            <pre class="context-block">${esc(memB.content || memB.id || "")}</pre>
+          </div>
+        </div>
+      </div>`;
+    }
+
+    views.conflicts.innerHTML = html;
   }
 
   // --- Status ---

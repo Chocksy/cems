@@ -107,6 +107,10 @@ class DebugHandler(SimpleHTTPRequestHandler):
             data = self.index.get_observer_stats()
             self._json_response(data)
 
+        elif path == "/api/conflicts":
+            data = self.index.get_conflicts()
+            self._json_response(data)
+
         else:
             self._json_response({"error": "Not found"}, 404)
 

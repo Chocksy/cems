@@ -33,6 +33,7 @@ class SessionInfo:
     retrieval_count: int = 0
     gate_triggers: int = 0
     tool_count: int = 0
+    relevance_events: int = 0
     source: str = ""  # startup, clear, resume
     injected_context: str = ""  # SessionStart output (profile + gate rules)
 
@@ -124,6 +125,8 @@ class EventIndex:
                 session.project = _project_from_cwd(cwd)
         elif event == "GateTriggered":
             session.gate_triggers += 1
+        elif event == "RelevanceFeedback":
+            session.relevance_events += 1
         elif event == "UserPromptSubmitOutput":
             pass  # Stats only — output is in verbose log
         elif event == "PreToolUse":
@@ -342,6 +345,24 @@ class EventIndex:
                 ]
         except (urllib.error.URLError, json.JSONDecodeError, OSError) as e:
             logging.getLogger(__name__).debug(f"Failed to fetch memories for {sid}: {e}")
+            return []
+
+    def get_conflicts(self) -> list[dict]:
+        """Fetch open memory conflicts from CEMS API."""
+        creds = _load_cems_credentials()
+        if not creds["url"] or not creds["key"]:
+            return []
+
+        url = f"{creds['url'].rstrip('/')}/api/memory/conflicts?status=open&limit=50"
+        req = urllib.request.Request(url, headers={
+            "Authorization": f"Bearer {creds['key']}",
+        })
+        try:
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                data = json.loads(resp.read())
+                return data.get("conflicts", [])
+        except (urllib.error.URLError, json.JSONDecodeError, OSError) as e:
+            logging.getLogger(__name__).debug(f"Failed to fetch conflicts: {e}")
             return []
 
     def get_status(self) -> dict:

@@ -667,34 +667,28 @@ async def api_memory_profile(request: Request):
             proj_list = [f"- {m['content'][:100]}..." for m in components["project_context"][:3]]
             context_parts.append(f"## Project Context ({project})\n" + "\n".join(proj_list))
 
-        # 6. Memory conflicts (unresolved)
-        try:
-            conflicts = await doc_store.get_open_conflicts(user_id, limit=3)
-        except Exception:
-            conflicts = []  # Table may not exist yet
-        if conflicts:
-            conflict_lines = []
-            for c in conflicts:
-                conflict_lines.append(
-                    f"- **Conflict** (id: {c['id'][:8]}): {c['explanation']}"
-                )
-            context_parts.append(
-                "## Memory Conflicts Detected\n"
-                + "\n".join(conflict_lines)
-                + "\n\nResolve via: POST /api/memory/conflict/resolve"
-            )
+        # NOTE: Memory conflicts are NOT injected into session context.
+        # Claude can't meaningfully resolve them in-session. Conflicts are
+        # tracked via /api/memory/conflicts and visible in the debug dashboard.
 
-        context = "\n\n".join(context_parts) if context_parts else ""
+        # Assemble context with per-section budget control.
+        # Priority order: preferences > guidelines > gate rules > recent > project.
+        # Each section is fully included or dropped — no mid-sentence truncation.
+        max_chars = token_budget * 4
+        context_parts_final = []
+        chars_used = 0
 
-        # Estimate tokens (rough: 4 chars per token)
+        for part in context_parts:
+            part_len = len(part) + 2  # +2 for "\n\n" separator
+            if chars_used + part_len <= max_chars:
+                context_parts_final.append(part)
+                chars_used += part_len
+            else:
+                # Skip this section entirely rather than truncating mid-sentence
+                break
+
+        context = "\n\n".join(context_parts_final) if context_parts_final else ""
         token_estimate = len(context) // 4
-
-        # Truncate if over budget
-        if token_estimate > token_budget and context:
-            # Simple truncation at roughly token_budget * 4 chars
-            max_chars = token_budget * 4
-            context = context[:max_chars] + "\n\n[...truncated]"
-            token_estimate = token_budget
 
         logger.info(
             f"[API] Profile: {len(components['preferences'])} prefs, "
@@ -1048,6 +1042,50 @@ async def api_memory_maintenance(request: Request):
         }, status_code=500)
 
 
+async def api_memory_conflicts(request: Request):
+    """REST API endpoint to list memory conflicts.
+
+    GET /api/memory/conflicts?status=open&limit=50
+
+    Returns conflicts with document content for review/resolution.
+    """
+    try:
+        status_filter = request.query_params.get("status", "open")
+        limit = int(request.query_params.get("limit", "50"))
+
+        memory = get_memory()
+        doc_store = await memory._ensure_document_store()
+        user_id = memory.config.user_id
+
+        if status_filter == "open":
+            conflicts = await doc_store.get_open_conflicts(user_id, limit=limit)
+        else:
+            conflicts = await doc_store.get_open_conflicts(user_id, limit=limit)
+
+        # Format for API response
+        result = []
+        for c in conflicts:
+            result.append({
+                "id": str(c["id"]),
+                "doc_a_id": str(c["doc_a_id"]),
+                "doc_b_id": str(c["doc_b_id"]),
+                "explanation": c.get("explanation", ""),
+                "status": c.get("status", "open"),
+                "created_at": str(c.get("created_at", "")),
+                "doc_a_content": c.get("doc_a_content", ""),
+                "doc_b_content": c.get("doc_b_content", ""),
+            })
+
+        return JSONResponse({
+            "success": True,
+            "conflicts": result,
+            "count": len(result),
+        })
+    except Exception as e:
+        logger.error(f"API memory_conflicts error: {e}")
+        return JSONResponse({"error": "Internal server error"}, status_code=500)
+
+
 async def api_memory_conflict_resolve(request: Request):
     """REST API endpoint to resolve a memory conflict.
 
@@ -1234,6 +1272,52 @@ async def api_memory_log_shown(request: Request):
         })
     except Exception as e:
         logger.error(f"API memory_log_shown error: {e}")
+        return JSONResponse({"error": "Internal server error"}, status_code=500)
+
+
+async def api_memory_log_relevance(request: Request):
+    """REST API endpoint to log relevance feedback for surfaced memories.
+
+    POST /api/memory/log-relevance
+    Body: {"relevant_ids": ["id1", ...], "noise_ids": ["id2", ...]}
+
+    Increments relevant_count or noise_count for each memory.
+    Called by the Stop hook after parsing Claude's relevance line.
+    """
+    try:
+        body = await request.json()
+        relevant_ids = body.get("relevant_ids", [])
+        noise_ids = body.get("noise_ids", [])
+
+        if not relevant_ids and not noise_ids:
+            return JSONResponse({"success": True, "relevant_updated": 0, "noise_updated": 0})
+
+        for ids, label in [(relevant_ids, "relevant_ids"), (noise_ids, "noise_ids")]:
+            if not isinstance(ids, list):
+                return JSONResponse({"error": f"{label} must be an array"}, status_code=400)
+
+        memory = get_memory()
+        doc_store = await memory._ensure_document_store()
+
+        relevant_updated = 0
+        noise_updated = 0
+
+        if relevant_ids:
+            relevant_updated = await doc_store.increment_relevance_count(relevant_ids, "relevant")
+        if noise_ids:
+            noise_updated = await doc_store.increment_relevance_count(noise_ids, "noise")
+
+        logger.info(
+            f"[API] Log relevance: {relevant_updated} relevant, {noise_updated} noise"
+        )
+
+        return JSONResponse({
+            "success": True,
+            "relevant_updated": relevant_updated,
+            "noise_updated": noise_updated,
+        })
+    except Exception as e:
+        logger.error(f"API memory_log_relevance error: {e}")
         return JSONResponse({"error": "Internal server error"}, status_code=500)
 
 
