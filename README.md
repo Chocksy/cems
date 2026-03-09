@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/banner-chef.png" alt="CEMS — Continuous Evolving Memory System" width="800">
+  <img src="https://raw.githubusercontent.com/chocksy/cems/main/assets/banner-chef.png" alt="CEMS — Continuous Evolving Memory System" width="800">
 </p>
 
 <h1 align="center">CEMS</h1>
@@ -23,7 +23,7 @@
 ## How It Works
 
 <p align="center">
-  <img src="assets/how-it-works.png" alt="How CEMS Works — You code, CEMS watches, Memories stored, Context recalled" width="800">
+  <img src="https://raw.githubusercontent.com/chocksy/cems/main/assets/how-it-works.png" alt="How CEMS Works — You code, CEMS watches, Memories stored, Context recalled" width="800">
 </p>
 
 1. **You code** — CEMS hooks into your IDE (Claude Code, Cursor, Codex, Goose)
@@ -38,7 +38,7 @@ No manual tagging. No copying context. It just works.
 ## Architecture
 
 <p align="center">
-  <img src="assets/architecture.png" alt="CEMS Architecture — Developer machines connect to Docker server" width="800">
+  <img src="https://raw.githubusercontent.com/chocksy/cems/main/assets/architecture.png" alt="CEMS Architecture — Developer machines connect to Docker server" width="800">
 </p>
 
 ---
