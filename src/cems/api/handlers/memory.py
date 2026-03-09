@@ -852,6 +852,51 @@ async def api_memory_update(request: Request):
         return JSONResponse({"error": "Internal server error"}, status_code=500)
 
 
+async def api_memory_promote(request: Request):
+    """REST API endpoint to promote a personal memory to shared (team) scope.
+
+    POST /api/memory/promote
+    Body: {"memory_id": "..."}
+
+    Changes scope from 'personal' to 'shared' and sets the team_id.
+    Requires the user to belong to a team (auto-resolved or via X-Team-Id header).
+    """
+    try:
+        body = await request.json()
+        memory_id = body.get("memory_id")
+        if not memory_id:
+            return JSONResponse({"error": "memory_id is required"}, status_code=400)
+
+        memory = get_memory()
+        team_id = memory.config.team_id
+        if not team_id:
+            return JSONResponse(
+                {"error": "No team context. Join a team or set X-Team-Id header."},
+                status_code=400,
+            )
+
+        doc_store = await memory._ensure_document_store()
+        promoted = await doc_store.promote_document(
+            memory_id, user_id=memory.config.user_id, team_id=team_id
+        )
+
+        if not promoted:
+            return JSONResponse(
+                {"error": "Memory not found, already shared, or not yours"},
+                status_code=404,
+            )
+
+        return JSONResponse({
+            "success": True,
+            "message": f"Memory {memory_id} promoted to shared",
+            "memory_id": memory_id,
+            "team_id": team_id,
+        })
+    except Exception as e:
+        logger.error(f"API memory_promote error: {e}")
+        return JSONResponse({"error": "Internal server error"}, status_code=500)
+
+
 async def api_memory_restore(request: Request):
     """REST API endpoint to restore a soft-deleted memory.
 

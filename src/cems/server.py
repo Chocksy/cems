@@ -34,6 +34,7 @@ from cems.api.handlers import (
     api_index_patterns,
     api_index_path,
     api_index_repo,
+    api_me_teams,
     api_memory_add,
     api_memory_add_batch,
     api_memory_forget,
@@ -46,6 +47,7 @@ from cems.api.handlers import (
     api_memory_maintenance,
     api_memory_conflict_resolve,
     api_memory_profile,
+    api_memory_promote,
     api_memory_restore,
     api_memory_search,
     api_memory_stats_projects,
@@ -143,6 +145,14 @@ def create_http_app():
                     user_id = str(user.id)
                     # Get team from header (optional, to select team context)
                     team_id = request.headers.get("x-team-id")
+
+                    # Auto-resolve team_id from membership if not provided
+                    if not team_id:
+                        from cems.admin.services import TeamService
+                        team_service = TeamService(session)
+                        user_teams = team_service.get_user_teams(user.id)
+                        if len(user_teams) == 1:
+                            team_id = str(user_teams[0].id)
             except Exception as e:
                 logger.error(f"Auth middleware database error: {e}")
                 return JSONResponse(
@@ -175,6 +185,7 @@ def create_http_app():
         Route("/api/memory/forget", api_memory_forget, methods=["POST"]),
         Route("/api/memory/log-shown", api_memory_log_shown, methods=["POST"]),
         Route("/api/memory/update", api_memory_update, methods=["POST"]),
+        Route("/api/memory/promote", api_memory_promote, methods=["POST"]),
         Route("/api/memory/restore", api_memory_restore, methods=["POST"]),
         Route("/api/memory/maintenance", api_memory_maintenance, methods=["POST"]),
         Route("/api/memory/stats/projects", api_memory_stats_projects, methods=["GET"]),
@@ -195,6 +206,8 @@ def create_http_app():
         Route("/api/session/summarize", api_session_summarize, methods=["POST"]),
         # REST API routes - Tool
         Route("/api/tool/learning", api_tool_learning, methods=["POST"]),
+        # REST API routes - Me (self-service)
+        Route("/api/me/teams", api_me_teams, methods=["GET"]),
     ]
     logger.info("REST API routes enabled (/api/memory/*, /api/index/*, /api/session/*, /api/tool/*)")
 

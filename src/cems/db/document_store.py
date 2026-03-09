@@ -346,6 +346,36 @@ class DocumentStore:
             )
             return result == "UPDATE 1"
 
+    async def promote_document(
+        self,
+        document_id: str,
+        user_id: str,
+        team_id: str,
+    ) -> bool:
+        """Promote a personal document to shared scope.
+
+        Changes scope from 'personal' to 'shared' and sets the team_id.
+        Only the document owner can promote. Must currently be personal scope.
+
+        Returns True if promoted, False if not found or already shared.
+        """
+        pool = await self._get_pool()
+        doc_uuid = UUID(document_id)
+
+        async with pool.acquire() as conn:
+            result = await conn.execute(
+                """
+                UPDATE memory_documents
+                SET scope = 'shared', team_id = $1, updated_at = NOW()
+                WHERE id = $2 AND user_id = $3 AND scope = 'personal'
+                  AND deleted_at IS NULL
+                """,
+                UUID(team_id),
+                doc_uuid,
+                UUID(user_id),
+            )
+        return result == "UPDATE 1"
+
     async def update_document_metadata(
         self,
         document_id: str,

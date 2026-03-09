@@ -14,6 +14,7 @@
   let searchTimeout = null;
   let projectChart = null;
   let currentView = "list";
+  let currentScope = "";
 
   // --- DOM refs ---
   const loginView = document.getElementById("login-view");
@@ -111,6 +112,18 @@
     });
   });
 
+  // --- Scope Toggle ---
+  document.querySelectorAll(".scope-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      document.querySelectorAll(".scope-btn").forEach((b) => b.classList.remove("active"));
+      btn.classList.add("active");
+      currentScope = btn.dataset.scope;
+      offset = 0;
+      loadMemories();
+      loadCategories();
+    });
+  });
+
   // --- Categories ---
   async function loadCategories() {
     try {
@@ -152,6 +165,7 @@
 
     try {
       let params = `limit=${limit}&offset=${offset}`;
+      if (currentScope) params += `&scope=${encodeURIComponent(currentScope)}`;
       if (currentCategory) params += `&category=${encodeURIComponent(currentCategory)}`;
       if (searchQuery) params += `&q=${encodeURIComponent(searchQuery)}`;
 
@@ -187,7 +201,7 @@
           <div class="memory-meta">
             <span class="cat">${esc(m.category || "general")}</span>
             ${tags}
-            ${m.scope ? `<span>${esc(m.scope)}</span>` : ""}
+            ${m.scope ? `<span class="scope-badge scope-${esc(m.scope)}">${esc(m.scope)}</span>` : ""}
             ${m.source_ref ? `<span class="source-ref">${esc(m.source_ref)}</span>` : ""}
             ${date ? `<span>${date}</span>` : ""}
             ${shown ? `<span>${shown}</span>` : ""}
@@ -197,6 +211,7 @@
           <div class="memory-actions">
             <button class="btn-expand" data-id="${esc(m.id)}">Expand</button>
             <button class="btn-edit" data-id="${esc(m.id)}">Edit</button>
+            ${m.scope === "personal" ? `<button class="btn-promote" data-id="${esc(m.id)}">Promote to Team</button>` : ""}
             <button class="btn-delete" data-id="${esc(m.id)}">Delete</button>
           </div>
         </div>`;
@@ -225,6 +240,11 @@
     // Edit
     listEl.querySelectorAll(".btn-edit").forEach((btn) => {
       btn.addEventListener("click", () => openEdit(btn.dataset.id));
+    });
+
+    // Promote
+    listEl.querySelectorAll(".btn-promote").forEach((btn) => {
+      btn.addEventListener("click", () => promoteMemory(btn.dataset.id));
     });
 
     // Delete
@@ -339,6 +359,26 @@
       editSave.textContent = "Save";
     }
   });
+
+  // --- Promote to Team ---
+  async function promoteMemory(id) {
+    try {
+      const data = await apiFetch("/api/memory/promote", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ memory_id: id }),
+      });
+      if (data.success) {
+        showToast("Memory promoted to team.");
+        loadMemories();
+        loadCategories();
+      } else {
+        showToast("Promote failed: " + (data.error || "Unknown error"));
+      }
+    } catch (e) {
+      showToast("Promote failed: " + e.message);
+    }
+  }
 
   // --- Delete with Toast + Undo ---
   async function deleteMemory(id) {

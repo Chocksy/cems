@@ -181,6 +181,7 @@ function createMcpServer(authHeaders: { authorization?: string; teamId?: string 
             method: "GET",
             headers: {
               ...(auth.authorization && { Authorization: auth.authorization }),
+              ...(auth.teamId && { "x-team-id": auth.teamId }),
             },
           }
         );
@@ -214,6 +215,7 @@ function createMcpServer(authHeaders: { authorization?: string; teamId?: string 
           headers: {
             "Content-Type": "application/json",
             ...(auth.authorization && { Authorization: auth.authorization }),
+            ...(auth.teamId && { "x-team-id": auth.teamId }),
           },
           body: JSON.stringify(args),
         });
@@ -247,6 +249,7 @@ function createMcpServer(authHeaders: { authorization?: string; teamId?: string 
           headers: {
             "Content-Type": "application/json",
             ...(auth.authorization && { Authorization: auth.authorization }),
+            ...(auth.teamId && { "x-team-id": auth.teamId }),
           },
           body: JSON.stringify(args),
         });
@@ -279,6 +282,40 @@ function createMcpServer(authHeaders: { authorization?: string; teamId?: string 
           headers: {
             "Content-Type": "application/json",
             ...(auth.authorization && { Authorization: auth.authorization }),
+            ...(auth.teamId && { "x-team-id": auth.teamId }),
+          },
+          body: JSON.stringify(args),
+        });
+
+        if (!response.ok) {
+          const error = await response.text();
+          throw new Error(`Python API error: ${error}`);
+        }
+
+        const result = await response.json();
+        return {
+          content: [{ type: "text", text: JSON.stringify(result) }],
+        };
+      }
+  );
+
+  server.registerTool(
+    "memory_promote",
+      {
+        title: "Promote Memory to Team",
+        description: "Promote a personal memory to shared team scope so all team members can see it",
+        inputSchema: {
+          memory_id: z.string().describe("ID of the personal memory to promote"),
+        },
+      },
+      async (args) => {
+        const auth = getAuthHeaders();
+        const response = await fetch(`${PYTHON_API_URL}/api/memory/promote`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...(auth.authorization && { Authorization: auth.authorization }),
+            ...(auth.teamId && { "x-team-id": auth.teamId }),
           },
           body: JSON.stringify(args),
         });
