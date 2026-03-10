@@ -78,6 +78,7 @@ services:
   # CEMS Python API Server
   cems-server:
     image: chocksy/cems-server:latest
+    pull_policy: always
     container_name: cems-server
     environment:
       # Database (PostgreSQL with pgvector for vectors + metadata)

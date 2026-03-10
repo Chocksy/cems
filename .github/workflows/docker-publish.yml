@@ -51,3 +51,11 @@ jobs:
           password: ${{ secrets.DOCKERHUB_TOKEN }}
           repository: chocksy/cems-server
           readme-filepath: ./README.md
+
+      - name: Deploy to Coolify
+        if: success()
+        run: |
+          curl -sSf -X POST \
+            "${{ secrets.COOLIFY_WEBHOOK_URL }}" \
+            -H "Authorization: Bearer ${{ secrets.COOLIFY_API_TOKEN }}" \
+            -H "Content-Type: application/json"
