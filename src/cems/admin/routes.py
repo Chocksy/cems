@@ -735,8 +735,16 @@ async def database_stats(request: Request) -> JSONResponse:
 
 
 def _clean_row(row: dict) -> dict:
-    """Convert Decimal values to float for JSON serialization."""
-    return {k: float(v) if isinstance(v, Decimal) else v for k, v in row.items()}
+    """Convert non-JSON-serializable types for JSON serialization."""
+    clean = {}
+    for k, v in row.items():
+        if isinstance(v, Decimal):
+            clean[k] = float(v)
+        elif isinstance(v, uuid.UUID):
+            clean[k] = str(v)
+        else:
+            clean[k] = v
+    return clean
 
 
 async def analytics_data(request: Request) -> JSONResponse:
