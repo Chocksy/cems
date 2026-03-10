@@ -6,6 +6,7 @@ These routes require admin authentication via CEMS_ADMIN_KEY.
 import logging
 import os
 import uuid
+from decimal import Decimal
 
 from sqlalchemy import text
 from starlette.requests import Request
@@ -733,6 +734,11 @@ async def database_stats(request: Request) -> JSONResponse:
 # =============================================================================
 
 
+def _clean_row(row: dict) -> dict:
+    """Convert Decimal values to float for JSON serialization."""
+    return {k: float(v) if isinstance(v, Decimal) else v for k, v in row.items()}
+
+
 async def analytics_data(request: Request) -> JSONResponse:
     """Get memory analytics data for the analytics dashboard.
 
@@ -765,7 +771,7 @@ async def analytics_data(request: Request) -> JSONResponse:
                 WHERE deleted_at IS NULL
             """))
             row = result.mappings().first()
-            data["overview"] = dict(row) if row else {}
+            data["overview"] = _clean_row(dict(row)) if row else {}
 
             # 2. Per-category performance
             result = await session.execute(text("""
@@ -786,7 +792,7 @@ async def analytics_data(request: Request) -> JSONResponse:
                 GROUP BY category
                 ORDER BY shown DESC
             """))
-            data["by_category"] = [dict(r) for r in result.mappings().all()]
+            data["by_category"] = [_clean_row(dict(r)) for r in result.mappings().all()]
 
             # 3. Source type breakdown (observer vs manual vs tool-learning)
             result = await session.execute(text("""
@@ -811,7 +817,7 @@ async def analytics_data(request: Request) -> JSONResponse:
                 GROUP BY 1
                 ORDER BY shown DESC
             """))
-            data["by_source"] = [dict(r) for r in result.mappings().all()]
+            data["by_source"] = [_clean_row(dict(r)) for r in result.mappings().all()]
 
             # 4. Content length buckets vs relevance
             result = await session.execute(text("""
@@ -836,7 +842,7 @@ async def analytics_data(request: Request) -> JSONResponse:
                 GROUP BY 1
                 ORDER BY MIN(LENGTH(content))
             """))
-            data["by_length"] = [dict(r) for r in result.mappings().all()]
+            data["by_length"] = [_clean_row(dict(r)) for r in result.mappings().all()]
 
             # 5. Top 15 most relevant memories (best performers)
             result = await session.execute(text("""
@@ -853,7 +859,7 @@ async def analytics_data(request: Request) -> JSONResponse:
                 ORDER BY relevant_count DESC, relevance_rate DESC
                 LIMIT 15
             """))
-            data["top_relevant"] = [dict(r) for r in result.mappings().all()]
+            data["top_relevant"] = [_clean_row(dict(r)) for r in result.mappings().all()]
 
             # 6. Top 15 noisiest memories (worst performers)
             result = await session.execute(text("""
@@ -870,7 +876,7 @@ async def analytics_data(request: Request) -> JSONResponse:
                 ORDER BY noise_count DESC, noise_rate DESC
                 LIMIT 15
             """))
-            data["top_noisy"] = [dict(r) for r in result.mappings().all()]
+            data["top_noisy"] = [_clean_row(dict(r)) for r in result.mappings().all()]
 
             # 7. Weekly trend (last 12 weeks)
             result = await session.execute(text("""
@@ -888,7 +894,7 @@ async def analytics_data(request: Request) -> JSONResponse:
             """))
             rows = result.mappings().all()
             data["weekly_trend"] = [
-                {**dict(r), "week": str(r["week"])} for r in rows
+                {**_clean_row(dict(r)), "week": str(r["week"])} for r in rows
             ]
 
             # 8. Never-shown analysis (memories that have never been surfaced)
@@ -905,7 +911,7 @@ async def analytics_data(request: Request) -> JSONResponse:
             """))
             rows = result.mappings().all()
             data["never_shown"] = [
-                {**dict(r), "oldest": str(r["oldest"])} for r in rows
+                {**_clean_row(dict(r)), "oldest": str(r["oldest"])} for r in rows
             ]
 
         return JSONResponse({"success": True, "data": data})
