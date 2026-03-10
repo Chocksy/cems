@@ -834,13 +834,7 @@ async def analytics_data(request: Request) -> JSONResponse:
                 FROM memory_documents
                 WHERE deleted_at IS NULL
                 GROUP BY 1
-                ORDER BY
-                    CASE
-                        WHEN LENGTH(content) < 200 THEN 1
-                        WHEN LENGTH(content) < 800 THEN 2
-                        WHEN LENGTH(content) < 2000 THEN 3
-                        ELSE 4
-                    END
+                ORDER BY MIN(LENGTH(content))
             """))
             data["by_length"] = [dict(r) for r in result.mappings().all()]
 
