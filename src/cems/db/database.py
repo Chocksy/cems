@@ -252,6 +252,62 @@ def run_migrations() -> None:
             END $$;
             """,
         ),
+        # Fix memory_relations FK to reference memory_documents instead of memories
+        (
+            "memory_relations_fk_fix_v1",
+            """
+            DO $$
+            BEGIN
+                -- Only fix if memory_relations table exists
+                IF EXISTS (
+                    SELECT 1 FROM information_schema.tables
+                    WHERE table_name = 'memory_relations'
+                ) THEN
+                    -- Drop old FKs (may reference memories.id)
+                    ALTER TABLE memory_relations
+                        DROP CONSTRAINT IF EXISTS memory_relations_source_id_fkey;
+                    ALTER TABLE memory_relations
+                        DROP CONSTRAINT IF EXISTS memory_relations_target_id_fkey;
+
+                    -- Add correct FKs referencing memory_documents.id
+                    ALTER TABLE memory_relations
+                        ADD CONSTRAINT memory_relations_source_id_fkey
+                        FOREIGN KEY (source_id) REFERENCES memory_documents(id)
+                        ON DELETE CASCADE;
+                    ALTER TABLE memory_relations
+                        ADD CONSTRAINT memory_relations_target_id_fkey
+                        FOREIGN KEY (target_id) REFERENCES memory_documents(id)
+                        ON DELETE CASCADE;
+
+                    RAISE NOTICE 'Fixed memory_relations FKs to reference memory_documents';
+                END IF;
+            END $$;
+            """,
+        ),
+        # Add relevance feedback columns to memory_documents
+        (
+            "relevance_feedback_v1",
+            """
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name = 'memory_documents' AND column_name = 'relevant_count'
+                ) THEN
+                    ALTER TABLE memory_documents ADD COLUMN relevant_count INT NOT NULL DEFAULT 0;
+                    RAISE NOTICE 'Added memory_documents.relevant_count';
+                END IF;
+
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name = 'memory_documents' AND column_name = 'noise_count'
+                ) THEN
+                    ALTER TABLE memory_documents ADD COLUMN noise_count INT NOT NULL DEFAULT 0;
+                    RAISE NOTICE 'Added memory_documents.noise_count';
+                END IF;
+            END $$;
+            """,
+        ),
     ]
 
     with db.session() as session:
