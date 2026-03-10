@@ -77,9 +77,7 @@ services:
 
   # CEMS Python API Server
   cems-server:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    image: chocksy/cems-server:latest
     container_name: cems-server
     environment:
       # Database (PostgreSQL with pgvector for vectors + metadata)
