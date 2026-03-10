@@ -4,9 +4,8 @@
 services:
   # Python API (public at cems.chocksy.com)
   cems-server:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    image: chocksy/cems-server:latest
+    pull_policy: always
     environment:
       CEMS_DATABASE_URL: ${CEMS_DATABASE_URL}
       CEMS_QDRANT_URL: ${CEMS_QDRANT_URL}
