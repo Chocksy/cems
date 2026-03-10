@@ -729,6 +729,199 @@ async def database_stats(request: Request) -> JSONResponse:
 
 
 # =============================================================================
+# Analytics
+# =============================================================================
+
+
+async def analytics_data(request: Request) -> JSONResponse:
+    """Get memory analytics data for the analytics dashboard.
+
+    GET /admin/analytics/data
+
+    Returns relevance feedback stats, category performance, source type
+    breakdown, content length analysis, and top/bottom performers.
+    """
+    if err := require_admin_auth(request):
+        return err
+    if err := require_database(request):
+        return err
+
+    try:
+        db = get_database()
+        data: dict = {}
+
+        async with db.async_session() as session:
+            # 1. Overall stats
+            result = await session.execute(text("""
+                SELECT
+                    COUNT(*) as total_memories,
+                    COALESCE(SUM(shown_count), 0) as total_shown,
+                    COALESCE(SUM(relevant_count), 0) as total_relevant,
+                    COALESCE(SUM(noise_count), 0) as total_noise,
+                    COUNT(*) FILTER (WHERE shown_count > 0) as memories_shown,
+                    COUNT(*) FILTER (WHERE relevant_count > 0) as memories_found_relevant,
+                    COUNT(*) FILTER (WHERE noise_count > 0) as memories_found_noisy
+                FROM memory_documents
+                WHERE deleted_at IS NULL
+            """))
+            row = result.mappings().first()
+            data["overview"] = dict(row) if row else {}
+
+            # 2. Per-category performance
+            result = await session.execute(text("""
+                SELECT
+                    category,
+                    COUNT(*) as total,
+                    COALESCE(SUM(shown_count), 0) as shown,
+                    COALESCE(SUM(relevant_count), 0) as relevant,
+                    COALESCE(SUM(noise_count), 0) as noise,
+                    ROUND(
+                        COALESCE(SUM(relevant_count), 0)::numeric
+                        / NULLIF(COALESCE(SUM(shown_count), 0), 0),
+                        3
+                    ) as relevance_rate,
+                    ROUND(AVG(LENGTH(content))::numeric) as avg_content_length
+                FROM memory_documents
+                WHERE deleted_at IS NULL
+                GROUP BY category
+                ORDER BY shown DESC
+            """))
+            data["by_category"] = [dict(r) for r in result.mappings().all()]
+
+            # 3. Source type breakdown (observer vs manual vs tool-learning)
+            result = await session.execute(text("""
+                SELECT
+                    CASE
+                        WHEN category = 'session-summary' THEN 'observer'
+                        WHEN category = 'category-summary' THEN 'maintenance'
+                        WHEN 'session-summary' = ANY(tags) THEN 'observer'
+                        ELSE 'api-added'
+                    END as source_type,
+                    COUNT(*) as total,
+                    COALESCE(SUM(shown_count), 0) as shown,
+                    COALESCE(SUM(relevant_count), 0) as relevant,
+                    COALESCE(SUM(noise_count), 0) as noise,
+                    ROUND(
+                        COALESCE(SUM(relevant_count), 0)::numeric
+                        / NULLIF(COALESCE(SUM(shown_count), 0), 0),
+                        3
+                    ) as relevance_rate
+                FROM memory_documents
+                WHERE deleted_at IS NULL
+                GROUP BY source_type
+                ORDER BY shown DESC
+            """))
+            data["by_source"] = [dict(r) for r in result.mappings().all()]
+
+            # 4. Content length buckets vs relevance
+            result = await session.execute(text("""
+                SELECT
+                    CASE
+                        WHEN LENGTH(content) < 200 THEN 'short (<200)'
+                        WHEN LENGTH(content) < 800 THEN 'medium (200-800)'
+                        WHEN LENGTH(content) < 2000 THEN 'long (800-2k)'
+                        ELSE 'very long (2k+)'
+                    END as length_bucket,
+                    COUNT(*) as total,
+                    COALESCE(SUM(shown_count), 0) as shown,
+                    COALESCE(SUM(relevant_count), 0) as relevant,
+                    COALESCE(SUM(noise_count), 0) as noise,
+                    ROUND(
+                        COALESCE(SUM(relevant_count), 0)::numeric
+                        / NULLIF(COALESCE(SUM(shown_count), 0), 0),
+                        3
+                    ) as relevance_rate
+                FROM memory_documents
+                WHERE deleted_at IS NULL
+                GROUP BY length_bucket
+                ORDER BY
+                    CASE length_bucket
+                        WHEN 'short (<200)' THEN 1
+                        WHEN 'medium (200-800)' THEN 2
+                        WHEN 'long (800-2k)' THEN 3
+                        ELSE 4
+                    END
+            """))
+            data["by_length"] = [dict(r) for r in result.mappings().all()]
+
+            # 5. Top 15 most relevant memories (best performers)
+            result = await session.execute(text("""
+                SELECT
+                    id, category, content, shown_count, relevant_count, noise_count,
+                    ROUND(
+                        relevant_count::numeric / NULLIF(shown_count, 0),
+                        3
+                    ) as relevance_rate,
+                    LEFT(content, 200) as preview
+                FROM memory_documents
+                WHERE deleted_at IS NULL
+                    AND shown_count >= 3
+                ORDER BY relevant_count DESC, relevance_rate DESC
+                LIMIT 15
+            """))
+            data["top_relevant"] = [dict(r) for r in result.mappings().all()]
+
+            # 6. Top 15 noisiest memories (worst performers)
+            result = await session.execute(text("""
+                SELECT
+                    id, category, content, shown_count, relevant_count, noise_count,
+                    ROUND(
+                        noise_count::numeric / NULLIF(shown_count, 0),
+                        3
+                    ) as noise_rate,
+                    LEFT(content, 200) as preview
+                FROM memory_documents
+                WHERE deleted_at IS NULL
+                    AND shown_count >= 3
+                ORDER BY noise_count DESC, noise_rate DESC
+                LIMIT 15
+            """))
+            data["top_noisy"] = [dict(r) for r in result.mappings().all()]
+
+            # 7. Weekly trend (last 12 weeks)
+            result = await session.execute(text("""
+                SELECT
+                    date_trunc('week', created_at)::date as week,
+                    COUNT(*) as created,
+                    COALESCE(SUM(shown_count), 0) as shown,
+                    COALESCE(SUM(relevant_count), 0) as relevant,
+                    COALESCE(SUM(noise_count), 0) as noise
+                FROM memory_documents
+                WHERE deleted_at IS NULL
+                    AND created_at >= NOW() - INTERVAL '12 weeks'
+                GROUP BY week
+                ORDER BY week
+            """))
+            rows = result.mappings().all()
+            data["weekly_trend"] = [
+                {**dict(r), "week": str(r["week"])} for r in rows
+            ]
+
+            # 8. Never-shown analysis (memories that have never been surfaced)
+            result = await session.execute(text("""
+                SELECT
+                    category,
+                    COUNT(*) as never_shown_count,
+                    ROUND(AVG(LENGTH(content))::numeric) as avg_length,
+                    MIN(created_at)::date as oldest
+                FROM memory_documents
+                WHERE deleted_at IS NULL AND shown_count = 0
+                GROUP BY category
+                ORDER BY never_shown_count DESC
+            """))
+            rows = result.mappings().all()
+            data["never_shown"] = [
+                {**dict(r), "oldest": str(r["oldest"])} for r in rows
+            ]
+
+        return JSONResponse({"success": True, "data": data})
+
+    except Exception as e:
+        logger.error(f"Analytics data failed: {e}")
+        return JSONResponse({"error": "Internal server error"}, status_code=500)
+
+
+# =============================================================================
 # Route Definitions
 # =============================================================================
 
@@ -738,6 +931,8 @@ admin_routes = [
     Route("/admin/debug", debug_config, methods=["GET"]),
     Route("/admin/debug/llm", debug_llm_test, methods=["GET"]),
     Route("/admin/db/stats", database_stats, methods=["GET"]),
+    # Analytics
+    Route("/admin/analytics/data", analytics_data, methods=["GET"]),
     # Eval cleanup
     Route("/admin/eval/cleanup", cleanup_eval_data, methods=["DELETE"]),
     # Users

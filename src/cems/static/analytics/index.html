@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CEMS Analytics</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js" integrity="sha384-9nhczxUqK87bcKHh20fSQcTGD4qq5GhayNYSYWqwBkINBhOfQLg/P5HG5lF1urn4" crossorigin="anonymous"></script>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="app">
+    <!-- Login -->
+    <div id="login-view">
+      <div class="login-card">
+        <h1>CEMS Analytics</h1>
+        <p>Enter admin key to view memory performance analytics.</p>
+        <form id="login-form">
+          <input type="password" id="admin-key-input" placeholder="Admin key" autocomplete="off" required>
+          <button type="submit">Connect</button>
+        </form>
+        <p id="login-error" class="error" hidden></p>
+      </div>
+    </div>
+
+    <!-- Dashboard -->
+    <div id="dashboard" hidden>
+      <header>
+        <div class="header-left">
+          <h1>CEMS Analytics</h1>
+          <button id="refresh-btn" class="btn-sm">Refresh</button>
+        </div>
+        <div class="header-right">
+          <span id="last-updated" class="muted"></span>
+          <button id="logout-btn" class="btn-sm">Logout</button>
+        </div>
+      </header>
+
+      <!-- KPI Cards -->
+      <div id="kpi-row" class="kpi-row"></div>
+
+      <!-- Charts row 1 -->
+      <div class="chart-grid">
+        <div class="chart-card">
+          <h3>Relevance by Source</h3>
+          <canvas id="source-chart"></canvas>
+        </div>
+        <div class="chart-card">
+          <h3>Relevance by Content Length</h3>
+          <canvas id="length-chart"></canvas>
+        </div>
+      </div>
+
+      <!-- Charts row 2 -->
+      <div class="chart-grid">
+        <div class="chart-card wide">
+          <h3>Weekly Trend</h3>
+          <canvas id="trend-chart"></canvas>
+        </div>
+      </div>
+
+      <!-- Category table -->
+      <div class="table-card">
+        <h3>Category Performance</h3>
+        <table id="category-table">
+          <thead>
+            <tr>
+              <th>Category</th>
+              <th>Total</th>
+              <th>Shown</th>
+              <th>Relevant</th>
+              <th>Noise</th>
+              <th>Relevance Rate</th>
+              <th>Avg Length</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+
+      <!-- Never-shown table -->
+      <div class="table-card">
+        <h3>Never Shown (dead weight)</h3>
+        <table id="never-shown-table">
+          <thead>
+            <tr>
+              <th>Category</th>
+              <th>Count</th>
+              <th>Avg Length</th>
+              <th>Oldest</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+
+      <!-- Top/Bottom performers -->
+      <div class="chart-grid">
+        <div class="table-card">
+          <h3>Top Relevant Memories</h3>
+          <table id="top-table">
+            <thead>
+              <tr>
+                <th>Preview</th>
+                <th>Category</th>
+                <th>Shown</th>
+                <th>Rel</th>
+                <th>Noise</th>
+                <th>Rate</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <div class="table-card">
+          <h3>Noisiest Memories</h3>
+          <table id="noisy-table">
+            <thead>
+              <tr>
+                <th>Preview</th>
+                <th>Category</th>
+                <th>Shown</th>
+                <th>Rel</th>
+                <th>Noise</th>
+                <th>Rate</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+  <script src="app.js"></script>
+</body>
+</html>

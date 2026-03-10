@@ -100,8 +100,8 @@ def create_http_app():
             if request.url.path.startswith("/admin"):
                 return await call_next(request)
 
-            # Skip auth for dashboard static files (auth is handled client-side)
-            if request.url.path.startswith("/dashboard"):
+            # Skip auth for dashboard/analytics static files (auth is handled client-side)
+            if request.url.path.startswith("/dashboard") or request.url.path.startswith("/analytics"):
                 return await call_next(request)
 
             # Get authorization header
@@ -225,6 +225,12 @@ def create_http_app():
     if dashboard_dir.exists():
         routes.append(Mount("/dashboard", app=StaticFiles(directory=str(dashboard_dir), html=True)))
         logger.info(f"Dashboard mounted at /dashboard (dir: {dashboard_dir})")
+
+    # Mount analytics static files (admin dashboard)
+    analytics_dir = Path(__file__).parent / "static" / "analytics"
+    if analytics_dir.exists():
+        routes.append(Mount("/analytics", app=StaticFiles(directory=str(analytics_dir), html=True)))
+        logger.info(f"Analytics dashboard mounted at /analytics (dir: {analytics_dir})")
 
     # Add admin routes (always available in HTTP mode with database)
     from cems.admin.routes import admin_routes
