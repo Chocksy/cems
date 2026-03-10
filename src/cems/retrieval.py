@@ -25,7 +25,7 @@ from collections import defaultdict
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
-from cems.lib.json_parsing import parse_json_dict, parse_json_list
+from cems.lib.json_parsing import parse_json_dict
 
 if TYPE_CHECKING:
     from cems.config import CEMSConfig
@@ -718,9 +718,6 @@ def apply_score_adjustments(
     score = result.score  # Start with base vector similarity
 
     if result.metadata:
-        # Priority boost (1.0 default, up to 2.0 for hot memories)
-        score *= result.metadata.priority
-
         # Time decay with category-aware half-life.
         # Core categories (preferences, guidelines) decay slowly (120d).
         # Domain categories (general, api, ...) use default (60d).
@@ -729,26 +726,15 @@ def apply_score_adjustments(
         days_since_access = (now - result.metadata.last_accessed).days
         half_life = _category_half_life(result.metadata.category)
         time_decay = 1.0 / (1.0 + (days_since_access / half_life))
-        # Adaptive decay ceiling: well-validated memories (shown 10+ times) resist decay
-        # Require decent relevance before granting decay resistance
+        # Relevance feedback adjustment (min 3 signals to act)
         relevant_count = getattr(result, "_relevant_count", 0)
         noise_count = getattr(result, "_noise_count", 0)
-        if result.metadata.access_count >= 10:
-            total_fb = relevant_count + noise_count
-            if total_fb == 0 or relevant_count / total_fb >= 0.5:
-                time_decay = max(time_decay, 0.95)
-        score *= time_decay
-
-        # Relevance feedback adjustment (min 3 signals to act)
         total_feedback = relevant_count + noise_count
         if total_feedback >= 3:
             relevance_ratio = relevant_count / total_feedback
             # Scale: 0.85 (all noise) → 1.0 (50/50) → 1.15 (all relevant)
-            score *= 0.85 + 0.30 * relevance_ratio
-
-        # Pinned boost (10%)
-        if result.metadata.pinned:
-            score *= 1.1
+            time_decay *= 0.85 + 0.30 * relevance_ratio
+        score *= time_decay
 
         # Project-scoped scoring (boost same-project, penalize different-project)
         enable_project_penalty = config.enable_project_penalty if config else True
@@ -1105,101 +1091,6 @@ def reciprocal_rank_fusion(
         fused.append(result)
 
     return sorted(fused, key=lambda x: x.score, reverse=True)
-
-
-# =============================================================================
-# LLM Re-ranking
-# =============================================================================
-
-
-def rerank_with_llm(
-    query: str,
-    candidates: list["SearchResult"],
-    client: "OpenRouterClient",
-    top_k: int = 10,
-    config: "CEMSConfig | None" = None,
-) -> list["SearchResult"]:
-    """Use LLM to re-rank candidates by actual relevance.
-
-    This is the key to smarter retrieval - the LLM evaluates whether
-    each candidate ACTUALLY answers the query, not just similarity.
-
-    Args:
-        query: Original user query
-        candidates: List of candidates to re-rank
-        client: OpenRouter client
-        top_k: Number of results to return
-        config: Optional CEMS config for limits
-
-    Returns:
-        Re-ranked list of SearchResults
-    """
-    if not candidates:
-        return []
-
-    # Limit input for cost/speed (configurable)
-    rerank_input_limit = config.rerank_input_limit if config else 40
-    candidates_to_rank = candidates[:rerank_input_limit]
-
-    # Format candidates for LLM
-    candidate_text = "\n".join([
-        f"{i+1}. [{c.metadata.category if c.metadata else 'general'}] {c.content[:200]}..."
-        for i, c in enumerate(candidates_to_rank)
-    ])
-
-    prompt = f"""Given this search query, rank these memory candidates by ACTUAL RELEVANCE.
-
-Query: {query}
-
-Candidates:
-{candidate_text}
-
-IMPORTANT: Only include memories that are ACTUALLY relevant to the query.
-A memory about SSH to Hetzner is NOT relevant to a query about Windows printers.
-A memory about SEO scripts is NOT relevant to a query about fiscal printers.
-
-Return a JSON array of indices (1-based) in relevance order.
-Only include indices of memories that are TRULY relevant.
-If nothing is relevant, return an empty array [].
-
-Example: [3, 1, 7] means candidate 3 is most relevant, then 1, then 7.
-
-JSON array:"""
-
-    try:
-        start = time.perf_counter()
-        response = client.complete(prompt, temperature=0.1)
-        elapsed_ms = (time.perf_counter() - start) * 1000
-        logger.info(f"[TIMING] rerank_with_llm LLM call: {elapsed_ms:.0f}ms")
-
-        # Parse JSON response using shared utility
-        indices = parse_json_list(response, fallback=None)
-
-        if indices is None:
-            logger.warning(f"LLM rerank JSON parse failed: {response[:200]}")
-            return candidates[:top_k]
-
-        # Reorder candidates based on LLM ranking
-        reranked = []
-        for rank, idx in enumerate(indices[:top_k]):
-            if isinstance(idx, int) and 1 <= idx <= len(candidates_to_rank):
-                result = candidates_to_rank[idx - 1]
-                # Assign new score based on LLM rank
-                llm_score = 1.0 / (1 + rank)
-                # Blend: 70% LLM rank, 30% original score
-                result.score = 0.7 * llm_score + 0.3 * result.score
-                reranked.append(result)
-
-        # Fallback if LLM returned empty or invalid indices
-        if not reranked:
-            logger.warning(f"LLM rerank produced no valid results, falling back to original order")
-            return candidates[:top_k]
-
-        logger.info(f"[TIMING] rerank_with_llm total: {len(candidates_to_rank)} -> {len(reranked)} results")
-        return reranked
-    except Exception as e:
-        logger.warning(f"[RETRIEVAL] LLM reranking failed: {e}")
-        return candidates[:top_k]
 
 
 # =============================================================================

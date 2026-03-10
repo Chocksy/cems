@@ -15,10 +15,8 @@ Key features:
 
 from __future__ import annotations
 
-import json
 import logging
-from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING
 
 from cems.config import CEMSConfig
 from cems.memory.crud import CRUDMixin
@@ -27,14 +25,8 @@ from cems.memory.relations import RelationsMixin
 from cems.memory.retrieval import RetrievalMixin
 from cems.memory.search import SearchMixin
 from cems.memory.write import WriteMixin
-from cems.models import (
-    MemoryMetadata,
-    MemoryScope,
-    SearchResult,
-)
 
 if TYPE_CHECKING:
-    from cems.db.metadata_store import PostgresMetadataStore
     from cems.embedding import AsyncEmbeddingClient, EmbeddingClient
     from cems.llamacpp_server import AsyncLlamaCppEmbeddingClient
 
@@ -70,17 +62,14 @@ class CEMSMemory(WriteMixin, SearchMixin, CRUDMixin, MetadataMixin, RelationsMix
         # Initialize components lazily
         self._embedder: EmbeddingClient | None = None
         self._async_embedder: AsyncEmbeddingClient | AsyncLlamaCppEmbeddingClient | None = None
-        self._metadata: PostgresMetadataStore | None = None
         self._initialized = False
         self._async_initialized = False  # Track async initialization separately
 
-        # Initialize metadata store
+        # Initialize database connection
         from cems.db.database import init_database, is_database_initialized
-        from cems.db.metadata_store import PostgresMetadataStore
 
         if not is_database_initialized():
             init_database(self.config.database_url)
-        self._metadata = PostgresMetadataStore()
 
 
     def _ensure_initialized(self) -> None:
@@ -143,8 +132,6 @@ class CEMSMemory(WriteMixin, SearchMixin, CRUDMixin, MetadataMixin, RelationsMix
     # add() and add_async() are provided by WriteMixin
     # search(), search_async(), _search_raw(), _search_raw_async() are provided by SearchMixin
     # get(), get_all(), update(), update_async(), delete(), delete_async(), forget(), history() are provided by CRUDMixin
-    # get_metadata(), get_category_counts(), get_category_counts_async(), get_all_categories() are provided by MetadataMixin
-    # get_recently_accessed(), get_category_summary(), get_all_category_summaries() are provided by MetadataMixin
-    # metadata_store property is provided by MetadataMixin
+    # get_metadata(), get_metadata_async(), get_category_counts_async() are provided by MetadataMixin
     # graph_store, get_related_memories(), get_related_memories_async(), get_memories_by_entity(), get_graph_stats() are provided by RelationsMixin
     # retrieve_for_inference(), retrieve_for_inference_async() are provided by RetrievalMixin

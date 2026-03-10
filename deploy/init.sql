@@ -99,12 +99,12 @@ CREATE INDEX IF NOT EXISTS idx_memories_expires_at ON memories(expires_at) WHERE
 CREATE INDEX IF NOT EXISTS idx_memories_user_scope ON memories(user_id, scope) WHERE archived = FALSE;
 
 -- =============================================================================
--- Memory Relations Table (replaces Kuzu graph for simple relationships)
+-- Memory Relations Table (simple document-to-document relationships)
 -- =============================================================================
 
 CREATE TABLE IF NOT EXISTS memory_relations (
-    source_id UUID REFERENCES memories(id) ON DELETE CASCADE,
-    target_id UUID REFERENCES memories(id) ON DELETE CASCADE,
+    source_id UUID REFERENCES memory_documents(id) ON DELETE CASCADE,
+    target_id UUID REFERENCES memory_documents(id) ON DELETE CASCADE,
     relation_type VARCHAR(50) DEFAULT 'similar',
     similarity REAL,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,

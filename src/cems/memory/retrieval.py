@@ -93,21 +93,19 @@ class RetrievalMixin:
         project: str | None = None,
         mode: Literal["auto", "vector", "hybrid"] = "auto",
         enable_hyde: bool = True,
-        enable_rerank: bool = True,
         enable_decomposition: bool = True,
     ) -> dict[str, Any]:
         """The enhanced inference retrieval pipeline.
 
-        Implements 9 stages:
+        Implements 8 stages:
         1. Query understanding (intent, domains, entities)
         2. Query synthesis (LLM expansion)
         3. HyDE (hypothetical document generation)
         4. Candidate retrieval (vector + hybrid search)
         5. RRF fusion (combine multi-query results)
-        6. LLM re-ranking (smarter relevance)
-        7. Relevance filtering (threshold)
-        8. Scoring adjustments (unified: time decay, priority, project)
-        9. Token-budgeted assembly
+        6. Relevance filtering (threshold)
+        7. Scoring adjustments (unified: time decay, project)
+        8. Token-budgeted assembly
 
         This is the primary search method for LLM context injection.
 
@@ -120,7 +118,6 @@ class RetrievalMixin:
             project: Optional project ID for project-scoped scoring
             mode: Retrieval mode
             enable_hyde: Use HyDE for better vector matching
-            enable_rerank: Use LLM re-ranking for smarter results
 
         Returns:
             Dict with results, tokens_used, metadata
@@ -137,7 +134,6 @@ class RetrievalMixin:
             generate_hypothetical_memory,
             is_strong_lexical_signal,
             reciprocal_rank_fusion,
-            rerank_with_llm,
             route_to_strategy,
             synthesize_query,
         )
@@ -337,25 +333,7 @@ class RetrievalMixin:
         # Deduplicate
         candidates = deduplicate_results(candidates)
 
-        # Stage 6: Re-ranking (based on config: llamacpp_server, llm, or disabled)
-        if enable_rerank and len(candidates) > 3:
-            reranker_backend = self.config.reranker_backend
-
-            if reranker_backend == "llamacpp_server":
-                # llamacpp_server requires async - skip in sync context
-                logger.warning("[RETRIEVAL] llamacpp_server reranker requires async. Use async method or llm backend.")
-
-            elif reranker_backend == "llm" and client:
-                # OpenRouter LLM reranking
-                candidates = rerank_with_llm(
-                    query, candidates, client,
-                    top_k=self.config.rerank_output_limit,
-                    config=self.config
-                )
-                logger.info(f"[RETRIEVAL] LLM reranking complete: {len(candidates)} results")
-            # reranker_backend == "disabled" -> skip reranking
-
-        # Stage 7: Relevance filtering
+        # Stage 6: Relevance filtering
         threshold = self.config.relevance_threshold
         candidates = [c for c in candidates if c.score >= threshold]
 
@@ -412,7 +390,6 @@ class RetrievalMixin:
         project: str | None = None,
         mode: Literal["auto", "vector", "hybrid"] = "auto",
         enable_hyde: bool = True,
-        enable_rerank: bool = True,
         enable_decomposition: bool = True,
     ) -> dict[str, Any]:
         """Async version of retrieve_for_inference(). Use from HTTP server."""
@@ -429,7 +406,6 @@ class RetrievalMixin:
             generate_hypothetical_memory,
             is_strong_lexical_signal,
             reciprocal_rank_fusion,
-            rerank_with_llm,
             route_to_strategy,
             synthesize_query,
         )
@@ -650,55 +626,6 @@ class RetrievalMixin:
             candidates = query_results[0] if query_results else []
 
         candidates = deduplicate_results(candidates)
-
-        # Stage 6: Re-ranking (based on config: llamacpp_server, llm, or disabled)
-        if enable_rerank and len(candidates) > 3:
-            reranker_backend = self.config.reranker_backend
-
-            if reranker_backend == "llamacpp_server":
-                # llama.cpp server reranking via HTTP
-                from cems.llamacpp_server import AsyncLlamaCppRerankerClient
-
-                reranker = AsyncLlamaCppRerankerClient(self.config)
-                input_limit = self.config.rerank_input_limit
-                candidates_to_rank = candidates[:input_limit]
-                documents = [c.content[:300] for c in candidates_to_rank]  # First 300 chars
-
-                try:
-                    rerank_result = await reranker.rerank(query, documents)
-                    # Apply position-aware blending (QMD approach)
-                    # rerank_result should have 'results' with 'index' and 'relevance_score'
-                    results = rerank_result.get("results", rerank_result)
-                    k = 60  # RRF constant
-                    for item in results:
-                        idx = item.get("index", 0)
-                        reranker_score = item.get("relevance_score", 0.5)
-                        if idx < len(candidates_to_rank):
-                            retrieval_rank = idx + 1
-                            retrieval_score = 1.0 / (k + retrieval_rank)
-                            # Position-aware blending
-                            if retrieval_rank <= 3:
-                                candidates_to_rank[idx].score = 0.75 * retrieval_score + 0.25 * reranker_score
-                            elif retrieval_rank <= 10:
-                                candidates_to_rank[idx].score = 0.60 * retrieval_score + 0.40 * reranker_score
-                            else:
-                                candidates_to_rank[idx].score = 0.40 * retrieval_score + 0.60 * reranker_score
-
-                    candidates_to_rank.sort(key=lambda x: x.score, reverse=True)
-                    candidates = candidates_to_rank[:self.config.rerank_output_limit]
-                    logger.info(f"[RETRIEVAL] llama.cpp server reranking complete: {len(candidates)} results")
-                except Exception as e:
-                    logger.warning(f"[RETRIEVAL] llama.cpp server reranking failed: {e}")
-
-            elif reranker_backend == "llm" and client:
-                # OpenRouter LLM reranking
-                candidates = rerank_with_llm(
-                    query, candidates, client,
-                    top_k=self.config.rerank_output_limit,
-                    config=self.config
-                )
-                logger.info(f"[RETRIEVAL] LLM reranking complete: {len(candidates)} results")
-            # reranker_backend == "disabled" -> skip reranking
 
         threshold = self.config.relevance_threshold
         before_filter = len(candidates)

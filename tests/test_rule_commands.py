@@ -43,7 +43,6 @@ def test_rule_add_interactive_constitution() -> None:
     assert kwargs["category"] == "guidelines"
     assert kwargs["scope"] == "personal"
     assert kwargs["source_ref"] == "foundation:constitution:v2"
-    assert kwargs["pinned"] is True
     assert "foundation" in kwargs["tags"]
     assert "constitution" in kwargs["tags"]
     assert "principle:13" in kwargs["tags"]

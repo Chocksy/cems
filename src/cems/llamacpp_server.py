@@ -1,12 +1,10 @@
-"""llama.cpp server HTTP client for embeddings and reranking.
+"""llama.cpp server HTTP client for embeddings.
 
-This module provides HTTP clients for llama.cpp server endpoints:
+This module provides an HTTP client for llama.cpp server embedding endpoint:
 - Embeddings via /v1/embeddings (OpenAI-compatible)
-- Reranking via /rerank endpoint
 
 References:
 - https://github.com/ggerganov/llama.cpp/blob/master/examples/server/README.md
-- https://llamaedge.com/docs/user-guide/llm/api-reference
 """
 
 from __future__ import annotations
@@ -23,11 +21,9 @@ logger = logging.getLogger(__name__)
 
 
 class LlamaCppServerClient:
-    """HTTP client for llama.cpp server embeddings and reranking.
+    """HTTP client for llama.cpp server embeddings.
 
-    Supports:
-    - /v1/embeddings (OpenAI-compatible) for embeddings
-    - /rerank for cross-encoder reranking
+    Supports /v1/embeddings (OpenAI-compatible) for embeddings.
 
     Usage:
         client = LlamaCppServerClient(
@@ -42,12 +38,10 @@ class LlamaCppServerClient:
         base_url: str,
         api_key: str | None = None,
         embed_path: str = "/v1/embeddings",
-        rerank_path: str = "/rerank",
         timeout: int = 30,
     ):
         self.base_url = base_url.rstrip("/")
         self.embed_path = embed_path
-        self.rerank_path = rerank_path
         self.timeout = timeout
         self.headers = {}
         if api_key:
@@ -80,33 +74,6 @@ class LlamaCppServerClient:
 
         # OpenAI-compatible response: data["data"][i]["embedding"]
         return [item["embedding"] for item in data["data"]]
-
-    async def rerank(
-        self,
-        model: str,
-        query: str,
-        documents: list[str],
-    ) -> list[dict]:
-        """Rerank documents against a query.
-
-        Args:
-            model: Model name/path
-            query: Query text
-            documents: List of document texts to rerank
-
-        Returns:
-            List of dicts with 'index' and 'relevance_score' keys,
-            sorted by relevance (highest first)
-        """
-        payload = {
-            "model": model,
-            "query": query,
-            "documents": documents,
-        }
-        async with httpx.AsyncClient(timeout=self.timeout, headers=self.headers) as client:
-            resp = await client.post(f"{self.base_url}{self.rerank_path}", json=payload)
-            resp.raise_for_status()
-            return resp.json()
 
 
 class AsyncLlamaCppEmbeddingClient:
@@ -163,25 +130,3 @@ class AsyncLlamaCppEmbeddingClient:
         return all_embeddings
 
 
-class AsyncLlamaCppRerankerClient:
-    """Async reranker client wrapping LlamaCppServerClient.
-
-    Provides reranking via llama.cpp server's /rerank endpoint.
-    """
-
-    def __init__(self, config: "CEMSConfig"):
-        self.config = config
-        self._client = LlamaCppServerClient(
-            base_url=config.llamacpp_rerank_url,
-            api_key=config.llamacpp_api_key,
-            rerank_path=config.llamacpp_rerank_path,
-            timeout=config.llamacpp_timeout_seconds,
-        )
-        self.model = config.llamacpp_rerank_model
-
-    async def rerank(self, query: str, documents: list[str]) -> list[dict]:
-        """Rerank documents against a query.
-
-        Returns list of dicts with 'index' and 'relevance_score'.
-        """
-        return await self._client.rerank(self.model, query, documents)

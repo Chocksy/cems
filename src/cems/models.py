@@ -30,16 +30,6 @@ class MemoryCategory(str, Enum):
     GATE_RULES = "gate-rules"  # Tool-blocking rules for PreToolUse hooks
 
 
-class PinCategory(str, Enum):
-    """Categories for pinned memories."""
-
-    GUIDELINE = "guideline"  # Coding guidelines, style guides
-    CONVENTION = "convention"  # Team conventions
-    ARCHITECTURE = "architecture"  # Architecture decisions
-    STANDARD = "standard"  # Industry standards
-    DOCUMENTATION = "documentation"  # Important docs
-
-
 class MemoryMetadata(BaseModel):
     """Extended metadata for a memory item."""
 
@@ -52,17 +42,9 @@ class MemoryMetadata(BaseModel):
     created_at: datetime = Field(default_factory=_utcnow)
     updated_at: datetime = Field(default_factory=_utcnow)
     last_accessed: datetime = Field(default_factory=_utcnow)
-    access_count: int = Field(default=0, description="Number of times accessed")
     source: str | None = Field(default=None, description="Source of the memory")
     source_ref: str | None = Field(default=None, description="Reference (e.g., repo:file:line)")
     tags: list[str] = Field(default_factory=list, description="Tags for organization")
-    archived: bool = Field(default=False, description="Whether memory is archived")
-    priority: float = Field(default=1.0, description="Priority weight for retrieval")
-    # Pinned memory support - excluded from decay
-    pinned: bool = Field(default=False, description="Pinned memories are never auto-pruned")
-    pin_reason: str | None = Field(default=None, description="Why this memory is pinned")
-    pin_category: str | None = Field(default=None, description="Pin category (guideline, convention, etc.)")
-    expires_at: datetime | None = Field(default=None, description="When memory expires (None = never)")
 
 
 class SearchResult(BaseModel):

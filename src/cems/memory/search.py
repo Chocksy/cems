@@ -45,15 +45,9 @@ def _make_search_result_from_chunk(chunk: dict, user_id: str) -> SearchResult:
         source=chunk.get("source"),
         source_ref=chunk.get("source_ref"),
         tags=chunk.get("tags", []),
-        priority=1.0,
-        pinned=False,
-        pin_reason=None,
-        archived=False,
-        access_count=chunk.get("shown_count", 0),
         created_at=created_at,
         updated_at=created_at,
         last_accessed=last_accessed,
-        expires_at=None,
     )
 
     result = SearchResult(
@@ -90,25 +84,17 @@ def _apply_score_adjustments(results: list[SearchResult]) -> list[SearchResult]:
     now = datetime.now(UTC)
     for result in results:
         if result.metadata:
-            result.score *= result.metadata.priority
             days_since_access = (now - result.metadata.last_accessed).days
             half_life = _category_half_life(result.metadata.category)
             time_decay = 1.0 / (1.0 + (days_since_access / half_life))
-            # Adaptive decay ceiling: well-validated memories resist decay
+            # Relevance feedback adjustment (min 3 signals to act)
             relevant_count = getattr(result, "_relevant_count", 0)
             noise_count = getattr(result, "_noise_count", 0)
-            if result.metadata.access_count >= 10:
-                total_fb = relevant_count + noise_count
-                if total_fb == 0 or relevant_count / total_fb >= 0.5:
-                    time_decay = max(time_decay, 0.95)
-            result.score *= time_decay
-            # Relevance feedback adjustment (min 3 signals to act)
             total_feedback = relevant_count + noise_count
             if total_feedback >= 3:
                 relevance_ratio = relevant_count / total_feedback
-                result.score *= 0.85 + 0.30 * relevance_ratio
-            if result.metadata.pinned:
-                result.score *= 1.1
+                time_decay *= 0.85 + 0.30 * relevance_ratio
+            result.score *= time_decay
     return results
 
 

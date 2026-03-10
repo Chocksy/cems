@@ -284,24 +284,22 @@ async def api_memory_search(request: Request):
         "project": "org/repo",           # Project ID for scoped boost
         "mode": "auto|vector|hybrid",    # NEW: Retrieval mode
         "enable_hyde": true,             # NEW: Use HyDE for better matching
-        "enable_rerank": true            # NEW: Use LLM re-ranking
     }
 
-    The enhanced pipeline (retrieve_for_inference) implements 9 stages:
-    1. Query understanding (intent, domains, entities) - NEW
+    The enhanced pipeline (retrieve_for_inference) implements 8 stages:
+    1. Query understanding (intent, domains, entities)
     2. Query synthesis (LLM expands query for better retrieval)
-    3. HyDE (hypothetical document generation) - NEW
+    3. HyDE (hypothetical document generation)
     4. Candidate retrieval (vector + graph search)
-    5. RRF fusion (combine multi-query results) - NEW
-    6. LLM re-ranking (smarter relevance) - NEW
-    7. Relevance filtering (threshold-based)
-    8. Unified scoring (time decay + priority + project)
-    9. Token-budgeted assembly
+    5. RRF fusion (combine multi-query results)
+    6. Relevance filtering (threshold-based)
+    7. Unified scoring (time decay + project)
+    8. Token-budgeted assembly
 
     Modes:
     - "auto": Smart routing based on query analysis (default)
     - "vector": Fast path, minimal LLM calls
-    - "hybrid": Full pipeline with HyDE + RRF + re-ranking
+    - "hybrid": Full pipeline with HyDE + RRF
 
     Use raw=true for debugging to see all results without filtering.
     """
@@ -326,7 +324,6 @@ async def api_memory_search(request: Request):
         project = body.get("project")
         mode = body.get("mode", "vector")
         enable_hyde = body.get("enable_hyde", False)
-        enable_rerank = body.get("enable_rerank", True)
         enable_decomposition = body.get("enable_decomposition", True)
 
         logger.info(f"[API] Search request: query='{query[:50]}...', mode={mode}, raw={raw_mode}")
@@ -355,7 +352,6 @@ async def api_memory_search(request: Request):
             project=project,
             mode=mode,
             enable_hyde=enable_hyde,
-            enable_rerank=enable_rerank,
             enable_decomposition=enable_decomposition,
         )
 

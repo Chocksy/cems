@@ -4,7 +4,7 @@ from datetime import datetime, UTC
 
 import pytest
 
-from cems.models import MemoryMetadata, MemoryScope, CategorySummary, PinCategory
+from cems.models import MemoryMetadata, MemoryScope, CategorySummary
 
 
 class TestMemoryMetadata:
@@ -23,9 +23,6 @@ class TestMemoryMetadata:
         assert metadata.user_id == "user-1"
         assert metadata.scope == MemoryScope.PERSONAL
         assert metadata.category == "preferences"
-        assert metadata.access_count == 0
-        assert metadata.archived is False
-        assert metadata.priority == 1.0
 
     def test_metadata_with_tags(self):
         """Test metadata with tags."""
@@ -47,30 +44,9 @@ class TestMemoryMetadata:
         )
 
         assert metadata.category == "general"
-        assert metadata.access_count == 0
-        assert metadata.archived is False
-        assert metadata.priority == 1.0
-        assert metadata.pinned is False
-        assert metadata.pin_reason is None
-        assert metadata.expires_at is None
         assert isinstance(metadata.created_at, datetime)
         assert isinstance(metadata.updated_at, datetime)
         assert isinstance(metadata.last_accessed, datetime)
-
-    def test_pinned_metadata(self):
-        """Test pinned memory metadata."""
-        metadata = MemoryMetadata(
-            memory_id="pinned-123",
-            user_id="user-1",
-            scope=MemoryScope.PERSONAL,
-            pinned=True,
-            pin_reason="Core guideline",
-            pin_category="guideline",
-        )
-
-        assert metadata.pinned is True
-        assert metadata.pin_reason == "Core guideline"
-        assert metadata.pin_category == "guideline"
 
 
 class TestCategorySummary:
@@ -113,9 +89,3 @@ class TestEnums:
         """Test MemoryScope enum values."""
         assert MemoryScope.PERSONAL.value == "personal"
         assert MemoryScope.SHARED.value == "shared"
-
-    def test_pin_category_values(self):
-        """Test PinCategory enum values."""
-        assert PinCategory.GUIDELINE.value == "guideline"
-        assert PinCategory.CONVENTION.value == "convention"
-        assert PinCategory.ARCHITECTURE.value == "architecture"

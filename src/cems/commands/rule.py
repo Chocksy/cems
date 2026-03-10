@@ -254,8 +254,6 @@ def rule_add(ctx: click.Context, kind: str | None, scope: str | None) -> None:
             scope=selected_scope,  # type: ignore[arg-type]
             tags=tags,
             source_ref=source_ref or None,
-            pinned=pinned,
-            pin_reason=pin_reason or None,
         )
         event, memory_id = _extract_event(result)
         console.print(f"[green]Rule stored[/green] (event={event}, id={memory_id})")
@@ -340,8 +338,6 @@ def rule_load(
                 scope=payload_scope,  # type: ignore[arg-type]
                 tags=tags,
                 source_ref=memory.get("source_ref"),
-                pinned=bool(memory.get("pinned", True)),
-                pin_reason=memory.get("pin_reason") or f"{data.get('name', 'bundle')} memory",
             )
             event, memory_id = _extract_event(result)
             if event in counts:

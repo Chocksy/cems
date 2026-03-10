@@ -679,7 +679,7 @@ class DocumentStore:
         chunks: list[Chunk],
         embeddings: list[list[float]],
         category: str,
-        mode: Literal["append", "replace", "skip"] = "replace",
+        mode: Literal["append", "replace", "skip", "finalize"] = "replace",
         scope: str = "personal",
         title: str | None = None,
         source_ref: str | None = None,

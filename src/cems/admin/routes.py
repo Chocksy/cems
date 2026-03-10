@@ -493,6 +493,8 @@ async def add_team_member(request: Request) -> JSONResponse:
 
         try:
             member = team_service.add_member(team_id=team_id, user_id=user_id, role=role)
+            if not member:
+                return JSONResponse({"error": "Failed to add member"}, status_code=500)
             return JSONResponse(
                 {
                     "member": {
@@ -592,11 +594,11 @@ async def debug_llm_test(request: Request) -> JSONResponse:
     # Test OpenRouter LLM
     openrouter_key = os.environ.get("OPENROUTER_API_KEY")
     if openrouter_key:
+        client = OpenAI(
+            base_url="https://openrouter.ai/api/v1",
+            api_key=openrouter_key,
+        )
         try:
-            client = OpenAI(
-                base_url="https://openrouter.ai/api/v1",
-                api_key=openrouter_key,
-            )
             response = client.chat.completions.create(
                 model="openai/gpt-4o-mini",
                 messages=[{"role": "user", "content": "Say 'OpenRouter OK' in 3 words"}],

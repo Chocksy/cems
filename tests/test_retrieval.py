@@ -333,7 +333,7 @@ class TestRelevanceScoring:
     """Stage 3-4: Relevance filtering and temporal ranking tests."""
 
     def _create_result(
-        self, score: float = 1.0, priority: float = 1.0, pinned: bool = False,
+        self, score: float = 1.0,
         days_ago: int = 0, category: str = "general", source_ref: str | None = None
     ) -> SearchResult:
         """Helper to create a SearchResult for testing."""
@@ -344,8 +344,6 @@ class TestRelevanceScoring:
             user_id="test-user",
             scope=MemoryScope.PERSONAL,
             category=category,
-            priority=priority,
-            pinned=pinned,
             source_ref=source_ref,
             created_at=now,
             updated_at=now,
@@ -376,31 +374,6 @@ class TestRelevanceScoring:
         result = self._create_result(score=1.0, days_ago=120)
         score = apply_score_adjustments(result)
         assert 0.32 < score < 0.34  # Should be close to 0.33
-
-    def test_apply_score_adjustments_priority_boost(self):
-        """Score should be multiplied by priority (no upper clamp)."""
-        result = self._create_result(score=1.0, priority=2.0, days_ago=0)
-        score = apply_score_adjustments(result)
-        assert score == 2.0  # No upper clamp — 1.0 * 2.0 = 2.0
-
-    def test_apply_score_adjustments_pinned_boost(self):
-        """Pinned memories should get a 10% boost (no upper clamp)."""
-        unpinned_result = self._create_result(score=1.0, pinned=False, days_ago=0)
-        pinned_result = self._create_result(score=1.0, pinned=True, days_ago=0)
-
-        unpinned_score = apply_score_adjustments(unpinned_result)
-        pinned_score = apply_score_adjustments(pinned_result)
-
-        assert pinned_score == 1.1  # No upper clamp — 1.0 * 1.1 = 1.1
-
-    def test_apply_score_adjustments_combined_factors(self):
-        """Score should combine all factors correctly (no upper clamp)."""
-        result = self._create_result(score=0.8, priority=1.5, pinned=True, days_ago=60)
-        score = apply_score_adjustments(result)
-        # Expected: 0.8 * 0.5 (time decay at 60 days) * 1.5 (priority) * 1.1 (pinned)
-        expected = 0.8 * 0.5 * 1.5 * 1.1
-        # No upper clamp — expected is 0.66 which is already < 1.0
-        assert abs(score - expected) < 0.01
 
     def test_apply_score_adjustments_no_category_penalty(self):
         """Cross-category penalty is removed — category has no effect on scoring."""

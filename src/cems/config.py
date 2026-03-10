@@ -116,18 +116,6 @@ class CEMSConfig(BaseSettings):
         default="/v1/embeddings",
         description="Endpoint path for embeddings (OpenAI-compatible)",
     )
-    llamacpp_rerank_url: str = Field(
-        default="http://localhost:8082",
-        description="Base URL for llama.cpp reranker server",
-    )
-    llamacpp_rerank_model: str = Field(
-        default="Qwen3-Reranker-0.6B.Q8_0.gguf",
-        description="Model name for reranking",
-    )
-    llamacpp_rerank_path: str = Field(
-        default="/rerank",
-        description="Endpoint path for reranking",
-    )
     llamacpp_api_key: str | None = Field(
         default=None,
         description="API key for llama.cpp server (if required)",
@@ -196,15 +184,6 @@ class CEMSConfig(BaseSettings):
         default=150,  # Increased from 75 for better Recall@All
         description="Max candidates per vector search query",
     )
-    rerank_input_limit: int = Field(
-        default=40,  # QMD-style cap for reranking quality/latency balance
-        description="Max candidates to send to reranker",
-    )
-    rerank_output_limit: int = Field(
-        default=50,  # Increased from 40 - keep more ranked results
-        description="Max results to return from LLM reranking",
-    )
-
     # =========================================================================
     # QMD-Style Retrieval Settings (strong-signal skip, lexical stream, RRF)
     # =========================================================================
@@ -254,14 +233,6 @@ class CEMSConfig(BaseSettings):
     rrf_decomposition_weight: float = Field(
         default=1.5,
         description="RRF weight for decomposed sub-queries (between original=2.0 and expansion=1.0)",
-    )
-
-    # =========================================================================
-    # Reranker Settings
-    # =========================================================================
-    reranker_backend: Literal["llamacpp_server", "llm", "disabled"] = Field(
-        default="disabled",
-        description="Reranker backend: llamacpp_server (llama.cpp server), llm (OpenRouter API), disabled",
     )
 
     # =========================================================================
