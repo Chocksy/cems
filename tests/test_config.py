@@ -19,8 +19,8 @@ class TestCEMSConfig:
         assert config.user_id == "default"
         assert config.team_id is None
         assert config.enable_scheduler is True
-        assert config.stale_days == 90
-        assert config.archive_days == 180
+        assert config.stale_days == 30
+        assert config.archive_days == 60
 
     def test_custom_user_id(self):
         """Test setting custom user ID."""

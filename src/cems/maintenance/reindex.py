@@ -56,9 +56,8 @@ class ReindexJob:
     async def _refresh_embeddings(self, docs: list[dict]) -> int:
         """Refresh embeddings for documents.
 
-        Triggers re-chunking and re-embedding via update_async which:
-        1. Re-generates embeddings with the current embedding model
-        2. Replaces chunks in the database
+        Uses doc_store.refresh_chunks() to replace chunk embeddings WITHOUT
+        bumping updated_at, so age-based pruning still works correctly.
 
         Skips docs updated within SKIP_FRESH_DAYS (embeddings are still current).
 
@@ -68,6 +67,12 @@ class ReindexJob:
         Returns:
             Number of documents re-indexed
         """
+        await self.memory._ensure_initialized_async()
+        assert self.memory._async_embedder is not None
+        doc_store = await self.memory._ensure_document_store()
+
+        from cems.chunking import chunk_document
+
         refreshed = 0
         failed = 0
         skipped = 0
@@ -101,8 +106,14 @@ class ReindexJob:
                 continue
 
             try:
-                result = await self.memory.update_async(doc_id, content)
-                if result.get("success"):
+                chunks = chunk_document(content)
+                if not chunks:
+                    failed += 1
+                    continue
+                chunk_texts = [c.content for c in chunks]
+                embeddings = await self.memory._async_embedder.embed_batch(chunk_texts)
+                success = await doc_store.refresh_chunks(doc_id, chunks, embeddings)
+                if success:
                     refreshed += 1
                 else:
                     failed += 1
@@ -126,7 +137,10 @@ class ReindexJob:
     }
 
     async def _archive_dead(self, doc_store, docs: list[dict]) -> int:
-        """Soft-delete documents not updated in archive_days.
+        """Soft-delete documents created before archive_days ago.
+
+        Uses created_at (not updated_at) because reindex bumps updated_at,
+        which would defeat age-based archival.
 
         Skips protected categories (gate-rules, guidelines, etc.) which are
         long-lived config docs that should never be auto-archived.
@@ -147,15 +161,15 @@ class ReindexJob:
             if doc.get("category", "general") in self.PROTECTED_CATEGORIES:
                 continue
 
-            updated_at = doc.get("updated_at") or doc.get("created_at")
-            if not updated_at:
+            created_at = doc.get("created_at")
+            if not created_at:
                 continue
-            if isinstance(updated_at, str):
-                updated_at = datetime.fromisoformat(updated_at)
-            if updated_at.tzinfo is None:
-                updated_at = updated_at.replace(tzinfo=UTC)
+            if isinstance(created_at, str):
+                created_at = datetime.fromisoformat(created_at)
+            if created_at.tzinfo is None:
+                created_at = created_at.replace(tzinfo=UTC)
 
-            if updated_at < cutoff:
+            if created_at < cutoff:
                 # Skip if recently shown — actively-surfaced memories shouldn't be archived
                 last_shown = doc.get("last_shown_at")
                 if last_shown:

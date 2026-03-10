@@ -607,6 +607,70 @@ class DocumentStore:
         logger.debug(f"Updated document {document_id} with {len(chunks)} chunks")
         return True
 
+    async def refresh_chunks(
+        self,
+        document_id: str,
+        chunks: list[Chunk],
+        embeddings: list[list[float]],
+    ) -> bool:
+        """Replace a document's chunks/embeddings without touching updated_at.
+
+        Used by the reindex job to re-embed documents without resetting their
+        age, which would break age-based pruning.
+
+        Args:
+            document_id: The document ID
+            chunks: New pre-chunked content
+            embeddings: New embeddings (must match chunks length)
+
+        Returns:
+            True if document exists and chunks were replaced
+        """
+        if len(chunks) != len(embeddings):
+            raise ValueError(
+                f"Chunks and embeddings must have same length: {len(chunks)} vs {len(embeddings)}"
+            )
+
+        pool = await self._get_pool()
+        doc_uuid = UUID(document_id)
+
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                # Verify document exists
+                exists = await conn.fetchval(
+                    "SELECT 1 FROM memory_documents WHERE id = $1 AND deleted_at IS NULL",
+                    doc_uuid,
+                )
+                if not exists:
+                    return False
+
+                # Delete old chunks
+                await conn.execute(
+                    "DELETE FROM memory_chunks WHERE document_id = $1",
+                    doc_uuid,
+                )
+
+                # Insert new chunks
+                for chunk, embedding in zip(chunks, embeddings):
+                    await conn.execute(
+                        """
+                        INSERT INTO memory_chunks (
+                            id, document_id, seq, pos, content, embedding, tokens, bytes
+                        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                        """,
+                        uuid4(),
+                        doc_uuid,
+                        chunk.seq,
+                        chunk.pos,
+                        chunk.content,
+                        embedding,
+                        chunk.tokens,
+                        chunk.bytes,
+                    )
+
+        logger.debug(f"Refreshed chunks for document {document_id} ({len(chunks)} chunks)")
+        return True
+
     async def upsert_document_by_tag(
         self,
         tag: str,

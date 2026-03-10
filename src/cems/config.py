@@ -286,8 +286,8 @@ class CEMSConfig(BaseSettings):
     # =========================================================================
     # Decay Settings
     # =========================================================================
-    stale_days: int = Field(default=90, description="Days before memory is considered stale")
-    archive_days: int = Field(default=180, description="Days before memory is archived")
+    stale_days: int = Field(default=30, description="Days before memory is considered stale")
+    archive_days: int = Field(default=60, description="Days before memory is archived")
     hot_access_threshold: int = Field(
         default=5,
         description="Access count to consider memory 'hot'",

@@ -78,10 +78,10 @@ class SummarizationJob:
         # Get oldest docs first (ASC) so old docs aren't cut off by the limit
         all_docs = await doc_store.get_all_documents(user_id, limit=2000, order="asc")
 
-        # Filter to 30+ days old, excluding protected categories
+        # Filter to 14+ days old, excluding protected categories
         old_docs = [
             d for d in all_docs
-            if _doc_age_exceeds(d, days=30)
+            if _doc_age_exceeds(d, days=14)
             and d.get("category", "general") not in PROTECTED_CATEGORIES
         ]
         logger.info(f"Found {len(old_docs)} old documents to potentially summarize")
@@ -90,11 +90,13 @@ class SummarizationJob:
             doc_store, old_docs
         )
         pruned = await self._prune_stale(doc_store, user_id, all_docs)
+        never_shown_pruned = await self._prune_never_shown(doc_store, all_docs)
 
         result = {
             "categories_updated": categories_updated,
             "originals_deleted": originals_deleted,
             "memories_pruned": pruned,
+            "never_shown_pruned": never_shown_pruned,
             "old_memories_checked": len(old_docs),
         }
         logger.info(f"Summarization completed: {result}")
@@ -193,7 +195,10 @@ class SummarizationJob:
     async def _prune_stale(
         self, doc_store, user_id: str, all_docs: list[dict]
     ) -> int:
-        """Soft-delete documents not updated in stale_days.
+        """Soft-delete documents created before stale_days ago.
+
+        Uses created_at (not updated_at) because reindex bumps updated_at,
+        which would defeat age-based pruning.
 
         Args:
             doc_store: DocumentStore instance
@@ -206,7 +211,7 @@ class SummarizationJob:
         stale_days = self.config.stale_days
         stale_docs = [
             d for d in all_docs
-            if _doc_age_exceeds(d, stale_days, field="updated_at")
+            if _doc_age_exceeds(d, stale_days, field="created_at")
             and d.get("category", "general") not in PROTECTED_CATEGORIES
             and not _recently_shown(d, stale_days)
         ]
@@ -223,6 +228,50 @@ class SummarizationJob:
 
         if pruned:
             logger.info(f"Soft-deleted {pruned} stale documents (>{stale_days} days)")
+
+        return pruned
+
+    # Minimum age before a never-shown memory can be pruned (days)
+    NEVER_SHOWN_MIN_AGE_DAYS = 7
+
+    async def _prune_never_shown(
+        self, doc_store, all_docs: list[dict]
+    ) -> int:
+        """Soft-delete memories that have never been surfaced in retrieval.
+
+        If a memory has existed for 7+ days and was never shown (shown_count=0),
+        it's likely noise that will never be relevant. Prune it to keep the
+        memory corpus lean.
+
+        Args:
+            doc_store: DocumentStore instance
+            all_docs: All user documents
+
+        Returns:
+            Number of documents pruned
+        """
+        candidates = [
+            d for d in all_docs
+            if d.get("shown_count", 0) == 0
+            and _doc_age_exceeds(d, self.NEVER_SHOWN_MIN_AGE_DAYS, field="created_at")
+            and d.get("category", "general") not in PROTECTED_CATEGORIES
+        ]
+        pruned = 0
+
+        for doc in candidates:
+            doc_id = doc.get("id")
+            if doc_id:
+                try:
+                    await doc_store.delete_document(doc_id, hard=False)
+                    pruned += 1
+                except Exception as e:
+                    logger.error(f"Failed to prune never-shown document {doc_id}: {e}")
+
+        if pruned:
+            logger.info(
+                f"Soft-deleted {pruned} never-shown documents "
+                f"(>{self.NEVER_SHOWN_MIN_AGE_DAYS} days old, shown_count=0)"
+            )
 
         return pruned
 

@@ -31,6 +31,7 @@ def _make_doc(
     category: str = "general",
     created_at: datetime | None = None,
     updated_at: datetime | None = None,
+    shown_count: int = 1,
 ) -> dict:
     """Create a mock document dict matching DocumentStore format."""
     now = datetime.now(UTC)
@@ -44,6 +45,8 @@ def _make_doc(
         "source_ref": None,
         "created_at": created_at or now,
         "updated_at": updated_at or now,
+        "shown_count": shown_count,
+        "last_shown_at": None,
     }
 
 
@@ -560,6 +563,7 @@ class TestSummarizationJob:
 
         assert result["categories_updated"] == 0
         assert result["memories_pruned"] == 0
+        assert result["never_shown_pruned"] == 0
         assert result["old_memories_checked"] == 0
 
     @patch("cems.llm.summarize_memories")
@@ -570,7 +574,8 @@ class TestSummarizationJob:
         memory, doc_store, _ = mock_memory
         mock_summarize.return_value = "Summary of debugging tips"
 
-        old_time = datetime.now(UTC) - timedelta(days=60)
+        # 20 days old: qualifies for compression (14d+) but not stale pruning (30d+)
+        old_time = datetime.now(UTC) - timedelta(days=20)
         docs = [
             _make_doc(f"doc-{i}", f"Debugging tip {i}", category="debugging", created_at=old_time)
             for i in range(4)
@@ -659,11 +664,18 @@ class TestReindexJob:
         assert result["memories_archived"] == 0
         assert result["total_memories"] == 0
 
-    def test_reindex_refreshes_embeddings(self, mock_memory):
-        """Re-indexes stale docs (>7 days) by calling update_async on each."""
+    @patch("cems.chunking.chunk_document")
+    def test_reindex_refreshes_embeddings(self, mock_chunk, mock_memory):
+        """Re-indexes stale docs (>7 days) via refresh_chunks (no updated_at bump)."""
         from cems.maintenance.reindex import ReindexJob
 
-        memory, doc_store, _ = mock_memory
+        memory, doc_store, embedder = mock_memory
+
+        # Mock chunking and embedding
+        mock_chunk_obj = MagicMock(seq=0, pos=0, content="c", tokens=1, bytes=1)
+        mock_chunk.return_value = [mock_chunk_obj]
+        embedder.embed_batch = AsyncMock(return_value=[[0.1] * 10])
+        doc_store.refresh_chunks = AsyncMock(return_value=True)
 
         # Docs must be >7 days old to be re-indexed (fresh ones are skipped)
         old_time = datetime.now(UTC) - timedelta(days=30)
@@ -679,13 +691,22 @@ class TestReindexJob:
         result = _run(job.run_async())
 
         assert result["memories_reindexed"] == 3
-        assert memory.update_async.await_count == 3
+        assert doc_store.refresh_chunks.await_count == 3
+        # update_async should NOT be called (would bump updated_at)
+        memory.update_async.assert_not_awaited()
 
-    def test_reindex_archives_dead(self, mock_memory):
-        """Soft-deletes documents older than archive_days (180)."""
+    @patch("cems.chunking.chunk_document")
+    def test_reindex_archives_dead(self, mock_chunk, mock_memory):
+        """Soft-deletes documents older than archive_days (60) by created_at."""
         from cems.maintenance.reindex import ReindexJob
 
-        memory, doc_store, _ = mock_memory
+        memory, doc_store, embedder = mock_memory
+
+        # Mock chunking/embedding for the reindex portion
+        mock_chunk_obj = MagicMock(seq=0, pos=0, content="c", tokens=1, bytes=1)
+        mock_chunk.return_value = [mock_chunk_obj]
+        embedder.embed_batch = AsyncMock(return_value=[[0.1] * 10])
+        doc_store.refresh_chunks = AsyncMock(return_value=True)
 
         dead_time = datetime.now(UTC) - timedelta(days=200)
         recent_time = datetime.now(UTC) - timedelta(days=10)
@@ -703,7 +724,6 @@ class TestReindexJob:
         result = _run(job.run_async())
 
         assert result["memories_archived"] == 2
-        # 3 updates (reindex) + 2 deletes (archive)
         assert doc_store.delete_document.await_count == 2
 
     def test_reindex_uses_user_id(self, mock_memory):
