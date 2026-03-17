@@ -305,6 +305,14 @@ def run_migrations() -> None:
                     ALTER TABLE memory_documents ADD COLUMN noise_count INT NOT NULL DEFAULT 0;
                     RAISE NOTICE 'Added memory_documents.noise_count';
                 END IF;
+
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name = 'memory_documents' AND column_name = 'noise_snippet_count'
+                ) THEN
+                    ALTER TABLE memory_documents ADD COLUMN noise_snippet_count INT NOT NULL DEFAULT 0;
+                    RAISE NOTICE 'Added memory_documents.noise_snippet_count';
+                END IF;
             END $$;
             """,
         ),

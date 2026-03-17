@@ -151,35 +151,54 @@ def send_relevance_feedback(session_id: str, input_data: dict) -> None:
     if not memory_ids:
         return
 
+    # Truncation flags: per-ID indicator of whether the shown content was a snippet
+    truncated_flags = mapping.get("truncated", [False] * len(memory_ids))
+
     # Staleness check: skip if mapping is >60s old (prevents stale mapping from wrong turn)
     mapping_ts = mapping.get("ts", 0)
     if time.time() - mapping_ts > 60:
         _cleanup_mapping(mapping_path)
         return
 
-    # Map #N → memory_id (1-indexed)
+    # Map #N → memory_id (1-indexed), separating full vs snippet noise
     relevant_ids = []
-    noise_ids = []
+    noise_ids = []           # Full-content noise (strong signal)
+    noise_snippet_ids = []   # Snippet-only noise (lighter signal — Claude only saw a truncated view)
 
     if parsed.get("all_noise"):
-        # "none were relevant" → all shown memories are noise
-        noise_ids = list(memory_ids)
+        # "none were relevant" → classify each by truncation status
+        for i, mid in enumerate(memory_ids):
+            was_truncated = truncated_flags[i] if i < len(truncated_flags) else False
+            if was_truncated:
+                noise_snippet_ids.append(mid)
+            else:
+                noise_ids.append(mid)
     else:
         for n in parsed.get("relevant", []):
             if 1 <= n <= len(memory_ids):
                 relevant_ids.append(memory_ids[n - 1])
         for n in parsed.get("noise", []):
             if 1 <= n <= len(memory_ids):
-                noise_ids.append(memory_ids[n - 1])
+                idx = n - 1
+                mid = memory_ids[idx]
+                was_truncated = truncated_flags[idx] if idx < len(truncated_flags) else False
+                if was_truncated:
+                    noise_snippet_ids.append(mid)
+                else:
+                    noise_ids.append(mid)
 
         # Handle "rest were noise" — all IDs not in relevant set
         if parsed.get("rest_noise"):
             relevant_set = set(relevant_ids)
-            for mid in memory_ids:
-                if mid not in relevant_set and mid not in noise_ids:
-                    noise_ids.append(mid)
+            for i, mid in enumerate(memory_ids):
+                if mid not in relevant_set and mid not in noise_ids and mid not in noise_snippet_ids:
+                    was_truncated = truncated_flags[i] if i < len(truncated_flags) else False
+                    if was_truncated:
+                        noise_snippet_ids.append(mid)
+                    else:
+                        noise_ids.append(mid)
 
-    if not relevant_ids and not noise_ids:
+    if not relevant_ids and not noise_ids and not noise_snippet_ids:
         _cleanup_mapping(mapping_path)
         return
 
@@ -187,7 +206,11 @@ def send_relevance_feedback(session_id: str, input_data: dict) -> None:
     try:
         httpx.post(
             f"{CEMS_API_URL}/api/memory/log-relevance",
-            json={"relevant_ids": relevant_ids, "noise_ids": noise_ids},
+            json={
+                "relevant_ids": relevant_ids,
+                "noise_ids": noise_ids,
+                "noise_snippet_ids": noise_snippet_ids,
+            },
             headers={"Authorization": f"Bearer {CEMS_API_KEY}"},
             timeout=3.0,
         )
@@ -197,6 +220,7 @@ def send_relevance_feedback(session_id: str, input_data: dict) -> None:
     log_hook_event("RelevanceFeedback", session_id, {
         "relevant_count": len(relevant_ids),
         "noise_count": len(noise_ids),
+        "noise_snippet_count": len(noise_snippet_ids),
         "all_noise": parsed.get("all_noise", False),
     })
 

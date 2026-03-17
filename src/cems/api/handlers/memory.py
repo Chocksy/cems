@@ -667,6 +667,19 @@ async def api_memory_profile(request: Request):
         # Claude can't meaningfully resolve them in-session. Conflicts are
         # tracked via /api/memory/conflicts and visible in the debug dashboard.
 
+        # Memory tools section — teach Claude how to use the memory system
+        # Only inject when there's other context (skip for truly empty profiles)
+        if context_parts:
+            context_parts.append(
+                "## Memory Tools\n"
+                "You have a long-term memory system (CEMS). Memories are automatically searched "
+                "on each prompt and injected as `<memory-recall>` context.\n"
+                "When you see truncated memories in recall results, use `/recall <id>` "
+                "to read the full document before deciding if it's relevant.\n"
+                "To store important learnings: use the `memory_add` MCP tool or `/remember`.\n"
+                "To search for specific knowledge: use the `memory_search` MCP tool or `/recall`."
+            )
+
         # Assemble context with per-section budget control.
         # Priority order: preferences > guidelines > gate rules > recent > project.
         # Each section is fully included or dropped — no mid-sentence truncation.
@@ -1275,20 +1288,36 @@ async def api_memory_log_relevance(request: Request):
     """REST API endpoint to log relevance feedback for surfaced memories.
 
     POST /api/memory/log-relevance
-    Body: {"relevant_ids": ["id1", ...], "noise_ids": ["id2", ...]}
+    Body: {
+        "relevant_ids": ["id1", ...],
+        "noise_ids": ["id2", ...],
+        "noise_snippet_ids": ["id3", ...]  # optional — snippet-level noise (lighter signal)
+    }
 
-    Increments relevant_count or noise_count for each memory.
+    Increments relevant_count, noise_count, or noise_snippet_count for each memory.
     Called by the Stop hook after parsing Claude's relevance line.
+
+    noise_snippet_ids are IDs where Claude only saw a truncated snippet of the document.
+    This is a lighter signal than noise_ids because the full document might be relevant
+    even if the shown snippet wasn't.
     """
     try:
         body = await request.json()
         relevant_ids = body.get("relevant_ids", [])
         noise_ids = body.get("noise_ids", [])
+        noise_snippet_ids = body.get("noise_snippet_ids", [])
 
-        if not relevant_ids and not noise_ids:
-            return JSONResponse({"success": True, "relevant_updated": 0, "noise_updated": 0})
+        if not relevant_ids and not noise_ids and not noise_snippet_ids:
+            return JSONResponse({
+                "success": True, "relevant_updated": 0,
+                "noise_updated": 0, "noise_snippet_updated": 0,
+            })
 
-        for ids, label in [(relevant_ids, "relevant_ids"), (noise_ids, "noise_ids")]:
+        for ids, label in [
+            (relevant_ids, "relevant_ids"),
+            (noise_ids, "noise_ids"),
+            (noise_snippet_ids, "noise_snippet_ids"),
+        ]:
             if not isinstance(ids, list):
                 return JSONResponse({"error": f"{label} must be an array"}, status_code=400)
 
@@ -1297,20 +1326,27 @@ async def api_memory_log_relevance(request: Request):
 
         relevant_updated = 0
         noise_updated = 0
+        noise_snippet_updated = 0
 
         if relevant_ids:
             relevant_updated = await doc_store.increment_relevance_count(relevant_ids, "relevant")
         if noise_ids:
             noise_updated = await doc_store.increment_relevance_count(noise_ids, "noise")
+        if noise_snippet_ids:
+            noise_snippet_updated = await doc_store.increment_relevance_count(
+                noise_snippet_ids, "noise_snippet"
+            )
 
         logger.info(
-            f"[API] Log relevance: {relevant_updated} relevant, {noise_updated} noise"
+            f"[API] Log relevance: {relevant_updated} relevant, "
+            f"{noise_updated} noise, {noise_snippet_updated} noise_snippet"
         )
 
         return JSONResponse({
             "success": True,
             "relevant_updated": relevant_updated,
             "noise_updated": noise_updated,
+            "noise_snippet_updated": noise_snippet_updated,
         })
     except Exception as e:
         logger.error(f"API memory_log_relevance error: {e}")

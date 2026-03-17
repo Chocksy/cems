@@ -125,8 +125,9 @@ async def api_session_summarize(request: Request):
             upsert_mode = "finalize"
 
         # Safety cap: each document should be ~1 LLM extraction (~1.5-2K chars).
-        # With auto-epoch, documents don't accumulate. Defensive limit only.
-        MAX_STORED_SUMMARY_CHARS = 5_000
+        # With auto-epoch, documents don't accumulate. Tighter cap reduces
+        # oversized session summaries that match too broadly in search.
+        MAX_STORED_SUMMARY_CHARS = 3_000
         if len(upsert_content) > MAX_STORED_SUMMARY_CHARS:
             upsert_content = upsert_content[:MAX_STORED_SUMMARY_CHARS]
             last_newline = upsert_content.rfind("\n")

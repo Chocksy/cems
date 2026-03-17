@@ -90,7 +90,7 @@ def _clean_search_query(text: str) -> str:
     return cleaned
 
 
-def search_cems(query: str, project: str | None = None) -> tuple[str | None, list[str], list[dict]]:
+def search_cems(query: str, project: str | None = None) -> tuple[str | None, list[str], list[bool], list[dict]]:
     """
     Search CEMS for relevant memories.
     Returns (formatted_string, memory_ids, score_details) tuple.
@@ -102,10 +102,10 @@ def search_cems(query: str, project: str | None = None) -> tuple[str | None, lis
     Note: No limit imposed here - the API handles relevance filtering and limits.
     """
     if not CEMS_API_URL or not CEMS_API_KEY:
-        return None, [], []
+        return None, [], [], []
 
     if not query or len(query) < 3:
-        return None, [], []
+        return None, [], [], []
 
     try:
         payload = {"query": query, "scope": "both", "limit": 5}
@@ -120,20 +120,20 @@ def search_cems(query: str, project: str | None = None) -> tuple[str | None, lis
         )
 
         if response.status_code != 200:
-            return None, [], []
+            return None, [], [], []
 
         data = response.json()
         if not data.get("success") or not data.get("results"):
-            return None, [], []
+            return None, [], [], []
 
         results = data["results"]
         if not results:
-            return None, [], []
+            return None, [], [], []
 
         # Client-side score filter: drop low-relevance results
         results = [r for r in results if r.get("score", 0) >= 0.45]
         if not results:
-            return None, [], []
+            return None, [], [], []
 
         # Session dedup: if multiple results share a session tag, keep only highest-scoring
         seen_sessions: dict[str, dict] = {}
@@ -156,13 +156,14 @@ def search_cems(query: str, project: str | None = None) -> tuple[str | None, lis
         results = deduped
 
         if not results:
-            return None, [], []
+            return None, [], [], []
 
         # Format results for Claude and collect memory IDs + scores
         formatted = []
         memory_ids = []
+        truncation_flags = []
         score_details = []
-        has_truncated = False
+        truncated_hints = []
         for i, r in enumerate(results, 1):
             content = r.get("content", r.get("memory", ""))
             category = r.get("category", "general")
@@ -170,10 +171,14 @@ def search_cems(query: str, project: str | None = None) -> tuple[str | None, lis
             short_id = mem_id[:8] if mem_id else ""
             score = r.get("score", 0.0)
             truncated = r.get("truncated", False)
-            suffix = f" [truncated — full doc: {r.get('full_length', '?')} chars]" if truncated else ""
+            full_len = r.get("full_length", 0)
+            suffix = f" [truncated — full doc: {full_len} chars]" if truncated else ""
             formatted.append(f"{i}. [{category}] (score: {score:.2f}) {content}{suffix} (id: {short_id})")
-            if truncated:
-                has_truncated = True
+            if truncated and full_len:
+                truncated_hints.append(
+                    f"  #{i} ({category}, {full_len} chars) — use `/recall {short_id}` to read full document"
+                )
+            truncation_flags.append(truncated)
             if mem_id:
                 memory_ids.append(mem_id)
             score_details.append({"id": short_id, "score": round(score, 3), "category": category, "content": content})
@@ -183,13 +188,16 @@ def search_cems(query: str, project: str | None = None) -> tuple[str | None, lis
         avg_score = sum(scores) / len(scores) if scores else 0
         top_score = max(scores) if scores else 0
         formatted.append(f"\n--- Retrieval: {len(results)} results, avg score {avg_score:.2f}, top {top_score:.2f} ---")
-        if has_truncated:
-            formatted.append("Tip: For full document content, use the /recall skill with the memory ID.")
+        if truncated_hints:
+            formatted.append("Truncated memories — you're seeing a snippet, not the full document.")
+            formatted.append("If any truncated memory looks partially relevant, read the full version BEFORE proceeding:")
+            formatted.extend(truncated_hints)
+            formatted.append("Do NOT mark truncated memories as noise without reading the full document first.")
 
-        return "\n".join(formatted), memory_ids, score_details
+        return "\n".join(formatted), memory_ids, truncation_flags, score_details
 
     except (httpx.RequestError, httpx.TimeoutException, json.JSONDecodeError):
-        return None, [], []
+        return None, [], [], []
 
 
 def log_shown_memories(memory_ids: list[str]) -> None:
@@ -219,11 +227,21 @@ def log_shown_memories(memory_ids: list[str]) -> None:
 RELEVANCE_CACHE_DIR = Path.home() / ".cems" / "cache" / "relevance"
 
 
-def write_relevance_mapping(session_id: str, memory_ids: list[str]) -> None:
+def write_relevance_mapping(
+    session_id: str,
+    memory_ids: list[str],
+    truncated: list[bool] | None = None,
+) -> None:
     """Write a mapping file so the Stop hook can map #N → memory_id.
 
     The mapping file maps positional numbers (#1, #2, ...) to memory IDs.
     The Stop hook reads this to resolve Claude's relevance feedback line.
+
+    Args:
+        session_id: Current session ID
+        memory_ids: List of memory IDs in display order
+        truncated: Per-ID flag indicating if the shown content was truncated.
+                   When True, noise feedback is recorded as snippet-level (lighter signal).
 
     Also cleans up stale mapping files (>1 hour old).
     """
@@ -245,6 +263,7 @@ def write_relevance_mapping(session_id: str, memory_ids: list[str]) -> None:
         # Write mapping: index 0 = #1, index 1 = #2, etc.
         mapping = {
             "memory_ids": memory_ids,
+            "truncated": truncated or [False] * len(memory_ids),
             "ts": time.time(),
         }
         mapping_path = RELEVANCE_CACHE_DIR / f"{session_id[:12]}.json"
@@ -526,7 +545,7 @@ def main():
                 if assistant_text and len(assistant_text.strip()) >= 3:
                     project = get_project_id(cwd) if cwd else None
                     clean_assistant = _clean_search_query(assistant_text.strip())
-                    memories, memory_ids, _ = search_cems(clean_assistant, project=project)
+                    memories, memory_ids, _, _ = search_cems(clean_assistant, project=project)
                     if memories:
                         output_parts.append(f"""<memory-recall>
 CONTEXT for confirmed action:
@@ -567,7 +586,7 @@ Review these memories before proceeding.
         # 1. Memory awareness - search CEMS (clean query for better embedding match)
         if len(user_text) >= 3:
             search_query = _clean_search_query(user_text)
-            memories, memory_ids, score_details = search_cems(search_query, project=project)
+            memories, memory_ids, truncation_flags, score_details = search_cems(search_query, project=project)
             if memories:
                 memory_context = f"""<memory-recall>
 RELEVANT MEMORIES found for "{search_query}":
@@ -593,7 +612,7 @@ After responding, note which memories (by number) were relevant vs noise.
                 log_shown_memories(memory_ids)
 
                 # Write mapping file for Stop hook relevance feedback
-                write_relevance_mapping(session_id, memory_ids)
+                write_relevance_mapping(session_id, memory_ids, truncation_flags)
 
         # 2. Ultrathink flag
         if user_text.endswith('-u'):

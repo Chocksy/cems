@@ -91,12 +91,14 @@ class SummarizationJob:
         )
         pruned = await self._prune_stale(doc_store, user_id, all_docs)
         never_shown_pruned = await self._prune_never_shown(doc_store, all_docs)
+        noise_pruned = await self._prune_chronically_noisy(doc_store, all_docs)
 
         result = {
             "categories_updated": categories_updated,
             "originals_deleted": originals_deleted,
             "memories_pruned": pruned,
             "never_shown_pruned": never_shown_pruned,
+            "noise_pruned": noise_pruned,
             "old_memories_checked": len(old_docs),
         }
         logger.info(f"Summarization completed: {result}")
@@ -234,6 +236,10 @@ class SummarizationJob:
     # Minimum age before a never-shown memory can be pruned (days)
     NEVER_SHOWN_MIN_AGE_DAYS = 7
 
+    # Noise pruning thresholds
+    NOISE_MIN_SIGNALS = 5      # Minimum total feedback signals to act
+    NOISE_MAX_RATIO = 0.50     # Noise rate above which to prune (50%+)
+
     async def _prune_never_shown(
         self, doc_store, all_docs: list[dict]
     ) -> int:
@@ -271,6 +277,65 @@ class SummarizationJob:
             logger.info(
                 f"Soft-deleted {pruned} never-shown documents "
                 f"(>{self.NEVER_SHOWN_MIN_AGE_DAYS} days old, shown_count=0)"
+            )
+
+        return pruned
+
+    async def _prune_chronically_noisy(
+        self, doc_store, all_docs: list[dict]
+    ) -> int:
+        """Soft-delete memories with consistently high noise feedback.
+
+        If a memory has accumulated enough feedback signals (>=5) and more than
+        50% are noise, it's chronically irrelevant and should be pruned.
+
+        This closes the feedback loop: users mark memories as noise via the
+        "Memory relevance: #N was noise" line, and this pruner acts on it.
+
+        Args:
+            doc_store: DocumentStore instance
+            all_docs: All user documents
+
+        Returns:
+            Number of documents pruned
+        """
+        candidates = []
+        for d in all_docs:
+            relevant = d.get("relevant_count", 0)
+            noise = d.get("noise_count", 0)
+            total = relevant + noise
+            if total < self.NOISE_MIN_SIGNALS:
+                continue
+            noise_ratio = noise / total
+            if noise_ratio <= self.NOISE_MAX_RATIO:
+                continue
+            # Skip protected categories
+            if d.get("category", "general") in PROTECTED_CATEGORIES:
+                continue
+            candidates.append(d)
+
+        pruned = 0
+        for doc in candidates:
+            doc_id = doc.get("id")
+            if doc_id:
+                noise = doc.get("noise_count", 0)
+                shown = doc.get("shown_count", 0)
+                cat = doc.get("category", "?")
+                try:
+                    await doc_store.delete_document(doc_id, hard=False)
+                    pruned += 1
+                    logger.info(
+                        f"Pruned noisy memory {doc_id[:8]} "
+                        f"(noise={noise}, shown={shown}, cat={cat})"
+                    )
+                except Exception as e:
+                    logger.error(f"Failed to prune noisy document {doc_id}: {e}")
+
+        if pruned:
+            logger.info(
+                f"Soft-deleted {pruned} chronically noisy documents "
+                f"(>{self.NOISE_MAX_RATIO:.0%} noise rate, "
+                f">={self.NOISE_MIN_SIGNALS} signals)"
             )
 
         return pruned

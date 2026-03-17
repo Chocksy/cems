@@ -26,7 +26,7 @@ You are extracting facts from a coding session{project_label}.
 
 ## YOUR TASK
 
-Extract **5-15 atomic facts** from this session as standalone sentences. Each fact must be independently meaningful — searchable and understandable without any other context.
+Extract **3-7 high-signal facts** from this session. Quality over quantity — each fact MUST pass this test: **"Would this be useful to recall 2 weeks from now in a DIFFERENT session?"** If not, skip it.
 
 Then write a **1-2 sentence context overview** that captures the session's overall purpose (for semantic search).
 
@@ -42,19 +42,24 @@ Then write a **1-2 sentence context overview** that captures the session's overa
 - **Preserve distinguishing details**: "Assistant recommended Docker Compose (simple), K8s (scalable), Railway (managed)" not "Assistant recommended 3 options"
 - **Non-standard terminology**: quote user's exact words: "User did a 'movement session' (their term for exercise)"
 
-## WHAT TO EXTRACT AS FACTS
+## WHAT TO EXTRACT AS FACTS (high signal)
 - User preferences, opinions, and personal information
 - Decisions and architecture choices (with reasoning when stated)
-- Key names: people, services, tools, versions, file paths that represent architecture
+- Key names: people, services, tools, versions
 - Numbers: prices, measurements, deadlines, quantities, performance metrics
 - State changes: what was replaced and what replaced it
 - Project goals, outcomes, and unresolved issues
+- Operational knowledge that would be hard to rediscover (keyboard shortcuts, config values, workarounds)
 
-## WHAT NOT TO EXTRACT
-- Specific CLI commands or exact file contents
-- Transient debugging steps (unless they reveal an important pattern)
+## WHAT NOT TO EXTRACT (noise — these will never be useful later)
+- What the assistant did during the session: files it read, commands it ran, tools it used
+- Specific CLI commands, exact file contents, or line numbers inspected
+- Transient debugging steps (unless they reveal a REUSABLE pattern)
 - Raw tool output, error messages, build logs
 - Routine operations (reading files, running tests, git status)
+- One-off bug fixes for transient issues (network errors, typos, missing imports)
+- The process of how work was done — only extract the OUTCOME or DECISION
+- File paths that are just implementation details (not architecture)
 
 {project_name_instruction}
 

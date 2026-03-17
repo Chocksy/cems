@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 DOCUMENT_COLUMNS = """
     id, user_id, team_id, scope, category, title, source, source_ref,
     tags, content, content_hash, content_bytes, created_at, updated_at,
-    deleted_at, shown_count, last_shown_at, relevant_count, noise_count
+    deleted_at, shown_count, last_shown_at, relevant_count, noise_count, noise_snippet_count
 """
 
 # Column definitions for chunks (with document join)
@@ -43,7 +43,7 @@ CHUNK_WITH_DOC_COLUMNS = f"""
     {CHUNK_COLUMNS},
     d.user_id, d.team_id, d.scope, d.category, d.title, d.source, d.source_ref,
     d.tags, d.created_at AS document_created_at,
-    d.shown_count, d.last_shown_at, d.relevant_count, d.noise_count
+    d.shown_count, d.last_shown_at, d.relevant_count, d.noise_count, d.noise_snippet_count
 """
 
 
@@ -72,6 +72,7 @@ def chunk_row_to_result(row: asyncpg.Record, include_score: bool = False) -> dic
         "last_shown_at": row["last_shown_at"],
         "relevant_count": row["relevant_count"],
         "noise_count": row["noise_count"],
+        "noise_snippet_count": row.get("noise_snippet_count", 0),
     }
     if include_score and "score" in row.keys():
         result["score"] = row["score"]
@@ -1370,15 +1371,16 @@ class DocumentStore:
     async def increment_relevance_count(
         self,
         document_ids: list[str],
-        feedback_type: Literal["relevant", "noise"],
+        feedback_type: Literal["relevant", "noise", "noise_snippet"],
     ) -> int:
-        """Increment relevant_count or noise_count for documents.
+        """Increment relevant_count, noise_count, or noise_snippet_count for documents.
 
         Called when Claude reports which surfaced memories were relevant vs noise.
 
         Args:
             document_ids: List of document IDs to update
-            feedback_type: "relevant" or "noise"
+            feedback_type: "relevant", "noise" (full-content), or "noise_snippet"
+                          (Claude only saw a truncated snippet — lighter signal)
 
         Returns:
             Number of documents updated
@@ -1386,7 +1388,12 @@ class DocumentStore:
         if not document_ids:
             return 0
 
-        column = "relevant_count" if feedback_type == "relevant" else "noise_count"
+        column_map = {
+            "relevant": "relevant_count",
+            "noise": "noise_count",
+            "noise_snippet": "noise_snippet_count",
+        }
+        column = column_map.get(feedback_type, "noise_count")
         pool = await self._get_pool()
         uuids = [UUID(did) for did in document_ids]
 

@@ -31,13 +31,22 @@ def summarize_memories(
 
     memories_text = "\n".join(f"- {m}" for m in memories)
 
-    # Enhanced prompt with few-shot example
+    # Enhanced prompt with few-shot example and quality guidance
     system_prompt = """You are a Memory Summarization Specialist. Your job is to compress a list of individual memory items into a coherent, structured summary that can be used for future context retrieval.
+
+## Critical Rule
+Group related items together by PROJECT or TOPIC. Never create a grab-bag of unrelated tips — if items don't relate to each other, organize them into clearly labeled sections. Drop one-off fixes for transient issues (they won't be useful later).
+
+## Quality Filter
+For each item, ask: "Would this be useful to recall in 2 weeks?" Drop items that are:
+- One-off bug fixes for transient errors (network timeouts, typos, missing imports)
+- Process descriptions (what files were read, what commands were run)
+- Debugging steps that led nowhere
 
 ## Output Format
 Return a markdown document with:
 1. A brief overview (1-2 sentences)
-2. Key facts as bullet points (preserve specifics like names, numbers, versions)
+2. Key facts grouped by project or topic as bullet points (preserve specifics like names, numbers, versions)
 3. Patterns or preferences identified
 4. Any contradictions resolved (newer info takes precedence)
 
@@ -68,7 +77,7 @@ Developer with strong opinions on technology choices and tooling.
 
 {memories_text}
 
-Create a structured summary following the format shown in my instructions. Keep it under 500 words. Focus on actionable, retrievable information."""
+Create a structured summary following the format shown in my instructions. Group by project or topic — do NOT mix unrelated items together. Keep it under 500 words. Focus on actionable, retrievable information. Drop one-off transient fixes."""
 
     try:
         client = get_client()

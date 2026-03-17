@@ -60,6 +60,7 @@ def _make_search_result_from_chunk(chunk: dict, user_id: str) -> SearchResult:
     # Attach relevance feedback counts for scoring (not in Pydantic model)
     result._relevant_count = chunk.get("relevant_count", 0)  # type: ignore[attr-defined]
     result._noise_count = chunk.get("noise_count", 0)  # type: ignore[attr-defined]
+    result._noise_snippet_count = chunk.get("noise_snippet_count", 0)  # type: ignore[attr-defined]
     return result
 
 
@@ -87,13 +88,21 @@ def _apply_score_adjustments(results: list[SearchResult]) -> list[SearchResult]:
             days_since_access = (now - result.metadata.last_accessed).days
             half_life = _category_half_life(result.metadata.category)
             time_decay = 1.0 / (1.0 + (days_since_access / half_life))
-            # Relevance feedback adjustment (min 3 signals to act)
+            # Relevance feedback adjustment (min 2 signals to act)
+            # Full-content feedback (strong signal — Claude saw the whole memory)
             relevant_count = getattr(result, "_relevant_count", 0)
             noise_count = getattr(result, "_noise_count", 0)
             total_feedback = relevant_count + noise_count
-            if total_feedback >= 3:
+            if total_feedback >= 2:
                 relevance_ratio = relevant_count / total_feedback
-                time_decay *= 0.85 + 0.30 * relevance_ratio
+                # Scale: 0.50 (all noise) → 1.0 (50/50) → 1.20 (all relevant)
+                time_decay *= 0.50 + 0.70 * relevance_ratio
+            # Snippet-level noise (lighter signal — Claude only saw a truncated view)
+            noise_snippet = getattr(result, "_noise_snippet_count", 0)
+            if noise_snippet >= 5:
+                # Mild penalty: snippet didn't match, but full doc might still be valuable
+                # Cap at 20% penalty even with many snippet-noise votes
+                time_decay *= max(0.80, 1.0 - (noise_snippet * 0.02))
             result.score *= time_decay
     return results
 
