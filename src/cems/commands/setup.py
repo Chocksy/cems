@@ -178,6 +178,7 @@ def _discover_team(api_url: str, api_key: str) -> str | None:
     try:
         req = urllib.request.Request(url, method="GET")
         req.add_header("Authorization", f"Bearer {api_key}")
+        req.add_header("User-Agent", "CEMS-CLI/1.0")
         with urllib.request.urlopen(req, timeout=10) as resp:
             data = json.loads(resp.read().decode())
             teams = data.get("teams", [])
@@ -304,6 +305,7 @@ def _discover_mcp_url(api_url: str) -> str:
     discovery_url = api_url.rstrip("/") + "/api/config/setup"
     try:
         req = urllib.request.Request(discovery_url, method="GET")
+        req.add_header("User-Agent", "CEMS-CLI/1.0")
         with urllib.request.urlopen(req, timeout=5) as resp:
             data = json.loads(resp.read().decode())
             mcp_url = data.get("mcp_url")
