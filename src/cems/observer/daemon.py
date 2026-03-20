@@ -100,6 +100,7 @@ def send_summary(
             headers={
                 "Authorization": f"Bearer {api_key}",
                 "Content-Type": "application/json",
+                "User-Agent": "CEMS-Observer/1.0",
             },
             method="POST",
         )
