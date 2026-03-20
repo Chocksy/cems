@@ -346,14 +346,22 @@
         body: JSON.stringify(body),
       });
       if (data.success) {
+        // Update card in-place instead of full reload
+        const card = listEl.querySelector(`.memory-card[data-id="${editingId}"]`);
+        if (card) {
+          const contentEl = card.querySelector(".memory-content");
+          if (contentEl && content) contentEl.textContent = content;
+          const catEl = card.querySelector(".cat");
+          if (catEl && category) catEl.textContent = category;
+        }
         closeEdit();
-        loadMemories();
         loadCategories();
+        showToast("Memory updated.");
       } else {
-        alert("Update failed: " + (data.error || "Unknown error"));
+        showToast("Update failed: " + (data.error || "Unknown error"));
       }
     } catch (e) {
-      alert("Update failed: " + e.message);
+      showToast("Update failed: " + e.message);
     } finally {
       editSave.disabled = false;
       editSave.textContent = "Save";
@@ -369,8 +377,15 @@
         body: JSON.stringify({ memory_id: id }),
       });
       if (data.success) {
+        // Update scope badge in-place
+        const card = listEl.querySelector(`.memory-card[data-id="${id}"]`);
+        if (card) {
+          const badge = card.querySelector(".scope-badge");
+          if (badge) { badge.textContent = "shared"; badge.className = "scope-badge scope-shared"; }
+          const promoteBtn = card.querySelector(".btn-promote");
+          if (promoteBtn) promoteBtn.remove();
+        }
         showToast("Memory promoted to team.");
-        loadMemories();
         loadCategories();
       } else {
         showToast("Promote failed: " + (data.error || "Unknown error"));
@@ -389,7 +404,17 @@
         body: JSON.stringify({ memory_id: id }),
       });
       if (data.success) {
-        loadMemories();
+        // Remove card with animation instead of full reload
+        const card = listEl.querySelector(`.memory-card[data-id="${id}"]`);
+        if (card) {
+          card.style.transition = "opacity 0.2s, max-height 0.3s";
+          card.style.opacity = "0";
+          card.style.maxHeight = card.offsetHeight + "px";
+          setTimeout(() => { card.style.maxHeight = "0"; card.style.overflow = "hidden"; card.style.padding = "0"; card.style.margin = "0"; }, 200);
+          setTimeout(() => card.remove(), 400);
+        }
+        total--;
+        totalBadge.textContent = total;
         loadCategories();
         showToast("Memory deleted.", async () => {
           await apiFetch("/api/memory/restore", {
@@ -401,10 +426,10 @@
           loadCategories();
         });
       } else {
-        alert("Delete failed: " + (data.error || "Unknown error"));
+        showToast("Delete failed: " + (data.error || "Unknown error"));
       }
     } catch (e) {
-      alert("Delete failed: " + e.message);
+      showToast("Delete failed: " + e.message);
     }
   }
 
@@ -426,7 +451,7 @@
         try {
           await undoCallback();
         } catch (e) {
-          alert("Undo failed: " + e.message);
+          showToast("Undo failed: " + e.message);
         }
       });
       toast.appendChild(undoBtn);
