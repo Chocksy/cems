@@ -96,8 +96,6 @@
     }
   }
 
-  let _lastSessionsHash = "";
-
   // --- Sessions List ---
   async function showSessions() {
     setActiveNav("sessions");
@@ -117,11 +115,6 @@
       views.sessions.innerHTML = '<div class="empty">No hook events found.</div>';
       return;
     }
-
-    // Skip re-render if data hasn't changed (prevents scroll jank on auto-refresh)
-    const hash = JSON.stringify(sessions.map(s => s.session_id + s.last_ts + s.event_count));
-    if (hash === _lastSessionsHash) return;
-    _lastSessionsHash = hash;
 
     // Stats bar
     const totalEvents = sessions.reduce((s, x) => s + x.event_count, 0);
@@ -175,8 +168,6 @@
 
   // --- Session Detail ---
   const PAGE_SIZE = 200;
-  let _detailRefreshTimer = null;
-  let _currentDetailSid = null;
 
   async function showDetail(sid, offset = 0, pushHash = true) {
     showView("detail");
@@ -402,30 +393,6 @@
       });
     });
 
-    // Auto-refresh for active sessions (every 10s)
-    if (_detailRefreshTimer) clearInterval(_detailRefreshTimer);
-    _currentDetailSid = sid;
-    _detailRefreshTimer = setInterval(() => {
-      if (!views.detail.hidden && _currentDetailSid === sid) {
-        refreshDetail(sid, currentOffset);
-      } else {
-        clearInterval(_detailRefreshTimer);
-      }
-    }, 10000);
-  }
-
-  async function refreshDetail(sid, offset) {
-    // Lightweight refresh: only update if event count changed
-    const session = await api(`/api/sessions/${sid}?offset=${offset}&limit=${PAGE_SIZE}`);
-    if (session.error || !session.events) return;
-
-    const totalEvents = session.total_events || session.events.length;
-    const existingEvents = views.detail.querySelectorAll(".event-card").length;
-
-    // If new events arrived, re-render
-    if (session.events.length !== existingEvents) {
-      showDetail(sid, offset, false);
-    }
   }
 
   // Expose for back link (legacy, now using href)
@@ -566,8 +533,6 @@
   }
 
   // --- Observer ---
-  let _lastObserverHash = "";
-
   async function showObserver() {
     setActiveNav("observer");
     showView("observer");
@@ -589,11 +554,6 @@
       views.observer.innerHTML = '<div class="empty">No observer sessions found.</div>';
       return;
     }
-
-    // Skip re-render if data hasn't changed
-    const hash = JSON.stringify(sessions.map(s => s.session_id + s.last_activity + s.observation_count));
-    if (hash === _lastObserverHash) return;
-    _lastObserverHash = hash;
 
     // Stats bar
     let html = `
@@ -919,12 +879,6 @@
       return ts;
     }
   }
-
-  // --- Auto-refresh (sessions + observer, every 10s) ---
-  setInterval(() => {
-    if (!views.sessions.hidden) showSessions();
-    if (!views.observer.hidden) showObserver();
-  }, 10000);
 
   // --- Init: route based on current hash ---
   handleRoute();
