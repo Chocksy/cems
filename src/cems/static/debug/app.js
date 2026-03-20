@@ -766,23 +766,21 @@
       </div>`;
 
     for (const c of conflicts) {
-      const memA = c.memory_a || {};
-      const memB = c.memory_b || {};
       html += `<div class="conflict-card">
         <div class="conflict-header">
           <span class="badge badge-orange">conflict</span>
           <span class="conflict-id" style="color:var(--fg3);font-size:.72rem">${esc(c.id || "")}</span>
-          <span style="color:var(--fg3);font-size:.72rem;margin-left:auto">${esc(c.created_at || "")}</span>
+          <span style="color:var(--fg3);font-size:.72rem;margin-left:auto">${formatTs(c.created_at)}</span>
         </div>
-        <div class="conflict-reason">${esc(c.reason || "No reason provided")}</div>
+        <div class="conflict-reason">${esc(c.explanation || c.reason || "No reason provided")}</div>
         <div class="conflict-memories">
           <div class="conflict-memory">
-            <div class="conflict-memory-label">Memory A <span class="badge badge-gray">${esc(memA.category || "")}</span></div>
-            <pre class="context-block">${esc(memA.content || memA.id || "")}</pre>
+            <div class="conflict-memory-label">Memory A <span class="badge badge-gray">${esc(c.doc_a_id || "").slice(0, 8)}</span></div>
+            <pre class="context-block">${esc(c.doc_a_content || "")}</pre>
           </div>
           <div class="conflict-memory">
-            <div class="conflict-memory-label">Memory B <span class="badge badge-gray">${esc(memB.category || "")}</span></div>
-            <pre class="context-block">${esc(memB.content || memB.id || "")}</pre>
+            <div class="conflict-memory-label">Memory B <span class="badge badge-gray">${esc(c.doc_b_id || "").slice(0, 8)}</span></div>
+            <pre class="context-block">${esc(c.doc_b_content || "")}</pre>
           </div>
         </div>
       </div>`;
