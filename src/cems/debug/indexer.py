@@ -332,6 +332,7 @@ class EventIndex:
         )
         req = urllib.request.Request(url, headers={
             "Authorization": f"Bearer {creds['key']}",
+            "User-Agent": "CEMS-Debug/1.0",
         })
         try:
             with urllib.request.urlopen(req, timeout=10) as resp:
@@ -356,6 +357,7 @@ class EventIndex:
         url = f"{creds['url'].rstrip('/')}/api/memory/conflicts?status=open&limit=50"
         req = urllib.request.Request(url, headers={
             "Authorization": f"Bearer {creds['key']}",
+            "User-Agent": "CEMS-Debug/1.0",
         })
         try:
             with urllib.request.urlopen(req, timeout=10) as resp:

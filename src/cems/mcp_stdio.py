@@ -64,6 +64,7 @@ def _request(method: str, path: str, body: dict | None = None) -> dict:
     data = json.dumps(body).encode() if body else None
     req = urllib.request.Request(url, data=data, method=method)
     req.add_header("Authorization", f"Bearer {API_KEY}")
+    req.add_header("User-Agent", "CEMS-MCP/1.0")
     if data:
         req.add_header("Content-Type", "application/json")
     with urllib.request.urlopen(req, timeout=30) as resp:
