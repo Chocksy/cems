@@ -286,34 +286,11 @@ def run_migrations() -> None:
         ),
         # Add relevance feedback columns to memory_documents
         (
-            "relevance_feedback_v1",
+            "relevance_feedback_v2",
             """
-            DO $$
-            BEGIN
-                IF NOT EXISTS (
-                    SELECT 1 FROM information_schema.columns
-                    WHERE table_name = 'memory_documents' AND column_name = 'relevant_count'
-                ) THEN
-                    ALTER TABLE memory_documents ADD COLUMN relevant_count INT NOT NULL DEFAULT 0;
-                    RAISE NOTICE 'Added memory_documents.relevant_count';
-                END IF;
-
-                IF NOT EXISTS (
-                    SELECT 1 FROM information_schema.columns
-                    WHERE table_name = 'memory_documents' AND column_name = 'noise_count'
-                ) THEN
-                    ALTER TABLE memory_documents ADD COLUMN noise_count INT NOT NULL DEFAULT 0;
-                    RAISE NOTICE 'Added memory_documents.noise_count';
-                END IF;
-
-                IF NOT EXISTS (
-                    SELECT 1 FROM information_schema.columns
-                    WHERE table_name = 'memory_documents' AND column_name = 'noise_snippet_count'
-                ) THEN
-                    ALTER TABLE memory_documents ADD COLUMN noise_snippet_count INT NOT NULL DEFAULT 0;
-                    RAISE NOTICE 'Added memory_documents.noise_snippet_count';
-                END IF;
-            END $$;
+            ALTER TABLE memory_documents ADD COLUMN IF NOT EXISTS relevant_count INT NOT NULL DEFAULT 0;
+            ALTER TABLE memory_documents ADD COLUMN IF NOT EXISTS noise_count INT NOT NULL DEFAULT 0;
+            ALTER TABLE memory_documents ADD COLUMN IF NOT EXISTS noise_snippet_count INT NOT NULL DEFAULT 0;
             """,
         ),
     ]
