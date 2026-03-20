@@ -9,7 +9,6 @@ Usage:
 
 import shutil
 import subprocess
-import sys
 from datetime import datetime, timezone
 from importlib.metadata import version as pkg_version
 from pathlib import Path
@@ -141,11 +140,9 @@ def _redeploy_hooks() -> None:
             elif line.startswith("CEMS_API_KEY="):
                 args.extend(["--api-key", line.partition("=")[2].strip().strip("'\"")])
 
-    result = subprocess.run(args, capture_output=True, text=True)
-    if result.stdout:
-        console.print(result.stdout.rstrip())
-    if result.returncode != 0 and result.stderr:
-        console.print(f"[yellow]{result.stderr.strip()}[/yellow]")
+    result = subprocess.run(args, text=True)
+    if result.returncode != 0:
+        console.print("[yellow]Hook re-deploy had errors (see above)[/yellow]")
 
 
 @click.command("update")
