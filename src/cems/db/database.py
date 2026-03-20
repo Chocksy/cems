@@ -318,10 +318,10 @@ def run_migrations() -> None:
         ),
     ]
 
-    with db.session() as session:
-        for migration_id, sql in migrations:
-            try:
+    for migration_id, sql in migrations:
+        try:
+            with db.session() as session:
                 session.execute(text(sql))
-                logger.info(f"Migration applied: {migration_id}")
-            except Exception as e:
-                logger.error(f"Migration {migration_id} failed: {e}")
+            logger.info(f"Migration applied: {migration_id}")
+        except Exception as e:
+            logger.error(f"Migration {migration_id} failed: {e}")
