@@ -280,11 +280,15 @@ def _install_claude_hooks(data_path: Path, api_url: str, team_id: str | None = N
             shutil.copy2(f, skills_dir / f.name)
     console.print(f"  Skills installed to {skills_dir}")
 
-    # Copy commands (slash commands like /recall, /remember)
+    # Copy commands (slash commands like /recall, /store)
     src_commands = data_path / "claude" / "commands"
     if src_commands.exists():
         commands_dir = claude_dir / "commands"
         commands_dir.mkdir(parents=True, exist_ok=True)
+        # Remove old-named command files from previous installs
+        old_cmd = commands_dir / "remember.md"
+        if old_cmd.exists():
+            old_cmd.unlink()
         for f in src_commands.iterdir():
             if f.suffix == ".md":
                 shutil.copy2(f, commands_dir / f.name)

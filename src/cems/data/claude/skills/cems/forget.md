@@ -1,61 +1,48 @@
 # /forget
 
-Remove a memory from the system.
+Remove a memory from the CEMS system.
 
 ## Usage
 
 ```
 /forget <memory_id>
+/forget --hard <memory_id>
 ```
 
 ## Examples
 
 ```
 /forget abc123def456
-/forget --hard abc123def456  # Permanent deletion
+/forget --hard abc123def456
 ```
 
-## How It Works
+## Execution
 
-This skill uses the CEMS `memory_forget` MCP tool to remove memories.
+1. **Try MCP** (preferred):
+   ```
+   mcp__cems__memory_forget with:
+   - memory_id: <the ID>
+   - hard: false (or true if --hard)
+   ```
 
-By default, memories are **archived** (soft delete), which means:
-- They won't appear in searches
-- They can be recovered if needed
-- They're preserved for audit purposes
+2. **If MCP unavailable**, use CLI:
+   ```bash
+   cems delete <memory_id>
+   cems delete --hard <memory_id>
+   ```
 
-Use `--hard` for permanent deletion when you want the memory completely removed.
+By default, memories are **soft-deleted** (archived). Use `--hard` for permanent deletion.
 
 ## Finding Memory IDs
 
-Memory IDs are returned when you:
-- Add a memory (`/remember`)
-- Search memories (`/recall`)
-- List memories
-
-Example workflow:
-```
-/recall old preferences
-# Returns memories with IDs like "abc123..."
-
-/forget abc123
-# Archives that memory
-```
-
-## Options
+Memory IDs are returned by `/recall` and `/store`. Example workflow:
 
 ```
-/forget <memory_id>         # Archive (soft delete)
-/forget --hard <memory_id>  # Permanent delete
+/recall old preferences       → returns IDs like "abc123..."
+/forget abc123                → archives that memory
 ```
-
-## MCP Tool Used
-
-`memory_forget` with:
-- `memory_id`: The ID to remove
-- `hard`: true for permanent deletion
 
 ## Related Skills
 
 - `/recall` - Find memories (and their IDs)
-- `/remember` - Add memories
+- `/store` - Add memories

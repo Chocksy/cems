@@ -1,6 +1,6 @@
 # /share
 
-Add a memory to the shared team memory store.
+Add a memory to the shared team memory store via CEMS.
 
 ## Usage
 
@@ -13,41 +13,33 @@ Add a memory to the shared team memory store.
 ```
 /share API endpoints follow REST conventions with versioning (/api/v1/...)
 /share Deploy process: merge to main, wait for CI, then run deploy script
-/share Architecture decision: microservices communicate via message queue
+/share --category architecture Microservices communicate via message queue
 ```
 
-## How It Works
+## Execution
 
-This skill uses the CEMS `memory_add` MCP tool with `scope: "shared"` to store information that should be accessible to all team members.
+1. **Detect project context**:
+   ```bash
+   git remote get-url origin 2>/dev/null | sed 's/.*github.com[:/]//' | sed 's/\.git$//'
+   ```
 
-Shared memories are useful for:
-- Team conventions and standards
-- Architecture decisions (ADRs)
-- Deployment processes
-- Codebase patterns
-- Onboarding knowledge
+2. **Try MCP** (preferred):
+   ```
+   mcp__cems__memory_add with:
+   - content: <input>
+   - scope: "shared"
+   - category: <specified or "general">
+   - source_ref: "project:<org/repo>"
+   ```
 
-## Requirements
+3. **If MCP unavailable**, use CLI:
+   ```bash
+   cems add "<content>" --category <cat> --scope shared
+   ```
 
-You must have `CEMS_TEAM_ID` configured for shared memory to work.
-
-## Options
-
-```
-/share --category architecture We use hexagonal architecture pattern
-/share --category conventions All dates are stored in UTC
-/share --tags deploy,process Deploy requires manual approval for production
-```
-
-## MCP Tool Used
-
-`memory_add` with:
-- `content`: Your input
-- `scope`: "shared"
-- `category`: Default "general" or specified
-- `tags`: As specified
+Requires `CEMS_TEAM_ID` to be configured for shared memory.
 
 ## Related Skills
 
-- `/remember` - Add to personal memory
+- `/store` - Add to personal memory
 - `/recall` - Search memories (both personal and shared)

@@ -2,9 +2,11 @@
 
 You have access to a persistent memory system (CEMS). Use it proactively — don't wait for the user to ask you to remember things.
 
+**IMPORTANT:** CEMS is separate from Claude Code's built-in markdown memory (`~/.claude/projects/*/memory/`). When the user asks you to "remember" something, use `/store` to save it to CEMS — not the built-in memory system. CEMS persists across all projects and sessions.
+
 ## When to Store Memories
 
-**Proactively use `/remember` when you discover:**
+**Proactively use `/store` when you discover:**
 
 - Project conventions: "This project uses Tailwind CSS with a utility-first approach"
 - Architecture decisions: "Authentication uses JWT with refresh tokens stored in httpOnly cookies"
@@ -30,8 +32,6 @@ The observer daemon automatically captures high-level session observations — y
 
 ## Categories
 
-Use these categories for better organization:
-
 | Category | What goes here |
 |----------|---------------|
 | `preferences` | User likes/dislikes, style preferences |
@@ -44,15 +44,15 @@ Use these categories for better organization:
 ## Examples
 
 ```
-/remember --category architecture The API uses Starlette with uvicorn, not FastAPI
-/remember --category conventions All database columns use snake_case
-/remember --category preferences User prefers concise responses without excessive comments
+/store --category architecture The API uses Starlette with uvicorn, not FastAPI
+/store --category conventions All database columns use snake_case
+/store --category preferences User prefers concise responses without excessive comments
 /share --category conventions API errors return {"success": false, "error": "message"}
 ```
 
 ## How It Works Behind the Scenes
 
-1. **SessionStart** hook injects your profile (preferences, recent context) at session start
+1. **SessionStart** hook injects your profile at session start
 2. **UserPromptSubmit** hook searches memories on every prompt and injects relevant ones
 3. **Stop** hook extracts learnings from your session when it ends
 4. **Observer** daemon watches transcripts and extracts high-level observations

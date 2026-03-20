@@ -1,24 +1,26 @@
-# /remember
+# /store
 
-Add a memory to your personal memory store.
+Add a memory to your personal memory store via CEMS.
+
+**IMPORTANT:** This stores to CEMS (your long-term memory server), NOT to Claude Code's local markdown memory files. Always prefer CEMS for information that should persist across all projects and sessions.
 
 ## Usage
 
 ```
-/remember <fact or information to remember>
+/store <fact or information to store>
 ```
 
 ## Examples
 
 ```
-/remember I prefer Python for backend development
-/remember The database schema uses snake_case for column names
-/remember User authentication uses JWT tokens with 24h expiry
+/store I prefer Python for backend development
+/store The database schema uses snake_case for column names
+/store --category decisions We chose PostgreSQL for the main database
 ```
 
 ## How It Works
 
-This skill uses the CEMS `memory_add` MCP tool to store information in your personal memory namespace. The memory system automatically:
+This skill uses the CEMS `memory_add` tool to store information. The memory system automatically:
 
 1. Extracts atomic facts from your input
 2. Checks for existing similar memories
@@ -27,49 +29,33 @@ This skill uses the CEMS `memory_add` MCP tool to store information in your pers
 
 ## Options
 
-You can add categories and tags for better organization:
-
 ```
-/remember --category preferences I like dark mode in all editors
-/remember --category decisions We chose PostgreSQL for the main database
-/remember --tags auth,security Session tokens expire after 1 hour of inactivity
-```
-
-## MCP Tool Used
-
-`memory_add` with:
-- `content`: Your input
-- `scope`: "personal"
-- `category`: Default "general" or specified
-- `tags`: As specified
-- `source_ref`: Project reference (see below)
-
-## Project Context
-
-When running in a git repository, **always include the project reference** for project-scoped recall:
-
-1. Get git remote: `git remote get-url origin`
-2. Extract org/repo from URL:
-   - SSH: `git@github.com:org/repo.git` → `org/repo`
-   - HTTPS: `https://github.com/org/repo.git` → `org/repo`
-3. Pass as source_ref: `source_ref: "project:org/repo"`
-
-This enables project-scoped memory recall - memories created in a project will be boosted when searching from that same project, and deprioritized when searching from other projects.
-
-**Example:**
-```
-/remember --category decisions We use PostgreSQL for the main database
+/store --category preferences I like dark mode in all editors
+/store --category decisions We chose PostgreSQL for the main database
+/store --scope shared Team uses pnpm not npm
+/store --tags auth,security Session tokens expire after 1 hour
 ```
 
-If running in the `myorg/webapp` repo, Claude should automatically add:
-```json
-{
-  "content": "We use PostgreSQL for the main database",
-  "scope": "personal",
-  "category": "decisions",
-  "source_ref": "project:myorg/webapp"
-}
-```
+## Execution
+
+1. **Detect project context**:
+   ```bash
+   git remote get-url origin 2>/dev/null | sed 's/.*github.com[:/]//' | sed 's/\.git$//'
+   ```
+
+2. **Try MCP** (preferred):
+   ```
+   mcp__cems__memory_add with:
+   - content: <input>
+   - scope: "personal" (or "shared" if --scope shared)
+   - category: <specified or "general">
+   - source_ref: "project:<org/repo>"
+   ```
+
+3. **If MCP unavailable**, use CLI:
+   ```bash
+   cems add "<content>" --category <cat> --scope <scope>
+   ```
 
 ## Related Skills
 
