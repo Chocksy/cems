@@ -57,31 +57,33 @@ def _multiselect(
     fd = sys.stdin.fileno()
     old_settings = termios.tcgetattr(fd)
 
+    # In raw mode, \n only moves down — need \r\n to also return to column 0
+    NL = "\r\n"
+
     def render(final: bool = False) -> None:
         # Clear previous render
         if not final:
-            # Move up and clear
-            total_lines = len(options) + 3  # title + options + hint + footer
+            total_lines = len(options) + 3
             sys.stdout.write(f"\033[{total_lines}A\033[J")
 
         icon = "\033[32m◇\033[0m" if final else "\033[32m◆\033[0m"
-        sys.stdout.write(f"{icon}  \033[1m{title}\033[0m\n")
+        sys.stdout.write(f"{icon}  \033[1m{title}\033[0m{NL}")
 
         if not final:
             for i, (key, label, _) in enumerate(options):
                 check = "\033[32m●\033[0m" if selected[i] else "\033[2m○\033[0m"
                 prefix = "\033[36m❯\033[0m" if i == cursor else " "
                 label_fmt = f"\033[4m{label}\033[0m" if i == cursor else label
-                sys.stdout.write(f"\033[2m│\033[0m {prefix} {check} {label_fmt}\n")
+                sys.stdout.write(f"\033[2m│\033[0m {prefix} {check} {label_fmt}{NL}")
 
-            sys.stdout.write(f"\033[2m│  ↑↓ move, space toggle, enter confirm\033[0m\n")
+            sys.stdout.write(f"\033[2m│  ↑↓ move, space toggle, enter confirm\033[0m{NL}")
 
             names = [label for (_, label, _), sel in zip(options, selected) if sel]
             summary = ", ".join(names) if names else "(none)"
-            sys.stdout.write(f"\033[2m└\033[0m  \033[32mSelected:\033[0m {summary}\n")
+            sys.stdout.write(f"\033[2m└\033[0m  \033[32mSelected:\033[0m {summary}{NL}")
         else:
             names = [label for (_, label, _), sel in zip(options, selected) if sel]
-            sys.stdout.write(f"\033[2m│\033[0m  \033[2m{', '.join(names)}\033[0m\n")
+            sys.stdout.write(f"\033[2m│\033[0m  \033[2m{', '.join(names)}\033[0m{NL}")
 
         sys.stdout.flush()
 
@@ -89,7 +91,7 @@ def _multiselect(
         tty.setraw(fd)
 
         # Initial render (with padding for first clear)
-        sys.stdout.write("\n" * (len(options) + 3))
+        sys.stdout.write(NL * (len(options) + 3))
         sys.stdout.flush()
         render()
 
@@ -146,28 +148,30 @@ def _single_select(
     fd = sys.stdin.fileno()
     old_settings = termios.tcgetattr(fd)
 
+    NL = "\r\n"
+
     def render(final: bool = False) -> None:
         total_lines = len(options) + 2
         sys.stdout.write(f"\033[{total_lines}A\033[J")
 
         icon = "\033[32m◇\033[0m" if final else "\033[32m◆\033[0m"
-        sys.stdout.write(f"{icon}  \033[1m{title}\033[0m\n")
+        sys.stdout.write(f"{icon}  \033[1m{title}\033[0m{NL}")
 
         if not final:
             for i, (key, label) in enumerate(options):
                 radio = "\033[32m●\033[0m" if i == cursor else "\033[2m○\033[0m"
                 prefix = "\033[36m❯\033[0m" if i == cursor else " "
                 label_fmt = f"\033[4m{label}\033[0m" if i == cursor else label
-                sys.stdout.write(f"\033[2m│\033[0m {prefix} {radio} {label_fmt}\n")
-            sys.stdout.write(f"\033[2m└  ↑↓ move, enter confirm\033[0m\n")
+                sys.stdout.write(f"\033[2m│\033[0m {prefix} {radio} {label_fmt}{NL}")
+            sys.stdout.write(f"\033[2m└  ↑↓ move, enter confirm\033[0m{NL}")
         else:
-            sys.stdout.write(f"\033[2m│\033[0m  \033[2m{options[cursor][1]}\033[0m\n")
+            sys.stdout.write(f"\033[2m│\033[0m  \033[2m{options[cursor][1]}\033[0m{NL}")
 
         sys.stdout.flush()
 
     try:
         tty.setraw(fd)
-        sys.stdout.write("\n" * (len(options) + 2))
+        sys.stdout.write(NL * (len(options) + 2))
         sys.stdout.flush()
         render()
 
