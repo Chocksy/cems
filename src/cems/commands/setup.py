@@ -25,6 +25,174 @@ from rich.table import Table
 from cems.cli_utils import console
 
 
+# ---------------------------------------------------------------------------
+# Interactive multiselect (checkbox-style, like skills.sh)
+# ---------------------------------------------------------------------------
+
+def _multiselect(
+    title: str,
+    options: list[tuple[str, str, bool]],
+) -> list[str]:
+    """Interactive checkbox selector using raw terminal input.
+
+    Renders a list with ● / ○ markers. Arrow keys to move, space to toggle,
+    enter to confirm. Inspired by @clack/prompts and Vercel skills.sh.
+
+    Args:
+        title: Prompt title
+        options: List of (key, label, default_selected) tuples
+
+    Returns:
+        List of selected keys
+    """
+    if not sys.stdin.isatty():
+        # Non-interactive fallback: return defaults
+        return [key for key, _, default in options if default]
+
+    import tty
+    import termios
+
+    selected = [default for _, _, default in options]
+    cursor = 0
+    fd = sys.stdin.fileno()
+    old_settings = termios.tcgetattr(fd)
+
+    def render(final: bool = False) -> None:
+        # Clear previous render
+        if not final:
+            # Move up and clear
+            total_lines = len(options) + 3  # title + options + hint + footer
+            sys.stdout.write(f"\033[{total_lines}A\033[J")
+
+        icon = "\033[32m◇\033[0m" if final else "\033[32m◆\033[0m"
+        sys.stdout.write(f"{icon}  \033[1m{title}\033[0m\n")
+
+        if not final:
+            for i, (key, label, _) in enumerate(options):
+                check = "\033[32m●\033[0m" if selected[i] else "\033[2m○\033[0m"
+                prefix = "\033[36m❯\033[0m" if i == cursor else " "
+                label_fmt = f"\033[4m{label}\033[0m" if i == cursor else label
+                sys.stdout.write(f"\033[2m│\033[0m {prefix} {check} {label_fmt}\n")
+
+            sys.stdout.write(f"\033[2m│  ↑↓ move, space toggle, enter confirm\033[0m\n")
+
+            names = [label for (_, label, _), sel in zip(options, selected) if sel]
+            summary = ", ".join(names) if names else "(none)"
+            sys.stdout.write(f"\033[2m└\033[0m  \033[32mSelected:\033[0m {summary}\n")
+        else:
+            names = [label for (_, label, _), sel in zip(options, selected) if sel]
+            sys.stdout.write(f"\033[2m│\033[0m  \033[2m{', '.join(names)}\033[0m\n")
+
+        sys.stdout.flush()
+
+    try:
+        tty.setraw(fd)
+
+        # Initial render (with padding for first clear)
+        sys.stdout.write("\n" * (len(options) + 3))
+        sys.stdout.flush()
+        render()
+
+        while True:
+            ch = sys.stdin.read(1)
+
+            if ch == "\r" or ch == "\n":  # Enter
+                if not any(selected):
+                    continue  # Require at least one
+                render(final=True)
+                break
+            elif ch == "\x03":  # Ctrl+C
+                render(final=True)
+                raise KeyboardInterrupt()
+            elif ch == " ":  # Space — toggle
+                selected[cursor] = not selected[cursor]
+                render()
+            elif ch == "\x1b":  # Escape sequence (arrow keys)
+                seq = sys.stdin.read(2)
+                if seq == "[A":  # Up
+                    cursor = max(0, cursor - 1)
+                    render()
+                elif seq == "[B":  # Down
+                    cursor = min(len(options) - 1, cursor + 1)
+                    render()
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+
+    return [key for (key, _, _), sel in zip(options, selected) if sel]
+
+
+def _single_select(
+    title: str,
+    options: list[tuple[str, str]],
+    default: int = 0,
+) -> str:
+    """Interactive single-select using raw terminal input.
+
+    Args:
+        title: Prompt title
+        options: List of (key, label) tuples
+        default: Default selected index
+
+    Returns:
+        Selected key
+    """
+    if not sys.stdin.isatty():
+        return options[default][0]
+
+    import tty
+    import termios
+
+    cursor = default
+    fd = sys.stdin.fileno()
+    old_settings = termios.tcgetattr(fd)
+
+    def render(final: bool = False) -> None:
+        total_lines = len(options) + 2
+        sys.stdout.write(f"\033[{total_lines}A\033[J")
+
+        icon = "\033[32m◇\033[0m" if final else "\033[32m◆\033[0m"
+        sys.stdout.write(f"{icon}  \033[1m{title}\033[0m\n")
+
+        if not final:
+            for i, (key, label) in enumerate(options):
+                radio = "\033[32m●\033[0m" if i == cursor else "\033[2m○\033[0m"
+                prefix = "\033[36m❯\033[0m" if i == cursor else " "
+                label_fmt = f"\033[4m{label}\033[0m" if i == cursor else label
+                sys.stdout.write(f"\033[2m│\033[0m {prefix} {radio} {label_fmt}\n")
+            sys.stdout.write(f"\033[2m└  ↑↓ move, enter confirm\033[0m\n")
+        else:
+            sys.stdout.write(f"\033[2m│\033[0m  \033[2m{options[cursor][1]}\033[0m\n")
+
+        sys.stdout.flush()
+
+    try:
+        tty.setraw(fd)
+        sys.stdout.write("\n" * (len(options) + 2))
+        sys.stdout.flush()
+        render()
+
+        while True:
+            ch = sys.stdin.read(1)
+            if ch == "\r" or ch == "\n":
+                render(final=True)
+                break
+            elif ch == "\x03":
+                render(final=True)
+                raise KeyboardInterrupt()
+            elif ch == "\x1b":
+                seq = sys.stdin.read(2)
+                if seq == "[A":
+                    cursor = max(0, cursor - 1)
+                    render()
+                elif seq == "[B":
+                    cursor = min(len(options) - 1, cursor + 1)
+                    render()
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+
+    return options[cursor][0]
+
+
 INSTALL_PREFS_FILE = Path.home() / ".cems" / "install.conf"
 
 
@@ -672,33 +840,19 @@ def setup(install_claude: bool, install_cursor: bool, install_codex: bool, insta
     # Determine what to install
     if not install_claude and not install_cursor and not install_codex and not install_goose:
         if _is_interactive():
-            # Interactive mode — checkboxes for IDE selection
-            console.print("[bold]Select IDEs to configure:[/bold]")
-            console.print()
-
-            ides = [
-                ("Claude Code", "claude"),
-                ("Cursor", "cursor"),
-                ("Codex", "codex"),
-                ("Goose", "goose"),
-            ]
-
-            selections = {}
-            for display_name, key in ides:
-                default = key == "claude"  # Default to Claude Code
-                selections[key] = click.confirm(
-                    f"  [{'+' if default else ' '}] {display_name}?",
-                    default=default,
-                )
-
-            install_claude = selections["claude"]
-            install_cursor = selections["cursor"]
-            install_codex = selections["codex"]
-            install_goose = selections["goose"]
-
-            if not any(selections.values()):
-                console.print("[yellow]No IDEs selected. Exiting.[/yellow]")
-                raise click.Abort()
+            selected = _multiselect(
+                "Select IDEs to configure",
+                [
+                    ("claude", "Claude Code", True),
+                    ("cursor", "Cursor", False),
+                    ("codex", "Codex", False),
+                    ("goose", "Goose", False),
+                ],
+            )
+            install_claude = "claude" in selected
+            install_cursor = "cursor" in selected
+            install_codex = "codex" in selected
+            install_goose = "goose" in selected
         else:
             # Non-interactive — default to Claude Code
             console.print("[yellow]Non-interactive mode: installing Claude Code hooks (use --cursor/--codex/--goose for others)[/yellow]")
@@ -719,25 +873,19 @@ def setup(install_claude: bool, install_cursor: bool, install_codex: bool, insta
     existing_mode = creds.get("CEMS_SEARCH_MODE", "")
     if _is_interactive():
         console.print()
-        console.print("[bold]Search Mode:[/bold]")
-        console.print("  1) auto    — Embedding-based (fast, ~100ms)")
-        console.print("  2) agentic — LLM agents reason over memories (smarter, ~3s)")
-        console.print()
-        current_label = f" [current: {existing_mode}]" if existing_mode else ""
-        mode_default = 2 if existing_mode == "agentic" else 1
-        mode_choice = click.prompt(
-            f"Choose search mode{current_label}",
-            type=click.IntRange(1, 2),
-            default=mode_default,
+        default_idx = 1 if existing_mode == "agentic" else 0
+        search_mode = _single_select(
+            "Search mode",
+            [
+                ("auto", "Auto — Embedding-based (fast, ~100ms)"),
+                ("agentic", "Agentic — LLM agents reason over memories (smarter, ~3s)"),
+            ],
+            default=default_idx,
         )
-        search_mode = "agentic" if mode_choice == 2 else ""
-        if search_mode:
-            _append_credential("CEMS_SEARCH_MODE", search_mode)
-            console.print(f"  [green]Search mode set to: {search_mode}[/green]")
+        if search_mode == "agentic":
+            _append_credential("CEMS_SEARCH_MODE", "agentic")
         elif existing_mode:
-            # User chose auto — remove agentic mode if it was set
             _remove_credential("CEMS_SEARCH_MODE")
-            console.print("  [green]Search mode set to: auto (default)[/green]")
 
     # Discover user's team membership
     team_id = creds.get("CEMS_TEAM_ID")  # Preserve existing if set
