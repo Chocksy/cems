@@ -66,7 +66,7 @@ AGENT_SYSTEM_PROMPTS = {
 SEARCH_USER_PROMPT = """I need to find which stored memories are relevant to answering this question:
 
 QUESTION: {question}
-
+{project_context}
 Below are {n} stored memories. Each is labeled with its ID (a short hash).
 
 {formatted_memories}
@@ -74,6 +74,7 @@ Below are {n} stored memories. Each is labeled with its ID (a short hash).
 Return a JSON array of memory IDs ranked by relevance to the question, most relevant first.
 Return ONLY IDs that are relevant. If none seem relevant, return an empty array.
 Return at most 10 IDs.
+IMPORTANT: Strongly prefer memories from the current project over memories from other projects.
 
 Example output: ["abc12345", "def67890"]"""
 
@@ -137,13 +138,16 @@ def _run_single_agent(
     memories_text: str,
     n_memories: int,
     model: str,
+    project: str | None = None,
 ) -> tuple[str, str | list[str]]:
     """Run a single search agent. Thread-safe."""
     system = AGENT_SYSTEM_PROMPTS[role]
+    project_context = f"\nCURRENT PROJECT: {project}\n" if project else ""
     user_prompt = SEARCH_USER_PROMPT.format(
         question=question,
         n=n_memories,
         formatted_memories=memories_text,
+        project_context=project_context,
     )
 
     client = get_client()
@@ -379,7 +383,7 @@ async def agentic_search_async(
             future = loop.run_in_executor(
                 pool,
                 _run_single_agent,
-                role, query, memories_text, n_memories, model,
+                role, query, memories_text, n_memories, model, project,
             )
             futures.append(future)
 
