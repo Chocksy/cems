@@ -31,7 +31,7 @@ from pathlib import Path
 import httpx
 
 sys.path.insert(0, str(Path(__file__).parent))
-from utils.credentials import get_cems_key, get_cems_url
+from utils.credentials import get_cems_key, get_cems_url, get_search_mode
 from utils.hook_logger import log_hook_event
 from utils.project import get_project_id
 from utils.transcript import read_last_assistant_message
@@ -39,6 +39,7 @@ from utils.transcript import read_last_assistant_message
 # CEMS configuration — env vars first, then ~/.cems/credentials fallback
 CEMS_API_URL = get_cems_url()
 CEMS_API_KEY = get_cems_key()
+CEMS_SEARCH_MODE = get_search_mode()  # "agentic", "auto", "vector", "hybrid", or ""
 
 CONFIRMATORY = re.compile(
     r'^(yes|yeah|yep|yup|ok|okay|sure|go|do it|proceed|'
@@ -109,6 +110,8 @@ def search_cems(query: str, project: str | None = None) -> tuple[str | None, lis
 
     try:
         payload = {"query": query, "scope": "both", "limit": 5}
+        if CEMS_SEARCH_MODE:
+            payload["mode"] = CEMS_SEARCH_MODE  # "agentic" uses LLM agents instead of embeddings
         if project:
             payload["project"] = project  # Boosts same-project memories via source_ref scoring
 

@@ -26,28 +26,50 @@ You are extracting facts from a coding session{project_label}.
 
 ## YOUR TASK
 
-Extract **3-7 high-signal facts** from this session. Quality over quantity — each fact MUST pass this test: **"Would this be useful to recall 2 weeks from now in a DIFFERENT session?"** If not, skip it.
+Extract **3-7 high-signal facts** from this session, **each prefixed with a category tag**. Quality over quantity — each fact MUST pass this test: **"Would this be useful to recall 2 weeks from now in a DIFFERENT session?"** If not, skip it.
 
 Then write a **1-2 sentence context overview** that captures the session's overall purpose (for semantic search).
 
+## FACT CATEGORIES
+
+Prefix EVERY fact with exactly one of these category tags:
+
+- **[PERSONAL]** — User identity, background, role, skills, relationships, personal details
+- **[PREFERENCE]** — User likes, dislikes, opinions, style choices, tool preferences, workflow habits
+- **[EVENT]** — Things that happened: meetings, purchases, trips, milestones, deployments, releases
+- **[TEMPORAL]** — Time-specific info: dates, deadlines, durations, schedules, "last week", "next month"
+- **[UPDATE]** — State changes: switched from X to Y, upgraded, renamed, replaced, deprecated
+- **[DECISION]** — Architectural choices, technology picks, strategy decisions (with reasoning when stated)
+
+Example facts:
+- [PERSONAL] User is a senior developer who has been coding Python for 10 years
+- [PREFERENCE] User prefers Docker Compose over Kubernetes for small projects
+- [EVENT] User deployed the new auth system to production on 2026-03-20
+- [TEMPORAL] The project deadline is April 15, 2026
+- [UPDATE] User switched from SQLite to PostgreSQL for the CEMS project
+- [DECISION] User chose Gemini 2.5 Flash for observer extraction because of its 1M context window
+
 ## FACT EXTRACTION RULES
 
-- **Each fact is a complete, standalone sentence**: "User's dog is named Rex" not just "Rex"
+- **Each fact is a complete, standalone sentence** prefixed with its category tag
 - **Preserve exact values**: prices ("$5 coupon"), percentages ("43.7%% faster"), dates, names, versions, quantities
-- **Frame state changes explicitly**: "User switched from SQLite to PostgreSQL" not "User uses PostgreSQL"
-- **User assertions are authoritative**: "User stated they are a staunch atheist" not "User discussed religion"
-- **Distinguish assertions from questions**: "User asked about deployment options" vs "User decided to deploy on Railway"
+- **Frame state changes explicitly**: "[UPDATE] User switched from SQLite to PostgreSQL" not "[UPDATE] User uses PostgreSQL"
+- **User assertions are authoritative**: "[PERSONAL] User stated they are a staunch atheist" not "User discussed religion"
+- **Distinguish assertions from questions**: "[EVENT] User asked about deployment options" vs "[DECISION] User decided to deploy on Railway"
 - **Use precise action verbs**: "subscribed to", "purchased", "enrolled in" — not vague "got" or "getting"
 - **Include project name** in relevant facts for searchability
-- **Preserve distinguishing details**: "Assistant recommended Docker Compose (simple), K8s (scalable), Railway (managed)" not "Assistant recommended 3 options"
-- **Non-standard terminology**: quote user's exact words: "User did a 'movement session' (their term for exercise)"
+- **Preserve distinguishing details**: "[DECISION] User chose Docker Compose (simple) over K8s (scalable) and Railway (managed)" not "User recommended 3 options"
+- **Non-standard terminology**: quote user's exact words: "[PERSONAL] User did a 'movement session' (their term for exercise)"
 
 ## WHAT TO EXTRACT AS FACTS (high signal)
-- User preferences, opinions, and personal information
-- Decisions and architecture choices (with reasoning when stated)
-- Key names: people, services, tools, versions
-- Numbers: prices, measurements, deadlines, quantities, performance metrics
-- State changes: what was replaced and what replaced it
+- [PERSONAL] User identity, background, skills, relationships
+- [PREFERENCE] User preferences, opinions, workflow habits
+- [DECISION] Decisions and architecture choices (with reasoning when stated)
+- [EVENT] Key events: deployments, purchases, meetings, milestones
+- [TEMPORAL] Dates, deadlines, schedules, durations
+- [UPDATE] State changes: what was replaced and what replaced it
+- [PERSONAL] Key names: people, services, tools, versions
+- [EVENT] Numbers: prices, measurements, quantities, performance metrics
 - Project goals, outcomes, and unresolved issues
 - Operational knowledge that would be hard to rediscover (keyboard shortcuts, config values, workarounds)
 
@@ -69,8 +91,8 @@ Return a single JSON object:
 {{
   "title": "Brief descriptive title (5-10 words)",
   "facts": [
-    "Fact 1 as a standalone sentence",
-    "Fact 2 as a standalone sentence",
+    "[CATEGORY] Fact 1 as a standalone sentence",
+    "[CATEGORY] Fact 2 as a standalone sentence",
     "..."
   ],
   "context": "1-2 sentence overview of what the session was about, for semantic search.",

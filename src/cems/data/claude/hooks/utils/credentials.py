@@ -69,6 +69,17 @@ def get_cems_key() -> str:
     return _get_cached().get("CEMS_API_KEY", "")
 
 
+def get_search_mode() -> str:
+    """Get CEMS search mode. Env var takes priority, then credentials file.
+
+    Returns "auto" (default), "agentic", "vector", or "hybrid".
+    """
+    env_val = os.getenv("CEMS_SEARCH_MODE", "")
+    if env_val:
+        return env_val
+    return _get_cached().get("CEMS_SEARCH_MODE", "")
+
+
 def get_credentials_env() -> dict[str, str]:
     """Get a dict of CEMS env vars suitable for subprocess.Popen(env=...).
 
@@ -77,7 +88,7 @@ def get_credentials_env() -> dict[str, str]:
     """
     env = dict(os.environ)
     creds = _get_cached()
-    for key in ("CEMS_API_URL", "CEMS_API_KEY"):
+    for key in ("CEMS_API_URL", "CEMS_API_KEY", "CEMS_SEARCH_MODE"):
         if not env.get(key) and key in creds:
             env[key] = creds[key]
     return env

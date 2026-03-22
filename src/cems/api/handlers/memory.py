@@ -330,6 +330,23 @@ async def api_memory_search(request: Request):
 
         memory = get_memory()
 
+        # Agentic mode: LLM agents replace embeddings for retrieval
+        if mode == "agentic":
+            from cems.agentic.search import agentic_search_async
+
+            doc_store = await memory._ensure_document_store()
+            result = await agentic_search_async(
+                document_store=doc_store,
+                user_id=memory.config.user_id,
+                query=query,
+                scope=scope,
+                limit=limit,
+                max_tokens=max_tokens,
+                project=project,
+            )
+            logger.info(f"[API] Agentic search: {result['count']} results from {result['total_candidates']} memories")
+            return JSONResponse({"success": True, **result})
+
         if raw_mode:
             # Debug mode: use raw search without filtering
             results = await memory.search_async(query, scope=scope, limit=limit)
