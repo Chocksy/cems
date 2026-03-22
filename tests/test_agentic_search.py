@@ -96,84 +96,191 @@ class TestProfileCategories:
 
 
 class TestLoadContextMemories:
-    """Tests for _load_context_memories 3-bucket loading."""
+    """Tests for _load_context_memories 3-bucket loading with DB-level project filtering."""
+
+    def _make_mock_store(self, responses_by_call: list[list[dict]]):
+        """Create a mock store that returns different results per call.
+
+        The bucket loading makes multiple get_all_documents calls:
+        - Call 1: project bucket (source_ref_prefix filter)
+        - Calls 2-5: profile buckets (one per PROFILE_CATEGORIES)
+        - Call 6: recent bucket (no source_ref filter)
+        """
+        mock_store = AsyncMock()
+        mock_store.get_all_documents = AsyncMock(side_effect=responses_by_call)
+        return mock_store
+
+    @pytest.mark.asyncio
+    async def test_bucket1_uses_source_ref_prefix_filter(self):
+        """Bucket 1 should pass source_ref_prefix to DB query, not filter client-side."""
+        from cems.agentic.search import PROFILE_CATEGORIES, _load_context_memories
+
+        cems_doc = {
+            "id": "cems-1", "content": "CEMS arch", "category": "architecture",
+            "source_ref": "project:chocksy/cems", "created_at": "2026-01-01",
+        }
+
+        # Bucket 1 returns project docs, buckets 2-5 (profile) return empty, bucket 6 (recent) returns empty
+        responses = [[cems_doc]] + [[] for _ in PROFILE_CATEGORIES] + [[]]
+        mock_store = self._make_mock_store(responses)
+
+        await _load_context_memories(mock_store, user_id="u1", project="chocksy/cems")
+
+        # First call should have source_ref_prefix set
+        first_call = mock_store.get_all_documents.call_args_list[0]
+        assert first_call.kwargs.get("source_ref_prefix") == "project:chocksy/cems"
+
+    @pytest.mark.asyncio
+    async def test_bucket3_excludes_other_project_memories(self):
+        """Bucket 3 (recent) should NOT include memories from other projects."""
+        from datetime import UTC, datetime
+        from cems.agentic.search import PROFILE_CATEGORIES, _load_context_memories
+
+        now = datetime.now(UTC)
+        gooseherd_doc = {
+            "id": "goose-1", "content": "Gooseherd stuff", "category": "session-summary",
+            "source_ref": "project:chocksy/gooseherd", "created_at": now,
+        }
+        cems_recent = {
+            "id": "cems-recent", "content": "CEMS recent", "category": "session-summary",
+            "source_ref": "project:chocksy/cems", "created_at": now,
+        }
+        no_project = {
+            "id": "general-1", "content": "General memory", "category": "general",
+            "source_ref": None, "created_at": now,
+        }
+
+        # Bucket 1 empty, buckets 2-5 empty, bucket 6 has mixed project docs
+        responses = [[]] + [[] for _ in PROFILE_CATEGORIES] + [[gooseherd_doc, cems_recent, no_project]]
+        mock_store = self._make_mock_store(responses)
+
+        result = await _load_context_memories(mock_store, user_id="u1", project="chocksy/cems")
+
+        ids = [d["id"] for d in result]
+        assert "goose-1" not in ids, "Other-project memory should be excluded from bucket 3"
+        assert "cems-recent" in ids, "Same-project recent memory should be included"
+        assert "general-1" in ids, "No-project memory should be included"
+
+    @pytest.mark.asyncio
+    async def test_profile_categories_always_included(self):
+        """Profile memories (preferences, guidelines, etc.) should always be loaded."""
+        from cems.agentic.search import PROFILE_CATEGORIES, _load_context_memories
+
+        pref_doc = {
+            "id": "pref-1", "content": "User likes Python", "category": "preferences",
+            "source_ref": None, "created_at": "2026-01-01",
+        }
+
+        # Bucket 1 empty, one profile category returns doc, rest empty, bucket 6 empty
+        responses = [[]]
+        for cat in PROFILE_CATEGORIES:
+            responses.append([pref_doc] if cat == "preferences" else [])
+        responses.append([])  # recent
+        mock_store = self._make_mock_store(responses)
+
+        result = await _load_context_memories(mock_store, user_id="u1", project="chocksy/cems")
+
+        ids = [d["id"] for d in result]
+        assert "pref-1" in ids
 
     @pytest.mark.asyncio
     async def test_deduplicates_across_buckets(self):
-        from cems.agentic.search import _load_context_memories
+        """Same doc appearing in project + profile buckets should appear only once."""
+        from cems.agentic.search import PROFILE_CATEGORIES, _load_context_memories
 
-        # Same doc appears in both project and profile buckets
         shared_doc = {
-            "id": "doc-1",
-            "content": "User prefers Python",
-            "category": "preferences",
-            "source_ref": "project:chocksy/cems",
-            "created_at": "2026-03-22",
+            "id": "shared-1", "content": "CEMS pref", "category": "preferences",
+            "source_ref": "project:chocksy/cems", "created_at": "2026-01-01",
         }
 
-        mock_store = AsyncMock()
-        mock_store.get_all_documents = AsyncMock(return_value=[shared_doc])
+        # Doc appears in both bucket 1 (project) and bucket 2 (preferences)
+        responses = [[shared_doc]]
+        for cat in PROFILE_CATEGORIES:
+            responses.append([shared_doc] if cat == "preferences" else [])
+        responses.append([])  # recent
+        mock_store = self._make_mock_store(responses)
 
-        result = await _load_context_memories(
-            mock_store, user_id="user-1", project="chocksy/cems"
-        )
+        result = await _load_context_memories(mock_store, user_id="u1", project="chocksy/cems")
 
-        # Should appear only once despite matching project + profile
         ids = [d["id"] for d in result]
-        assert ids.count("doc-1") == 1
-
-    @pytest.mark.asyncio
-    async def test_loads_project_memories(self):
-        from cems.agentic.search import _load_context_memories
-
-        project_doc = {
-            "id": "proj-1",
-            "content": "CEMS uses pgvector",
-            "category": "architecture",
-            "source_ref": "project:chocksy/cems",
-            "created_at": "2026-01-01",
-        }
-        other_doc = {
-            "id": "other-1",
-            "content": "Gooseherd uses Docker",
-            "category": "architecture",
-            "source_ref": "project:chocksy/gooseherd",
-            "created_at": "2026-01-01",
-        }
-
-        mock_store = AsyncMock()
-        # First call returns all docs (project bucket), subsequent calls for profile/recent
-        mock_store.get_all_documents = AsyncMock(return_value=[project_doc, other_doc])
-
-        result = await _load_context_memories(
-            mock_store, user_id="user-1", project="chocksy/cems"
-        )
-
-        # Project doc should be included (matches source_ref)
-        ids = [d["id"] for d in result]
-        assert "proj-1" in ids
+        assert ids.count("shared-1") == 1, "Dedup failed — doc appears multiple times"
 
     @pytest.mark.asyncio
     async def test_works_without_project(self):
-        from cems.agentic.search import _load_context_memories
+        """When project=None, skip bucket 1, still load profile + recent."""
+        from cems.agentic.search import PROFILE_CATEGORIES, _load_context_memories
 
-        doc = {
-            "id": "doc-1",
-            "content": "User prefers Python",
-            "category": "preferences",
-            "source_ref": None,
-            "created_at": "2026-03-22",
+        pref_doc = {
+            "id": "pref-1", "content": "User likes Python", "category": "preferences",
+            "source_ref": None, "created_at": "2026-03-22",
         }
 
-        mock_store = AsyncMock()
-        mock_store.get_all_documents = AsyncMock(return_value=[doc])
+        # No bucket 1 call (project=None), profile categories, then recent
+        responses = []
+        for cat in PROFILE_CATEGORIES:
+            responses.append([pref_doc] if cat == "preferences" else [])
+        responses.append([])  # recent
+        mock_store = self._make_mock_store(responses)
 
-        result = await _load_context_memories(
-            mock_store, user_id="user-1", project=None
-        )
+        result = await _load_context_memories(mock_store, user_id="u1", project=None)
 
-        # Should still load profile + recent buckets
         assert len(result) >= 1
+        # Should NOT have called with source_ref_prefix
+        for call in mock_store.get_all_documents.call_args_list:
+            assert call.kwargs.get("source_ref_prefix") is None
+
+    @pytest.mark.asyncio
+    async def test_context_budget_respected(self):
+        """Should stop adding memories when MAX_CONTEXT_CHARS is reached."""
+        from cems.agentic.search import PROFILE_CATEGORIES, _load_context_memories
+        from unittest.mock import patch
+
+        big_doc = {
+            "id": "big-1", "content": "x" * 800_000, "category": "architecture",
+            "source_ref": "project:chocksy/cems", "created_at": "2026-01-01",
+        }
+        small_doc = {
+            "id": "small-1", "content": "small", "category": "preferences",
+            "source_ref": None, "created_at": "2026-01-01",
+        }
+
+        responses = [[big_doc]]
+        for cat in PROFILE_CATEGORIES:
+            responses.append([small_doc] if cat == "preferences" else [])
+        responses.append([])
+        mock_store = self._make_mock_store(responses)
+
+        with patch("cems.agentic.search.MAX_CONTEXT_CHARS", 500_000):
+            result = await _load_context_memories(mock_store, user_id="u1", project="chocksy/cems")
+
+        # big_doc exceeds budget, should be skipped
+        ids = [d["id"] for d in result]
+        assert "big-1" not in ids
+
+    @pytest.mark.asyncio
+    async def test_relevance_sorting_within_buckets(self):
+        """Memories with higher relevant_count should come first within a bucket."""
+        from cems.agentic.search import PROFILE_CATEGORIES, _load_context_memories
+
+        low_rel = {
+            "id": "low-1", "content": "low relevance", "category": "architecture",
+            "source_ref": "project:chocksy/cems", "created_at": "2026-01-01",
+            "relevant_count": 0, "noise_count": 5,
+        }
+        high_rel = {
+            "id": "high-1", "content": "high relevance", "category": "architecture",
+            "source_ref": "project:chocksy/cems", "created_at": "2026-01-01",
+            "relevant_count": 10, "noise_count": 0,
+        }
+
+        # Return in wrong order — low relevance first
+        responses = [[low_rel, high_rel]] + [[] for _ in PROFILE_CATEGORIES] + [[]]
+        mock_store = self._make_mock_store(responses)
+
+        result = await _load_context_memories(mock_store, user_id="u1", project="chocksy/cems")
+
+        ids = [d["id"] for d in result]
+        assert ids.index("high-1") < ids.index("low-1"), "High-relevance should come first"
 
 
 class TestAgenticSearchAsync:

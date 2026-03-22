@@ -294,6 +294,9 @@ class DocumentStore:
             "deleted_at": row["deleted_at"],
             "shown_count": row["shown_count"],
             "last_shown_at": row["last_shown_at"],
+            "relevant_count": row["relevant_count"],
+            "noise_count": row["noise_count"],
+            "noise_snippet_count": row["noise_snippet_count"],
         }
 
     async def get_document(self, document_id: str) -> dict[str, Any] | None:

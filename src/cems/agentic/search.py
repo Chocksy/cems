@@ -301,7 +301,7 @@ async def _load_context_memories(
         # Only include: same project, no project, or profile categories
         src = d.get("source_ref") or ""
         cat = d.get("category") or ""
-        if project and src and f"project:{project}" not in src.lower():
+        if project and src and f"project:{project}".lower() not in src.lower():
             # Different project — skip unless it's a profile category
             if cat not in PROFILE_CATEGORIES:
                 continue
@@ -378,7 +378,7 @@ async def agentic_search_async(
     valid_ids = set(id_to_full.keys())
 
     # Run 3 search agents in parallel using ThreadPoolExecutor
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     rankings: list[list[str]] = []
 
     with ThreadPoolExecutor(max_workers=3) as pool:
@@ -391,7 +391,15 @@ async def agentic_search_async(
             )
             futures.append(future)
 
-        results = await asyncio.gather(*futures, return_exceptions=True)
+        # Server-side timeout: prevent orphaned LLM requests if hook times out
+        try:
+            results = await asyncio.wait_for(
+                asyncio.gather(*futures, return_exceptions=True),
+                timeout=8.0,  # Hook timeout is 10s, leave 2s for DB + response
+            )
+        except asyncio.TimeoutError:
+            logger.warning("Agentic search timed out after 8s")
+            results = []
 
         for result in results:
             if isinstance(result, Exception):
