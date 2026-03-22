@@ -20,7 +20,7 @@ from cems.llm.client import get_client
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_MODEL = "google/gemini-2.5-flash"
+DEFAULT_MODEL = "google/gemini-2.0-flash-001"  # 1M context, 3x cheaper than 2.5, faster
 RRF_K = 60
 
 # ---------------------------------------------------------------------------

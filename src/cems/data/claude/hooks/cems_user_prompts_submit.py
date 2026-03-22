@@ -109,7 +109,8 @@ def search_cems(query: str, project: str | None = None) -> tuple[str | None, lis
         return None, [], [], []
 
     try:
-        payload = {"query": query, "scope": "both", "limit": 5}
+        limit = 3 if CEMS_SEARCH_MODE == "agentic" else 5  # Agentic finds better matches, fewer needed
+        payload = {"query": query, "scope": "both", "limit": limit}
         if CEMS_SEARCH_MODE:
             payload["mode"] = CEMS_SEARCH_MODE  # "agentic" uses LLM agents instead of embeddings
         if project:
@@ -119,7 +120,7 @@ def search_cems(query: str, project: str | None = None) -> tuple[str | None, lis
             f"{CEMS_API_URL}/api/memory/search",
             json=payload,
             headers={"Authorization": f"Bearer {CEMS_API_KEY}"},
-            timeout=5.0,
+            timeout=10.0,  # Agentic mode needs ~4s (3 parallel LLM calls)
         )
 
         if response.status_code != 200:
