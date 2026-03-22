@@ -933,6 +933,7 @@ class DocumentStore:
         category: str | None = None,
         order: Literal["desc", "asc"] = "desc",
         tag_prefix: str | None = None,
+        source_ref_prefix: str | None = None,
     ) -> list[dict[str, Any]]:
         """Get all documents for a user with pagination and filtering.
 
@@ -948,6 +949,7 @@ class DocumentStore:
             category: Optional category filter
             order: Sort order for created_at ("desc" newest-first, "asc" oldest-first)
             tag_prefix: Optional tag prefix filter (matches docs with any tag starting with this)
+            source_ref_prefix: Optional source_ref prefix filter (e.g., "project:chocksy/cems")
 
         Returns:
             List of document dicts
@@ -966,6 +968,8 @@ class DocumentStore:
                 "EXISTS (SELECT 1 FROM unnest(tags) t WHERE t LIKE ${} || '%')",
                 tag_prefix,
             )
+        if source_ref_prefix:
+            fb.add_param("source_ref LIKE ${} || '%'", source_ref_prefix)
 
         limit_idx, offset_idx = fb.add_raw_values(limit, offset)
 

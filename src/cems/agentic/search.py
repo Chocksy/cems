@@ -257,24 +257,22 @@ async def _load_context_memories(
         return added
 
     b1 = 0
-    # Bucket 1: PROJECT memories (all time, highest priority)
+    # Bucket 1: PROJECT memories — DB-filtered by source_ref, all time
     if project:
+        # source_ref is stored as "project:chocksy/cems" format
+        source_prefix = f"project:{project}"
         project_docs = await document_store.get_all_documents(
             user_id=user_id,
             scope=scope_filter,
-            limit=500,
+            source_ref_prefix=source_prefix,
+            limit=1000,
+            order="desc",
         )
-        # Filter by source_ref containing the project name
-        project_filtered = [
-            d for d in project_docs
-            if project.lower() in (d.get("source_ref") or "").lower()
-        ]
-        # Sort project memories by relevance feedback
-        project_filtered.sort(key=_relevance_score, reverse=True)
-        b1 = _add_unique(project_filtered)
+        project_docs.sort(key=_relevance_score, reverse=True)
+        b1 = _add_unique(project_docs)
         logger.debug(f"Agentic context bucket 1 (project={project}): {b1} memories")
 
-    # Bucket 2: PROFILE memories (always relevant)
+    # Bucket 2: PROFILE memories — no project, always relevant
     for cat in PROFILE_CATEGORIES:
         cat_docs = await document_store.get_all_documents(
             user_id=user_id,
@@ -286,7 +284,8 @@ async def _load_context_memories(
     b2_total = len(all_memories) - b1
     logger.debug(f"Agentic context bucket 2 (profile): {b2_total} memories")
 
-    # Bucket 3: RECENT memories (last N days, any project, sorted by relevance)
+    # Bucket 3: RECENT general memories — same project + no-project only
+    # Excludes other-project memories to prevent noise
     recent_docs = await document_store.get_all_documents(
         user_id=user_id,
         scope=scope_filter,
@@ -297,15 +296,20 @@ async def _load_context_memories(
     recent_filtered = []
     for d in recent_docs:
         created = d.get("created_at")
-        if created and hasattr(created, "timestamp") and created >= cutoff:
-            recent_filtered.append(d)
-        elif created and isinstance(created, str):
-            recent_filtered.append(d)
+        if not (created and hasattr(created, "timestamp") and created >= cutoff):
+            continue
+        # Only include: same project, no project, or profile categories
+        src = d.get("source_ref") or ""
+        cat = d.get("category") or ""
+        if project and src and f"project:{project}" not in src.lower():
+            # Different project — skip unless it's a profile category
+            if cat not in PROFILE_CATEGORIES:
+                continue
+        recent_filtered.append(d)
 
-    # Sort recent by relevance feedback — proven-useful memories first
     recent_filtered.sort(key=_relevance_score, reverse=True)
     b3 = _add_unique(recent_filtered)
-    logger.debug(f"Agentic context bucket 3 (recent {RECENT_DAYS}d): {b3} memories")
+    logger.debug(f"Agentic context bucket 3 (recent {RECENT_DAYS}d, same project): {b3} memories")
 
     logger.info(
         f"Agentic context loaded: {len(all_memories)} memories, {total_chars/1000:.0f}K chars "
