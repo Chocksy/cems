@@ -120,7 +120,7 @@ def search_cems(query: str, project: str | None = None) -> tuple[str | None, lis
             f"{CEMS_API_URL}/api/memory/search",
             json=payload,
             headers={"Authorization": f"Bearer {CEMS_API_KEY}"},
-            timeout=10.0,  # Agentic mode needs ~4s (3 parallel LLM calls)
+            timeout=15.0,  # Agentic mode needs ~4s (3 parallel LLM calls)
         )
 
         if response.status_code != 200:
