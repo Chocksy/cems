@@ -118,6 +118,10 @@ def memory_search(
     }
     if project:
         payload["project"] = project
+    # Pass search mode from credentials or env (CEMS_SEARCH_MODE=agentic)
+    search_mode = os.getenv("CEMS_SEARCH_MODE") or _read_credentials().get("CEMS_SEARCH_MODE", "")
+    if search_mode:
+        payload["mode"] = search_mode
     return json.dumps(_request("POST", "/api/memory/search", payload))
 
 
