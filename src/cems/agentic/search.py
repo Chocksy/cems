@@ -20,7 +20,7 @@ from cems.llm.client import get_client
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_MODEL = "google/gemini-2.0-flash-001"  # 1M context, 3x cheaper than 2.5, faster
+DEFAULT_MODEL = "x-ai/grok-4.1-fast"  # 2M context, $0.20/M input, $0.50/M output, 1.76s latency
 RRF_K = 60
 
 # ---------------------------------------------------------------------------
@@ -153,14 +153,28 @@ def _run_single_agent(
     client = get_client()
 
     try:
-        response = client.complete(
-            prompt=user_prompt,
-            system=system,
-            model=model,
-            temperature=0.1,
-            max_tokens=1000,
-            fast_route=False,
-        )
+        # Build kwargs — disable reasoning for Grok (faster, cheaper, we just need JSON)
+        extra_body: dict = {}
+        if "grok" in model.lower():
+            extra_body["reasoning"] = {"enabled": False}
+
+        # Call LLM directly for extra_body support
+        messages = []
+        if system:
+            messages.append({"role": "system", "content": system})
+        messages.append({"role": "user", "content": user_prompt})
+
+        llm_kwargs: dict = {
+            "model": model,
+            "messages": messages,
+            "max_tokens": 1000,
+            "temperature": 0.1,
+        }
+        if extra_body:
+            llm_kwargs["extra_body"] = extra_body
+
+        resp = client._client.chat.completions.create(**llm_kwargs)
+        response = resp.choices[0].message.content or ""
     except Exception as e:
         logger.warning(f"Agentic search agent {role} failed: {e}")
         return role, []
@@ -191,7 +205,7 @@ PROFILE_CATEGORIES = {"preferences", "guidelines", "gate-rules", "category-summa
 # How far back "recent" memories go
 RECENT_DAYS = 14
 
-# Max chars to send to agents (leaves headroom in Gemini's 1M context)
+# Max chars to send to agents (leaves headroom in model context)
 MAX_CONTEXT_CHARS = 700_000
 
 
