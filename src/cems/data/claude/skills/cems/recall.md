@@ -38,10 +38,11 @@ Search your CEMS memories for relevant information.
    cems search "<query>" --limit <N>
    ```
 
-4. **For truncated results**, fetch full content via MCP:
+4. **For results with `has_detailed: true` or `truncated: true`**, fetch full content via MCP:
    ```
    mcp__cems__memory_get with memory_id
    ```
+   The response includes `content_detailed` (original full text) when the memory has been distilled.
 
 5. **Present results** clearly with category and ID.
 

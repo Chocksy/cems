@@ -38,9 +38,9 @@ When you need context before starting work, or the user asks to recall something
 }
 ```
 
-## Fetching Truncated Results
+## Fetching Full Content
 
-When search results are truncated (content ends with `...`), fetch the full document:
+When search results have `has_detailed: true` (distilled memory) or are truncated (content ends with `...`), fetch the full document:
 
 ```json
 {
@@ -50,6 +50,8 @@ When search results are truncated (content ends with `...`), fetch the full docu
   }
 }
 ```
+
+The response includes `content_detailed` (original full text) when the memory has been distilled to a summary.
 
 ## Parameters
 

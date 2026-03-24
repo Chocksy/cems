@@ -175,12 +175,16 @@ def search_cems(query: str, project: str | None = None) -> tuple[str | None, lis
             short_id = mem_id[:8] if mem_id else ""
             score = r.get("score", 0.0)
             truncated = r.get("truncated", False)
+            has_detailed = r.get("has_detailed", False)
             full_len = r.get("full_length", 0)
+            needs_expansion = truncated or has_detailed
             suffix = f" [truncated — full doc: {full_len} chars]" if truncated else ""
+            if has_detailed and not truncated:
+                suffix = " [distilled — full details available]"
             formatted.append(f"{i}. [{category}] (score: {score:.2f}) {content}{suffix} (id: {short_id})")
-            if truncated and full_len:
+            if needs_expansion and (full_len or has_detailed):
                 truncated_hints.append(
-                    f"  #{i} ({category}, {full_len} chars) — use `/recall {short_id}` to read full document"
+                    f"  #{i} ({category}{f', {full_len} chars' if full_len else ''}) — use `/recall {short_id}` to read full document"
                 )
             truncation_flags.append(truncated)
             if mem_id:
@@ -193,10 +197,10 @@ def search_cems(query: str, project: str | None = None) -> tuple[str | None, lis
         top_score = max(scores) if scores else 0
         formatted.append(f"\n--- Retrieval: {len(results)} results, avg score {avg_score:.2f}, top {top_score:.2f} ---")
         if truncated_hints:
-            formatted.append("Truncated memories — you're seeing a snippet, not the full document.")
-            formatted.append("If any truncated memory looks partially relevant, read the full version BEFORE proceeding:")
+            formatted.append("Some memories are truncated or distilled — you're seeing a summary, not the full content.")
+            formatted.append("If any memory looks partially relevant, read the full version BEFORE proceeding:")
             formatted.extend(truncated_hints)
-            formatted.append("Do NOT mark truncated memories as noise without reading the full document first.")
+            formatted.append("Do NOT mark truncated/distilled memories as noise without reading the full document first.")
 
         return "\n".join(formatted), memory_ids, truncation_flags, score_details
 
