@@ -1,5 +1,6 @@
-"""Weekly summarization job — compress old memories, prune stale ones.
+"""Weekly summarization job — compress old memories, consolidate never-shown.
 
+Philosophy: consolidate, never delete (except proven noise).
 Uses DocumentStore (memory_documents) exclusively via async pattern.
 Follows the ObservationReflector pattern for async + DocumentStore access.
 """
@@ -39,27 +40,12 @@ def _doc_age_exceeds(doc: dict, days: int, field: str = "created_at") -> bool:
     return ts < datetime.now(UTC) - timedelta(days=days)
 
 
-def _recently_shown(doc: dict, days: int) -> bool:
-    """Check if a document was shown within the last N days.
-
-    Returns True if last_shown_at is within the threshold, preventing
-    actively-surfaced memories from being pruned.
-    """
-    ts = doc.get("last_shown_at")
-    if not ts:
-        return False
-    if isinstance(ts, str):
-        ts = datetime.fromisoformat(ts)
-    if ts.tzinfo is None:
-        ts = ts.replace(tzinfo=UTC)
-    return ts > datetime.now(UTC) - timedelta(days=days)
-
-
 class SummarizationJob:
     """Weekly maintenance job for memory summarization.
 
-    Compresses old memories into category summaries and prunes
-    stale memories that haven't been accessed in 90+ days.
+    Compresses old memories into category summaries and consolidates
+    never-shown memories. Philosophy: consolidate, never delete
+    (except proven noise via _prune_chronically_noisy).
     """
 
     def __init__(self, memory: "CEMSMemory"):
@@ -89,16 +75,14 @@ class SummarizationJob:
         categories_updated, originals_deleted = await self._compress_by_category(
             doc_store, old_docs
         )
-        pruned = await self._prune_stale(doc_store, user_id, all_docs)
-        never_shown_pruned = await self._prune_never_shown(doc_store, all_docs)
         noise_pruned = await self._prune_chronically_noisy(doc_store, all_docs)
         consolidated = await self._consolidate_never_shown(doc_store, all_docs)
 
         result = {
             "categories_updated": categories_updated,
             "originals_deleted": originals_deleted,
-            "memories_pruned": pruned,
-            "never_shown_pruned": never_shown_pruned,
+            "memories_pruned": 0,  # Kept for backwards compat (pruning removed)
+            "never_shown_pruned": 0,  # Kept for backwards compat (pruning removed)
             "noise_pruned": noise_pruned,
             "never_shown_consolidated": consolidated,
             "old_memories_checked": len(old_docs),
@@ -142,7 +126,7 @@ class SummarizationJob:
                         doc_id = doc.get("id")
                         if doc_id:
                             try:
-                                await doc_store.delete_document(doc_id, hard=False)
+                                await doc_store.delete_document(doc_id, hard=False, user_id=self.config.user_id)
                                 deleted += 1
                             except Exception as e:
                                 logger.error(
@@ -196,48 +180,6 @@ class SummarizationJob:
 
         logger.info(f"Created LLM summary for category {category} with {len(contents)} items")
 
-    async def _prune_stale(
-        self, doc_store, user_id: str, all_docs: list[dict]
-    ) -> int:
-        """Soft-delete documents created before stale_days ago.
-
-        Uses created_at (not updated_at) because reindex bumps updated_at,
-        which would defeat age-based pruning.
-
-        Args:
-            doc_store: DocumentStore instance
-            user_id: User ID
-            all_docs: All user documents
-
-        Returns:
-            Number of documents pruned
-        """
-        stale_days = self.config.stale_days
-        stale_docs = [
-            d for d in all_docs
-            if _doc_age_exceeds(d, stale_days, field="created_at")
-            and d.get("category", "general") not in PROTECTED_CATEGORIES
-            and not _recently_shown(d, stale_days)
-        ]
-        pruned = 0
-
-        for doc in stale_docs:
-            doc_id = doc.get("id")
-            if doc_id:
-                try:
-                    await doc_store.delete_document(doc_id, hard=False)
-                    pruned += 1
-                except Exception as e:
-                    logger.error(f"Failed to prune stale document {doc_id}: {e}")
-
-        if pruned:
-            logger.info(f"Soft-deleted {pruned} stale documents (>{stale_days} days)")
-
-        return pruned
-
-    # Minimum age before a never-shown memory can be pruned (days)
-    NEVER_SHOWN_MIN_AGE_DAYS = 7
-
     # Progressive consolidation: never-shown memories per project/category
     # that exceed this count get consolidated into summary docs.
     CONSOLIDATION_THRESHOLD = 20  # If >20 never-shown memories in one project+category, consolidate
@@ -245,47 +187,6 @@ class SummarizationJob:
     # Noise pruning thresholds
     NOISE_MIN_SIGNALS = 5      # Minimum total feedback signals to act
     NOISE_MAX_RATIO = 0.50     # Noise rate above which to prune (50%+)
-
-    async def _prune_never_shown(
-        self, doc_store, all_docs: list[dict]
-    ) -> int:
-        """Soft-delete memories that have never been surfaced in retrieval.
-
-        If a memory has existed for 7+ days and was never shown (shown_count=0),
-        it's likely noise that will never be relevant. Prune it to keep the
-        memory corpus lean.
-
-        Args:
-            doc_store: DocumentStore instance
-            all_docs: All user documents
-
-        Returns:
-            Number of documents pruned
-        """
-        candidates = [
-            d for d in all_docs
-            if d.get("shown_count", 0) == 0
-            and _doc_age_exceeds(d, self.NEVER_SHOWN_MIN_AGE_DAYS, field="created_at")
-            and d.get("category", "general") not in PROTECTED_CATEGORIES
-        ]
-        pruned = 0
-
-        for doc in candidates:
-            doc_id = doc.get("id")
-            if doc_id:
-                try:
-                    await doc_store.delete_document(doc_id, hard=False)
-                    pruned += 1
-                except Exception as e:
-                    logger.error(f"Failed to prune never-shown document {doc_id}: {e}")
-
-        if pruned:
-            logger.info(
-                f"Soft-deleted {pruned} never-shown documents "
-                f"(>{self.NEVER_SHOWN_MIN_AGE_DAYS} days old, shown_count=0)"
-            )
-
-        return pruned
 
     async def _consolidate_never_shown(
         self, doc_store, all_docs: list[dict]
@@ -364,7 +265,7 @@ class SummarizationJob:
                 for d in batch:
                     doc_id = d.get("id")
                     if doc_id:
-                        await doc_store.delete_document(doc_id, hard=False)
+                        await doc_store.delete_document(doc_id, hard=False, user_id=self.config.user_id)
                         total_consolidated += 1
 
                 logger.info(
@@ -420,7 +321,7 @@ class SummarizationJob:
                 shown = doc.get("shown_count", 0)
                 cat = doc.get("category", "?")
                 try:
-                    await doc_store.delete_document(doc_id, hard=False)
+                    await doc_store.delete_document(doc_id, hard=False, user_id=self.config.user_id)
                     pruned += 1
                     logger.info(
                         f"Pruned noisy memory {doc_id[:8]} "

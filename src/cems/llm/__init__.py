@@ -41,11 +41,6 @@ from cems.llm.learning_extraction import (
     normalize_category,
 )
 
-# Observation extraction exports
-from cems.llm.observation_extraction import (
-    extract_observations,
-)
-
 # Observation reflection exports
 from cems.llm.observation_reflection import (
     reflect_observations,
@@ -70,8 +65,6 @@ __all__ = [
     # Learning extraction
     "extract_tool_learning",
     "normalize_category",
-    # Observation extraction
-    "extract_observations",
     # Observation reflection
     "reflect_observations",
     # Deduplication

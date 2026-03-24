@@ -25,7 +25,7 @@ class CEMSScheduler:
     Manages four scheduled maintenance jobs that run per-user:
     - Nightly (3 AM): Consolidation - merge duplicates
     - Nightly (3:30 AM): Reflection - consolidate overlapping observations
-    - Weekly (Sunday 4 AM): Summarization - compress old memories, prune stale
+    - Weekly (Sunday 4 AM): Summarization - compress old memories, consolidate never-shown
     - Monthly (1st 5 AM): Re-indexing - rebuild embeddings, archive dead memories
     """
 

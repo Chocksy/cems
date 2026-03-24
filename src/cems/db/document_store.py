@@ -299,41 +299,73 @@ class DocumentStore:
             "noise_snippet_count": row["noise_snippet_count"],
         }
 
-    async def get_document(self, document_id: str) -> dict[str, Any] | None:
-        """Get a document by ID (excludes soft-deleted)."""
+    async def get_document(
+        self, document_id: str, user_id: str | None = None
+    ) -> dict[str, Any] | None:
+        """Get a document by ID (excludes soft-deleted).
+
+        Args:
+            document_id: The document UUID
+            user_id: Owner user ID for ownership check. If provided, only returns
+                     the document if it belongs to this user (prevents IDOR).
+        """
         pool = await self._get_pool()
 
-        async with pool.acquire() as conn:
-            row = await conn.fetchrow(
-                f"SELECT {DOCUMENT_COLUMNS} FROM memory_documents WHERE id = $1 AND deleted_at IS NULL",
-                UUID(document_id),
-            )
+        if user_id:
+            query = f"SELECT {DOCUMENT_COLUMNS} FROM memory_documents WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL"
+            async with pool.acquire() as conn:
+                row = await conn.fetchrow(query, UUID(document_id), UUID(user_id))
+        else:
+            query = f"SELECT {DOCUMENT_COLUMNS} FROM memory_documents WHERE id = $1 AND deleted_at IS NULL"
+            async with pool.acquire() as conn:
+                row = await conn.fetchrow(query, UUID(document_id))
 
         if not row:
             return None
 
         return self._doc_row_to_dict(row)
 
-    async def delete_document(self, document_id: str, hard: bool = False) -> bool:
+    async def delete_document(
+        self, document_id: str, hard: bool = False, user_id: str | None = None
+    ) -> bool:
         """Delete a document (soft by default, hard if specified).
 
         Soft delete sets deleted_at timestamp; hard delete removes permanently.
         Chunks are cascade-deleted on hard delete, hidden by JOIN filter on soft.
+
+        Args:
+            document_id: The document UUID
+            hard: If True, permanently removes. If False, soft-deletes.
+            user_id: Owner user ID for ownership check. If provided, only deletes
+                     if the document belongs to this user (prevents IDOR).
         """
         pool = await self._get_pool()
+        doc_uuid = UUID(document_id)
 
         async with pool.acquire() as conn:
             if hard:
-                result = await conn.execute(
-                    "DELETE FROM memory_documents WHERE id = $1",
-                    UUID(document_id),
-                )
+                if user_id:
+                    result = await conn.execute(
+                        "DELETE FROM memory_documents WHERE id = $1 AND user_id = $2",
+                        doc_uuid, UUID(user_id),
+                    )
+                else:
+                    result = await conn.execute(
+                        "DELETE FROM memory_documents WHERE id = $1",
+                        doc_uuid,
+                    )
                 return result == "DELETE 1"
             else:
-                result = await conn.execute(
-                    "UPDATE memory_documents SET deleted_at = NOW() WHERE id = $1 AND deleted_at IS NULL",
-                    UUID(document_id),
-                )
+                if user_id:
+                    result = await conn.execute(
+                        "UPDATE memory_documents SET deleted_at = NOW() WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL",
+                        doc_uuid, UUID(user_id),
+                    )
+                else:
+                    result = await conn.execute(
+                        "UPDATE memory_documents SET deleted_at = NOW() WHERE id = $1 AND deleted_at IS NULL",
+                        doc_uuid,
+                    )
                 return result == "UPDATE 1"
 
     async def restore_document(self, document_id: str, user_id: str) -> bool:
@@ -545,6 +577,7 @@ class DocumentStore:
         content: str,
         chunks: list[Chunk],
         embeddings: list[list[float]],
+        user_id: str | None = None,
     ) -> bool:
         """Update a document's content and replace its chunks.
 
@@ -555,6 +588,8 @@ class DocumentStore:
             content: New full content
             chunks: New pre-chunked content
             embeddings: New embeddings (must match chunks length)
+            user_id: Owner user ID for ownership check. If provided, only updates
+                     if the document belongs to this user (prevents IDOR).
 
         Returns:
             True if document was found and updated, False if not found
@@ -572,15 +607,26 @@ class DocumentStore:
         async with pool.acquire() as conn:
             async with conn.transaction():
                 # Update document row
-                result = await conn.execute(
-                    """
-                    UPDATE memory_documents
-                    SET content = $1, content_hash = $2, content_bytes = $3,
-                        updated_at = NOW()
-                    WHERE id = $4
-                    """,
-                    content, doc_hash, doc_bytes, doc_uuid,
-                )
+                if user_id:
+                    result = await conn.execute(
+                        """
+                        UPDATE memory_documents
+                        SET content = $1, content_hash = $2, content_bytes = $3,
+                            updated_at = NOW()
+                        WHERE id = $4 AND user_id = $5 AND deleted_at IS NULL
+                        """,
+                        content, doc_hash, doc_bytes, doc_uuid, UUID(user_id),
+                    )
+                else:
+                    result = await conn.execute(
+                        """
+                        UPDATE memory_documents
+                        SET content = $1, content_hash = $2, content_bytes = $3,
+                            updated_at = NOW()
+                        WHERE id = $4 AND deleted_at IS NULL
+                        """,
+                        content, doc_hash, doc_bytes, doc_uuid,
+                    )
                 if result != "UPDATE 1":
                     return False
 
@@ -937,6 +983,7 @@ class DocumentStore:
         order: Literal["desc", "asc"] = "desc",
         tag_prefix: str | None = None,
         source_ref_prefix: str | None = None,
+        created_after: "datetime | None" = None,
     ) -> list[dict[str, Any]]:
         """Get all documents for a user with pagination and filtering.
 
@@ -953,6 +1000,7 @@ class DocumentStore:
             order: Sort order for created_at ("desc" newest-first, "asc" oldest-first)
             tag_prefix: Optional tag prefix filter (matches docs with any tag starting with this)
             source_ref_prefix: Optional source_ref prefix filter (e.g., "project:chocksy/cems")
+            created_after: Optional datetime filter — only return docs created after this time
 
         Returns:
             List of document dicts
@@ -973,6 +1021,8 @@ class DocumentStore:
             )
         if source_ref_prefix:
             fb.add_param("source_ref LIKE ${} || '%'", source_ref_prefix)
+        if created_after:
+            fb.add_param("created_at >= ${}", created_after)
 
         limit_idx, offset_idx = fb.add_raw_values(limit, offset)
 

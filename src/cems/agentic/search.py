@@ -20,8 +20,9 @@ from cems.llm.client import get_client
 
 logger = logging.getLogger(__name__)
 
+from cems.agentic.rrf import RRF_K, reciprocal_rank_fusion
+
 DEFAULT_MODEL = "google/gemini-2.5-flash-lite"  # 1M context, $0.10/M input, $0.40/M output
-RRF_K = 60
 
 # ---------------------------------------------------------------------------
 # Search Agent Prompts
@@ -171,20 +172,6 @@ def _run_single_agent(
     return role, response
 
 
-def reciprocal_rank_fusion(
-    rankings: list[list[str]],
-    k: int = RRF_K,
-) -> list[str]:
-    """Merge multiple ranked lists using Reciprocal Rank Fusion."""
-    scores: dict[str, float] = {}
-    for ranking in rankings:
-        for rank_idx, item_id in enumerate(ranking):
-            if item_id not in scores:
-                scores[item_id] = 0.0
-            scores[item_id] += 1.0 / (k + rank_idx + 1)
-    return sorted(scores.keys(), key=lambda x: scores[x], reverse=True)
-
-
 # Categories that are always relevant regardless of project
 PROFILE_CATEGORIES = {"preferences", "guidelines", "gate-rules", "category-summary"}
 
@@ -272,32 +259,34 @@ async def _load_context_memories(
         b1 = _add_unique(project_docs)
         logger.debug(f"Agentic context bucket 1 (project={project}): {b1} memories")
 
-    # Bucket 2: PROFILE memories — no project, always relevant
-    for cat in PROFILE_CATEGORIES:
-        cat_docs = await document_store.get_all_documents(
+    # Bucket 2: PROFILE memories — no project, always relevant (parallel)
+    import asyncio as _aio
+    profile_results = await _aio.gather(*[
+        document_store.get_all_documents(
             user_id=user_id,
             scope=scope_filter,
             category=cat,
             limit=200,
         )
+        for cat in PROFILE_CATEGORIES
+    ])
+    for cat_docs in profile_results:
         _add_unique(cat_docs)
     b2_total = len(all_memories) - b1
     logger.debug(f"Agentic context bucket 2 (profile): {b2_total} memories")
 
     # Bucket 3: RECENT general memories — same project + no-project only
     # Excludes other-project memories to prevent noise
+    cutoff = datetime.now(UTC) - timedelta(days=RECENT_DAYS)
     recent_docs = await document_store.get_all_documents(
         user_id=user_id,
         scope=scope_filter,
         limit=500,
         order="desc",
+        created_after=cutoff,
     )
-    cutoff = datetime.now(UTC) - timedelta(days=RECENT_DAYS)
     recent_filtered = []
     for d in recent_docs:
-        created = d.get("created_at")
-        if not (created and hasattr(created, "timestamp") and created >= cutoff):
-            continue
         # Only include: same project, no project, or profile categories
         src = d.get("source_ref") or ""
         cat = d.get("category") or ""

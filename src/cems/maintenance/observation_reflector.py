@@ -138,7 +138,7 @@ class ObservationReflector:
                 doc_id = original.get("id")
                 if doc_id:
                     try:
-                        await doc_store.delete_document(doc_id, hard=False)
+                        await doc_store.delete_document(doc_id, hard=False, user_id=self.memory.config.user_id)
                         deleted_count += 1
                     except Exception as e:
                         logger.error(f"Failed to soft-delete observation {doc_id}: {e}")

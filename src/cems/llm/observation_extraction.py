@@ -11,7 +11,6 @@ Uses Gemini 2.5 Flash via OpenRouter for fast, cheap extraction.
 import logging
 
 from cems.lib.json_parsing import parse_json_list
-from cems.llm.client import get_client
 from cems.llm.learning_extraction import normalize_category
 
 logger = logging.getLogger(__name__)
@@ -128,78 +127,6 @@ Priority: "high" (decisions, preferences, goals, deadlines), "medium" (patterns,
 
 Each observation: 1-3 sentences, self-contained, readable without other context. Be as detailed as needed to preserve all relevant information.
 Only return the JSON array. No other text."""
-
-
-def extract_observations(
-    content: str,
-    project_context: str | None = None,
-    model: str | None = None,
-) -> list[dict]:
-    """Extract high-level observations from session content.
-
-    Args:
-        content: Session transcript content (text, not message array)
-        project_context: Human-readable project context (e.g., "chocksy/cems (main)")
-        model: Optional model override (defaults to Gemini 2.5 Flash)
-
-    Returns:
-        List of observation dicts with keys: content, priority, category
-    """
-    if not content or len(content) < 200:
-        logger.debug("Content too short for observation extraction")
-        return []
-
-    # Truncate to prevent OOM — 50K chars (~12.5K tokens) is plenty for observations
-    max_chars = 50_000
-    if len(content) > max_chars:
-        # Take first half + last half to capture both context and conclusions
-        half = max_chars // 2
-        original_len = len(content)
-        content = content[:half] + "\n\n[...truncated...]\n\n" + content[-half:]
-        logger.warning(f"Observation content truncated from {original_len} to ~{max_chars} chars")
-
-    client = get_client()
-    use_model = model or OBSERVER_MODEL
-
-    # Build dynamic project name instruction
-    if project_context:
-        project_name_instruction = (
-            f'Always mention the project/repo name in each observation so it\'s searchable without metadata:\n'
-            f'- BAD: "User is adding relevance scoring to the memory system"\n'
-            f'- GOOD: "User is adding relevance scoring to CEMS memory system ({project_context})"\n\n'
-            f'The project context "{project_context}" should appear naturally in each observation.'
-        )
-        display_project = project_context
-    else:
-        project_name_instruction = (
-            "Do not include a project name prefix. Focus on the content of the observation."
-        )
-        display_project = "a coding project"
-
-    system = OBSERVER_SYSTEM_PROMPT.format(
-        project_context=display_project,
-        project_name_instruction=project_name_instruction,
-        max_obs=MAX_OBSERVATIONS,
-    )
-
-    try:
-        response = client.complete(
-            prompt=f"Session content to observe:\n\n{content}",
-            system=system,
-            model=use_model,
-            temperature=0.3,
-            max_tokens=4000,
-            fast_route=False,  # Gemini not on Cerebras/Groq/SambaNova
-        )
-    except Exception as e:
-        logger.error(f"Observation extraction LLM call failed: {e}")
-        return []
-
-    if not response:
-        logger.warning("Empty response from observation extraction LLM")
-        return []
-
-    return _parse_observations(response)
 
 
 def _parse_observations(response: str) -> list[dict]:

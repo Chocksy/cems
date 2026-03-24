@@ -597,51 +597,33 @@ async def api_memory_profile(request: Request):
             "project_context": [],
         }
 
-        # 1. Fetch preferences (category: preferences)
-        prefs = await doc_store.get_documents_by_category(
-            user_id=user_id,
-            category="preferences",
-            limit=10,
-        )
+        # Fetch all profile components in parallel
+        import asyncio
+
+        queries = [
+            doc_store.get_documents_by_category(user_id=user_id, category="preferences", limit=10),
+            doc_store.get_documents_by_category(user_id=user_id, category="guidelines", limit=25),
+            doc_store.get_recent_documents(user_id=user_id, hours=24, limit=15, exclude_categories=["preferences", "guidelines", "gate-rules"]),
+            doc_store.get_documents_by_category(user_id=user_id, category="gate-rules", limit=50),
+        ]
+        if project:
+            queries.append(doc_store.get_documents_by_category(user_id=user_id, category="project", limit=10, source_ref_prefix=f"project:{project}"))
+
+        results = await asyncio.gather(*queries)
+
+        prefs, guidelines, recent, gate_rules = results[0], results[1], results[2], results[3]
         components["preferences"] = prefs
 
-        # 2. Fetch guidelines (category: guidelines)
-        guidelines = await doc_store.get_documents_by_category(
-            user_id=user_id,
-            category="guidelines",
-            limit=25,
-        )
         foundation_guidelines = [g for g in guidelines if _is_foundation_guideline(g)]
         non_foundation_guidelines = [g for g in guidelines if not _is_foundation_guideline(g)]
         components["foundation_guidelines"] = foundation_guidelines[:10]
         components["all_guidelines"] = (foundation_guidelines + non_foundation_guidelines)[:10]
 
-        # 3. Fetch recent memories (last 24h, excluding certain categories)
-        recent = await doc_store.get_recent_documents(
-            user_id=user_id,
-            hours=24,
-            limit=15,
-            exclude_categories=["preferences", "guidelines", "gate-rules"],
-        )
         components["recent_memories"] = recent
-
-        # 4. Gate rules count (for awareness, not full rules)
-        gate_rules = await doc_store.get_documents_by_category(
-            user_id=user_id,
-            category="gate-rules",
-            limit=50,
-        )
         components["gate_rules_count"] = len(gate_rules)
 
-        # 5. Project-specific memories if applicable
         if project:
-            project_memories = await doc_store.get_documents_by_category(
-                user_id=user_id,
-                category="project",
-                limit=10,
-                source_ref_prefix=f"project:{project}",
-            )
-            components["project_context"] = project_memories
+            components["project_context"] = results[4]
 
         # Build formatted context string
         context_parts = []
@@ -787,7 +769,7 @@ async def api_memory_get(request: Request):
 
         memory = get_memory()
         doc_store = await memory._ensure_document_store()
-        doc = await doc_store.get_document(memory_id)
+        doc = await doc_store.get_document(memory_id, user_id=memory.config.user_id)
 
         if not doc:
             return JSONResponse({"error": "Document not found"}, status_code=404)
@@ -1156,12 +1138,14 @@ async def api_memory_conflict_resolve(request: Request):
         doc_a_id = conflict["doc_a_id"]
         doc_b_id = conflict["doc_b_id"]
 
+        user_id = memory.config.user_id
+
         if resolution == "keep_a":
-            await doc_store.delete_document(doc_b_id, hard=False)
+            await doc_store.delete_document(doc_b_id, hard=False, user_id=user_id)
             await doc_store.resolve_conflict(conflict_id, "resolved")
 
         elif resolution == "keep_b":
-            await doc_store.delete_document(doc_a_id, hard=False)
+            await doc_store.delete_document(doc_a_id, hard=False, user_id=user_id)
             await doc_store.resolve_conflict(conflict_id, "resolved")
 
         elif resolution == "merge":
@@ -1177,7 +1161,7 @@ async def api_memory_conflict_resolve(request: Request):
                 )
                 if merged:
                     await memory.update_async(doc_a_id, merged)
-                    await doc_store.delete_document(doc_b_id, hard=False)
+                    await doc_store.delete_document(doc_b_id, hard=False, user_id=user_id)
                     await doc_store.resolve_conflict(conflict_id, "resolved")
                 else:
                     return JSONResponse(

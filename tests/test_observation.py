@@ -1,13 +1,10 @@
-"""Tests for observation extraction and category normalization."""
-
-import os
-from unittest.mock import MagicMock, patch
+"""Tests for observation parsing and category normalization."""
 
 import pytest
 
 
 class TestObservationExtraction:
-    """Tests for extract_observations and _parse_observations."""
+    """Tests for _parse_observations."""
 
     def test_parse_valid_observations(self):
         """Parse well-formed JSON array of observations."""
@@ -116,45 +113,6 @@ class TestObservationExtraction:
         assert _parse_observations("") == []
         assert _parse_observations("not json") == []
         assert _parse_observations("null") == []
-
-    def test_extract_observations_short_content_skipped(self):
-        """Content shorter than 200 chars is skipped entirely."""
-        from cems.llm.observation_extraction import extract_observations
-
-        result = extract_observations("short", project_context="test")
-        assert result == []
-
-    @patch.dict(os.environ, {"OPENROUTER_API_KEY": "test-key"})
-    @patch("cems.llm.client.OpenAI")
-    def test_extract_observations_calls_llm(self, mock_openai_class):
-        """extract_observations calls LLM with correct model and prompt."""
-        from cems.llm.observation_extraction import extract_observations
-
-        # Reset cached client
-        import cems.llm.client
-        cems.llm.client._client = None
-
-        mock_client = MagicMock()
-        mock_openai_class.return_value = mock_client
-
-        mock_response = MagicMock()
-        mock_response.choices = [MagicMock()]
-        mock_response.choices[0].message.content = '[{"content": "User is testing the observation system end to end", "priority": "high", "category": "observation"}]'
-        mock_client.chat.completions.create.return_value = mock_response
-
-        content = "A" * 300  # Must be > 200 chars
-        result = extract_observations(content, project_context="test/project (main)")
-
-        assert len(result) == 1
-        assert "observation system" in result[0]["content"]
-
-        # Verify model used
-        call_kwargs = mock_client.chat.completions.create.call_args[1]
-        assert call_kwargs["model"] == "google/gemini-2.5-flash"
-
-        # Cleanup
-        cems.llm.client._client = None
-
 
 class TestNormalizeCategory:
     """Tests for the normalize_category function."""

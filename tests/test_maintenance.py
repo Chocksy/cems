@@ -127,7 +127,7 @@ class TestConsolidationJob:
         assert result["duplicates_merged"] == 1
         assert result["llm_classifications"] == 0  # No LLM classify call
         mock_merge.assert_called_once()
-        doc_store.delete_document.assert_awaited_once_with("doc-2", hard=False)
+        doc_store.delete_document.assert_awaited_once_with("doc-2", hard=False, user_id=TEST_UUID)
 
     @patch("cems.maintenance.consolidation.classify_memory_pair")
     @patch("cems.maintenance.consolidation.merge_memory_contents")
@@ -574,7 +574,7 @@ class TestSummarizationJob:
         memory, doc_store, _ = mock_memory
         mock_summarize.return_value = "Summary of debugging tips"
 
-        # 20 days old: qualifies for compression (14d+) but not stale pruning (30d+)
+        # 20 days old: qualifies for compression (14d+)
         old_time = datetime.now(UTC) - timedelta(days=20)
         docs = [
             _make_doc(f"doc-{i}", f"Debugging tip {i}", category="debugging", created_at=old_time)
@@ -621,31 +621,6 @@ class TestSummarizationJob:
 
         assert result["categories_updated"] == 0
         mock_summarize.assert_not_called()
-
-    def test_summarization_prunes_stale(self, mock_memory):
-        """Soft-deletes documents older than stale_days config."""
-        from cems.maintenance.summarization import SummarizationJob
-
-        memory, doc_store, _ = mock_memory
-
-        stale_time = datetime.now(UTC) - timedelta(days=120)
-        recent_time = datetime.now(UTC) - timedelta(days=5)
-
-        docs = [
-            _make_doc("stale-1", "Old content", updated_at=stale_time, created_at=stale_time),
-            _make_doc("stale-2", "Old content 2", updated_at=stale_time, created_at=stale_time),
-            _make_doc("fresh-1", "New content", updated_at=recent_time, created_at=recent_time),
-        ]
-
-        doc_store.get_all_documents = AsyncMock(return_value=docs)
-        doc_store.delete_document = AsyncMock(return_value=True)
-
-        job = SummarizationJob(memory)
-        result = _run(job.run_async())
-
-        assert result["memories_pruned"] == 2
-        assert doc_store.delete_document.await_count == 2
-
 
 class TestReindexJob:
     """Tests for the async ReindexJob."""

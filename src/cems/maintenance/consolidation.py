@@ -161,7 +161,7 @@ class ConsolidationJob:
                 seen_doc_ids.add(chunk_doc_id)
 
                 # Fetch the candidate document
-                dup_doc = await doc_store.get_document(chunk_doc_id)
+                dup_doc = await doc_store.get_document(chunk_doc_id, user_id=self.config.user_id)
                 if not dup_doc:
                     continue
 
@@ -177,7 +177,7 @@ class ConsolidationJob:
                     if merged_content and merged_content != content:
                         await self.memory.update_async(doc_id, merged_content)
                         content = merged_content  # Update for subsequent merges in this loop
-                    await doc_store.delete_document(chunk_doc_id, hard=False)
+                    await doc_store.delete_document(chunk_doc_id, hard=False, user_id=self.config.user_id)
                     processed.add(chunk_doc_id)
                     merged_count += 1
                     continue
@@ -209,7 +209,7 @@ class ConsolidationJob:
                         if merged_content != content:
                             await self.memory.update_async(doc_id, merged_content)
                             content = merged_content  # Update for subsequent merges
-                        await doc_store.delete_document(chunk_doc_id, hard=False)
+                        await doc_store.delete_document(chunk_doc_id, hard=False, user_id=self.config.user_id)
                         processed.add(chunk_doc_id)
                         merged_count += 1
 

@@ -51,7 +51,7 @@ class CRUDMixin:
     async def _get_async(self: "CEMSMemory", memory_id: str) -> dict[str, Any] | None:
         """Async get from DocumentStore."""
         doc_store = await self._ensure_document_store()
-        result = await doc_store.get_document(memory_id)
+        result = await doc_store.get_document(memory_id, user_id=self.config.user_id)
         if result:
             return _doc_to_api_format(result)
         return None
@@ -130,6 +130,7 @@ class CRUDMixin:
             content=content,
             chunks=chunks,
             embeddings=embeddings,
+            user_id=self.config.user_id,
         )
 
         if success:
@@ -155,7 +156,7 @@ class CRUDMixin:
     ) -> dict[str, Any]:
         """Internal async delete with result dict."""
         doc_store = await self._ensure_document_store()
-        success = await doc_store.delete_document(memory_id, hard=hard)
+        success = await doc_store.delete_document(memory_id, hard=hard, user_id=self.config.user_id)
 
         action = "hard_deleted" if hard else "deleted"
         if success:

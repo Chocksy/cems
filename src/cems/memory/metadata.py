@@ -49,7 +49,7 @@ class MetadataMixin:
     async def get_metadata_async(self: "CEMSMemory", memory_id: str) -> MemoryMetadata | None:
         """Async get_metadata from DocumentStore."""
         doc_store = await self._ensure_document_store()
-        doc = await doc_store.get_document(memory_id)
+        doc = await doc_store.get_document(memory_id, user_id=self.config.user_id)
         if not doc:
             return None
 

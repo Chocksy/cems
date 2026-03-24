@@ -45,9 +45,10 @@ from cems.llm.session_summary_extraction import extract_session_summary
 # ---------------------------------------------------------------------------
 
 DATA_DIR = Path(__file__).parent / "data"
+from cems.agentic.rrf import RRF_K, reciprocal_rank_fusion
+
 DEFAULT_SEARCH_MODEL = "google/gemini-2.5-flash"
 DEFAULT_SUMMARY_MODEL = "google/gemini-2.5-flash"
-RRF_K = 60  # Standard RRF smoothing constant
 
 
 # ---------------------------------------------------------------------------
@@ -426,35 +427,6 @@ def run_search_agents(
         return []
 
     return reciprocal_rank_fusion(rankings, k=RRF_K)
-
-
-# ---------------------------------------------------------------------------
-# Rank Fusion
-# ---------------------------------------------------------------------------
-
-def reciprocal_rank_fusion(
-    rankings: list[list[str]],
-    k: int = 60,
-) -> list[str]:
-    """Merge multiple ranked lists using Reciprocal Rank Fusion.
-
-    For each item, score = sum(1 / (k + rank)) across all lists that contain it.
-
-    Args:
-        rankings: List of ranked session ID lists (one per agent).
-        k: Smoothing constant (standard=60).
-
-    Returns:
-        Merged list of session IDs sorted by descending RRF score.
-    """
-    scores: dict[str, float] = {}
-    for ranking in rankings:
-        for rank_idx, session_id in enumerate(ranking):
-            if session_id not in scores:
-                scores[session_id] = 0.0
-            scores[session_id] += 1.0 / (k + rank_idx + 1)
-
-    return sorted(scores.keys(), key=lambda x: scores[x], reverse=True)
 
 
 # ---------------------------------------------------------------------------

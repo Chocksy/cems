@@ -183,7 +183,7 @@ class ReindexJob:
                 doc_id = doc.get("id")
                 if doc_id:
                     try:
-                        await doc_store.delete_document(doc_id, hard=False)
+                        await doc_store.delete_document(doc_id, hard=False, user_id=self.config.user_id)
                         archived += 1
                     except Exception as e:
                         logger.error(f"Failed to archive document {doc_id}: {e}")
