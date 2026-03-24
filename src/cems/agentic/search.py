@@ -20,7 +20,7 @@ from cems.llm.client import get_client
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_MODEL = "x-ai/grok-4.1-fast"  # 2M context, $0.20/M input, $0.50/M output, 1.76s latency
+DEFAULT_MODEL = "google/gemini-2.5-flash-lite"  # 1M context, $0.10/M input, $0.40/M output
 RRF_K = 60
 
 # ---------------------------------------------------------------------------
@@ -153,28 +153,14 @@ def _run_single_agent(
     client = get_client()
 
     try:
-        # Build kwargs — disable reasoning for Grok (faster, cheaper, we just need JSON)
-        extra_body: dict = {}
-        if "grok" in model.lower():
-            extra_body["reasoning"] = {"enabled": False}
-
-        # Call LLM directly for extra_body support
-        messages = []
-        if system:
-            messages.append({"role": "system", "content": system})
-        messages.append({"role": "user", "content": user_prompt})
-
-        llm_kwargs: dict = {
-            "model": model,
-            "messages": messages,
-            "max_tokens": 1000,
-            "temperature": 0.1,
-        }
-        if extra_body:
-            llm_kwargs["extra_body"] = extra_body
-
-        resp = client._client.chat.completions.create(**llm_kwargs)
-        response = resp.choices[0].message.content or ""
+        response = client.complete(
+            prompt=user_prompt,
+            system=system,
+            model=model,
+            temperature=0.1,
+            max_tokens=1000,
+            fast_route=False,
+        )
     except Exception as e:
         logger.warning(f"Agentic search agent {role} failed: {e}")
         return role, []

@@ -92,6 +92,7 @@ class SummarizationJob:
         pruned = await self._prune_stale(doc_store, user_id, all_docs)
         never_shown_pruned = await self._prune_never_shown(doc_store, all_docs)
         noise_pruned = await self._prune_chronically_noisy(doc_store, all_docs)
+        consolidated = await self._consolidate_never_shown(doc_store, all_docs)
 
         result = {
             "categories_updated": categories_updated,
@@ -99,6 +100,7 @@ class SummarizationJob:
             "memories_pruned": pruned,
             "never_shown_pruned": never_shown_pruned,
             "noise_pruned": noise_pruned,
+            "never_shown_consolidated": consolidated,
             "old_memories_checked": len(old_docs),
         }
         logger.info(f"Summarization completed: {result}")
@@ -236,6 +238,10 @@ class SummarizationJob:
     # Minimum age before a never-shown memory can be pruned (days)
     NEVER_SHOWN_MIN_AGE_DAYS = 7
 
+    # Progressive consolidation: never-shown memories per project/category
+    # that exceed this count get consolidated into summary docs.
+    CONSOLIDATION_THRESHOLD = 20  # If >20 never-shown memories in one project+category, consolidate
+
     # Noise pruning thresholds
     NOISE_MIN_SIGNALS = 5      # Minimum total feedback signals to act
     NOISE_MAX_RATIO = 0.50     # Noise rate above which to prune (50%+)
@@ -280,6 +286,98 @@ class SummarizationJob:
             )
 
         return pruned
+
+    async def _consolidate_never_shown(
+        self, doc_store, all_docs: list[dict]
+    ) -> int:
+        """Progressively consolidate never-shown memories within the same project+category.
+
+        When a project+category has more than CONSOLIDATION_THRESHOLD never-shown
+        memories, condense them into fewer summary documents via LLM. This prevents
+        memory count from growing unboundedly for active projects.
+
+        The consolidation is progressive — each run halves the count until it
+        reaches the threshold.
+
+        Returns:
+            Number of documents consolidated (originals soft-deleted)
+        """
+        from collections import defaultdict
+
+        # Group never-shown memories by project + category
+        groups: dict[tuple[str, str], list[dict]] = defaultdict(list)
+        for d in all_docs:
+            if d.get("shown_count", 0) == 0 and d.get("category", "general") not in PROTECTED_CATEGORIES:
+                project = d.get("source_ref") or "(none)"
+                category = d.get("category", "general")
+                groups[(project, category)].append(d)
+
+        total_consolidated = 0
+        for (project, category), docs in groups.items():
+            if len(docs) <= self.CONSOLIDATION_THRESHOLD:
+                continue
+
+            # Take half of the oldest docs and consolidate them into one summary
+            docs.sort(key=lambda d: d.get("created_at", ""))
+            batch_size = len(docs) // 2
+            batch = docs[:batch_size]
+
+            if batch_size < 5:
+                continue
+
+            # Combine content for LLM summarization
+            combined = "\n\n".join(
+                d.get("content", "")[:500] for d in batch  # Cap per-doc to avoid huge prompts
+            )
+
+            try:
+                from cems.llm.client import get_client
+                client = get_client()
+                summary = client.complete(
+                    prompt=(
+                        f"Consolidate these {len(batch)} memory entries into a single, dense summary.\n"
+                        f"Keep all unique facts, decisions, and important details.\n"
+                        f"Remove redundancy. Preserve exact values (names, numbers, dates).\n"
+                        f"Category: {category}\n"
+                        f"Project: {project}\n\n"
+                        f"{combined}"
+                    ),
+                    system="You are a memory consolidation agent. Output a concise summary preserving all unique information.",
+                    model="google/gemini-2.5-flash-lite",
+                    temperature=0.1,
+                    max_tokens=2000,
+                    fast_route=False,
+                )
+
+                if not summary or len(summary) < 50:
+                    continue
+
+                # Store the consolidated summary via memory.add_async (handles chunking+embedding)
+                await self.memory.add_async(
+                    content=summary,
+                    category=category,
+                    source_ref=project if project != "(none)" else None,
+                    tags=[f"consolidated:{len(batch)}"],
+                )
+
+                # Soft-delete the originals
+                for d in batch:
+                    doc_id = d.get("id")
+                    if doc_id:
+                        await doc_store.delete_document(doc_id, hard=False)
+                        total_consolidated += 1
+
+                logger.info(
+                    f"Consolidated {len(batch)} never-shown '{category}' memories "
+                    f"in {project} into 1 summary"
+                )
+            except Exception as e:
+                logger.error(f"Failed to consolidate {project}/{category}: {e}")
+
+        if total_consolidated:
+            logger.info(f"Progressive consolidation: {total_consolidated} memories merged")
+
+        return total_consolidated
 
     async def _prune_chronically_noisy(
         self, doc_store, all_docs: list[dict]
