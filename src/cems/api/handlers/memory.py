@@ -774,18 +774,20 @@ async def api_memory_get(request: Request):
         if not doc:
             return JSONResponse({"error": "Document not found"}, status_code=404)
 
-        return JSONResponse({
-            "success": True,
-            "document": {
-                "id": doc["id"],
-                "content": doc.get("content", ""),
-                "category": doc.get("category", "general"),
-                "source_ref": doc.get("source_ref"),
-                "tags": doc.get("tags", []),
-                "created_at": str(doc.get("created_at", "")),
-                "updated_at": str(doc.get("updated_at", "")),
-            },
-        })
+        document = {
+            "id": doc["id"],
+            "content": doc.get("content", ""),
+            "category": doc.get("category", "general"),
+            "source_ref": doc.get("source_ref"),
+            "tags": doc.get("tags", []),
+            "created_at": str(doc.get("created_at", "")),
+            "updated_at": str(doc.get("updated_at", "")),
+        }
+        # Include full content when memory has been distilled
+        if doc.get("content_detailed"):
+            document["content_detailed"] = doc["content_detailed"]
+
+        return JSONResponse({"success": True, "document": document})
     except Exception as e:
         logger.error(f"API memory_get error: {e}")
         return JSONResponse({"error": "Internal server error"}, status_code=500)

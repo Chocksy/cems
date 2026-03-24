@@ -94,6 +94,7 @@ class WriteMixin:
         source_ref: str | None = None,
         timestamp: datetime | None = None,  # For historical imports
         title: str | None = None,
+        content_detailed: str | None = None,
     ) -> dict[str, Any]:
         """Async add - document-first ingest with chunking.
 
@@ -167,6 +168,7 @@ class WriteMixin:
                 source=source,
                 source_ref=source_ref,
                 tags=tags,
+                content_detailed=content_detailed,
             )
 
             if is_new:

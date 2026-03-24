@@ -58,16 +58,17 @@ class TestSchedulerInit:
         assert s.config is scheduler_config
         assert not hasattr(s, "memory")
 
-    def test_scheduler_registers_all_four_jobs(self, scheduler):
-        """Scheduler should register consolidation, reflection, summarization, reindex."""
+    def test_scheduler_registers_all_jobs(self, scheduler):
+        """Scheduler should register consolidation, distillation, reflection, summarization, reindex."""
         jobs = scheduler.get_jobs()
         job_ids = {j["id"] for j in jobs}
 
         assert "nightly_consolidation" in job_ids
+        assert "nightly_distillation" in job_ids
         assert "nightly_reflection" in job_ids
         assert "weekly_summarization" in job_ids
         assert "monthly_reindex" in job_ids
-        assert len(jobs) == 4
+        assert len(jobs) == 5
 
     def test_scheduler_start_stop(self, scheduler):
         """Scheduler should start and stop without errors."""

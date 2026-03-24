@@ -175,10 +175,18 @@ def memory_update(
 def memory_maintenance(
     job_type: str = "consolidation",
 ) -> str:
-    """Run memory maintenance jobs (consolidation, summarization, reindex, all)."""
+    """Run memory maintenance jobs (consolidation, distillation, summarization, reindex, all)."""
     return json.dumps(_request("POST", "/api/memory/maintenance", {
         "job_type": job_type,
     }))
+
+
+@mcp.tool()
+def memory_get(
+    memory_id: str,
+) -> str:
+    """Get full document content by ID. Returns content_detailed (original full text) when available, otherwise content."""
+    return json.dumps(_request("GET", f"/api/memory/get?id={memory_id}"))
 
 
 # ---- Resources ------------------------------------------------------------

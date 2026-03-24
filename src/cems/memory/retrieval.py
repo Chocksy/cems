@@ -76,6 +76,8 @@ def _serialize_results(selected: list[SearchResult]) -> list[dict[str, Any]]:
         if truncated:
             entry["truncated"] = True
             entry["full_length"] = len(r.content)
+        if r.has_detailed:
+            entry["has_detailed"] = True
         out.append(entry)
     return out
 

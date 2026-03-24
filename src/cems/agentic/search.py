@@ -429,7 +429,7 @@ async def agentic_search_async(
         # Compute a synthetic score based on RRF position (1.0 → 0.5 range)
         score = 1.0 - (i * 0.5 / max(len(merged_short_ids), 1))
 
-        result_list.append({
+        entry = {
             "memory_id": str(mem.get("id", "")),
             "content": mem.get("content", ""),
             "category": mem.get("category", ""),
@@ -438,7 +438,11 @@ async def agentic_search_async(
             "tags": mem.get("tags", []),
             "score": round(score, 3),
             "created_at": str(mem.get("created_at", "")),
-        })
+        }
+        if mem.get("content_detailed"):
+            entry["has_detailed"] = True
+            entry["full_length"] = len(mem["content_detailed"])
+        result_list.append(entry)
 
     return {
         "results": result_list,

@@ -154,7 +154,8 @@ class SummarizationJob:
         """
         from cems.llm import summarize_memories
 
-        contents = [d.get("content", "") for d in docs if d.get("content")]
+        # Prefer content_detailed (full original) over content (may be condensed)
+        contents = [d.get("content_detailed") or d.get("content", "") for d in docs if d.get("content")]
         if not contents:
             logger.debug(f"No content found for category {category}")
             return
@@ -227,8 +228,10 @@ class SummarizationJob:
                 continue
 
             # Combine content for LLM summarization
+            # Prefer content_detailed (full original) over content (may be condensed)
             combined = "\n\n".join(
-                d.get("content", "")[:500] for d in batch  # Cap per-doc to avoid huge prompts
+                (d.get("content_detailed") or d.get("content", ""))[:500]
+                for d in batch  # Cap per-doc to avoid huge prompts
             )
 
             try:

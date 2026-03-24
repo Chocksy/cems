@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 # Column definitions for documents
 DOCUMENT_COLUMNS = """
     id, user_id, team_id, scope, category, title, source, source_ref,
-    tags, content, content_hash, content_bytes, created_at, updated_at,
+    tags, content, content_detailed, content_hash, content_bytes, created_at, updated_at,
     deleted_at, shown_count, last_shown_at, relevant_count, noise_count, noise_snippet_count
 """
 
@@ -151,11 +151,12 @@ class DocumentStore:
         source: str | None = None,
         source_ref: str | None = None,
         tags: list[str] | None = None,
+        content_detailed: str | None = None,
     ) -> tuple[str, bool]:
         """Add a document with its chunks.
 
         Args:
-            content: Full document content
+            content: Full document content (or condensed summary if content_detailed provided)
             chunks: Pre-chunked content
             embeddings: Embedding for each chunk (must match chunks length)
             user_id: User ID
@@ -166,6 +167,7 @@ class DocumentStore:
             source: Source identifier
             source_ref: Source reference (e.g., project:org/repo)
             tags: Optional tags
+            content_detailed: Optional full content when content is a condensed summary
 
         Returns:
             Tuple of (document_id, is_new). is_new is False if document was deduplicated.
@@ -225,8 +227,9 @@ class DocumentStore:
                         """
                         INSERT INTO memory_documents (
                             id, user_id, team_id, scope, category, title,
-                            source, source_ref, tags, content, content_hash, content_bytes
-                        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+                            source, source_ref, tags, content, content_detailed,
+                            content_hash, content_bytes
+                        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
                         """,
                         doc_id,
                         user_uuid,
@@ -238,6 +241,7 @@ class DocumentStore:
                         source_ref,
                         tags or [],
                         content,
+                        content_detailed,
                         doc_hash,
                         doc_bytes,
                     )
@@ -287,6 +291,7 @@ class DocumentStore:
             "source_ref": row["source_ref"],
             "tags": row["tags"] or [],
             "content": row["content"],
+            "content_detailed": row["content_detailed"],
             "content_hash": row["content_hash"],
             "content_bytes": row["content_bytes"],
             "created_at": row["created_at"],
@@ -379,6 +384,45 @@ class DocumentStore:
             result = await conn.execute(
                 "UPDATE memory_documents SET deleted_at = NULL "
                 "WHERE id = $1 AND user_id = $2 AND deleted_at IS NOT NULL",
+                UUID(document_id),
+                UUID(user_id),
+            )
+            return result == "UPDATE 1"
+
+    async def distill_document(
+        self,
+        document_id: str,
+        user_id: str,
+        content: str,
+        content_detailed: str,
+    ) -> bool:
+        """Atomically update content (condensed) and content_detailed (full) in one transaction.
+
+        Used by the distillation job to replace verbose content with a terse summary
+        while preserving the original in content_detailed.
+
+        Args:
+            document_id: The document UUID
+            user_id: Owner user ID (IDOR protection)
+            content: New condensed summary (~500 chars)
+            content_detailed: Full original content to preserve
+        """
+        pool = await self._get_pool()
+        doc_hash = content_hash(content)
+        doc_bytes = len(content.encode("utf-8"))
+
+        async with pool.acquire() as conn:
+            result = await conn.execute(
+                """
+                UPDATE memory_documents
+                SET content = $1, content_detailed = $2,
+                    content_hash = $3, content_bytes = $4
+                WHERE id = $5 AND user_id = $6 AND deleted_at IS NULL
+                """,
+                content,
+                content_detailed,
+                doc_hash,
+                doc_bytes,
                 UUID(document_id),
                 UUID(user_id),
             )
@@ -612,7 +656,7 @@ class DocumentStore:
                         """
                         UPDATE memory_documents
                         SET content = $1, content_hash = $2, content_bytes = $3,
-                            updated_at = NOW()
+                            content_detailed = NULL, updated_at = NOW()
                         WHERE id = $4 AND user_id = $5 AND deleted_at IS NULL
                         """,
                         content, doc_hash, doc_bytes, doc_uuid, UUID(user_id),
@@ -622,7 +666,7 @@ class DocumentStore:
                         """
                         UPDATE memory_documents
                         SET content = $1, content_hash = $2, content_bytes = $3,
-                            updated_at = NOW()
+                            content_detailed = NULL, updated_at = NOW()
                         WHERE id = $4 AND deleted_at IS NULL
                         """,
                         content, doc_hash, doc_bytes, doc_uuid,

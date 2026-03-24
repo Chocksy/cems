@@ -8,6 +8,7 @@ from apscheduler.triggers.cron import CronTrigger
 
 from cems.lib.async_utils import run_async_in_thread as _run_async
 from cems.maintenance.consolidation import ConsolidationJob
+from cems.maintenance.distillation import DistillationJob
 from cems.maintenance.observation_reflector import ObservationReflector
 from cems.maintenance.reindex import ReindexJob
 from cems.maintenance.summarization import SummarizationJob
@@ -22,8 +23,9 @@ logger = logging.getLogger(__name__)
 class CEMSScheduler:
     """Background scheduler for CEMS maintenance jobs.
 
-    Manages four scheduled maintenance jobs that run per-user:
+    Manages five scheduled maintenance jobs that run per-user:
     - Nightly (3 AM): Consolidation - merge duplicates
+    - Nightly (3:15 AM): Distillation - condense verbose memories to ~500 char summaries
     - Nightly (3:30 AM): Reflection - consolidate overlapping observations
     - Weekly (Sunday 4 AM): Summarization - compress old memories, consolidate never-shown
     - Monthly (1st 5 AM): Re-indexing - rebuild embeddings, archive dead memories
@@ -57,6 +59,14 @@ class CEMSScheduler:
             CronTrigger(hour=self.config.nightly_hour),
             id="nightly_consolidation",
             name="Nightly Consolidation",
+            replace_existing=True,
+        )
+
+        self._scheduler.add_job(
+            self._run_distillation,
+            CronTrigger(hour=self.config.nightly_hour, minute=15),
+            id="nightly_distillation",
+            name="Nightly Distillation",
             replace_existing=True,
         )
 
@@ -112,6 +122,9 @@ class CEMSScheduler:
     def _run_consolidation(self) -> None:
         self._run_for_all_users("consolidation")
 
+    def _run_distillation(self) -> None:
+        self._run_for_all_users("distillation")
+
     def _run_reflection(self) -> None:
         self._run_for_all_users("reflect")
 
@@ -147,7 +160,7 @@ class CEMSScheduler:
         Returns:
             Job result dict (single user) or dict of user_id -> result (all users)
         """
-        valid_jobs = {"consolidation", "summarization", "reindex", "reflect"}
+        valid_jobs = {"consolidation", "distillation", "summarization", "reindex", "reflect"}
         if job_type not in valid_jobs:
             raise ValueError(f"Unknown job type: {job_type}. Use: {sorted(valid_jobs)}")
 
@@ -173,6 +186,7 @@ class CEMSScheduler:
         """Run a specific job type with a given memory instance."""
         jobs = {
             "consolidation": lambda: ConsolidationJob(memory).run_async(**kwargs),
+            "distillation": lambda: DistillationJob(memory).run_async(),
             "summarization": lambda: SummarizationJob(memory).run_async(),
             "reindex": lambda: ReindexJob(memory).run_async(),
             "reflect": lambda: ObservationReflector(memory).run_async(),

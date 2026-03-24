@@ -47,10 +47,11 @@ When this command is invoked:
    cems search "<query>" --limit <N>
    ```
 
-5. **For truncated results**, fetch full content via MCP:
+5. **For results with `has_detailed: true` or `truncated: true`**, fetch full content via MCP:
    ```
    mcp__cems__memory_get with memory_id
    ```
+   The response includes `content_detailed` (original full text) when the memory has been distilled.
 
 6. **Present results**:
    ```

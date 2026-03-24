@@ -55,6 +55,7 @@ class SearchResult(BaseModel):
     score: float
     scope: MemoryScope
     metadata: MemoryMetadata | None = None
+    has_detailed: bool = False  # True when content_detailed exists (distilled memory)
 
 
 class CategorySummary(BaseModel):
