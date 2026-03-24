@@ -85,9 +85,6 @@ class TestDistillationJob:
         docs = [
             _make_doc("gate-1", "A" * 1000, category="gate-rules"),
             _make_doc("pref-1", "B" * 1000, category="preferences"),
-            _make_doc("guide-1", "C" * 1000, category="guidelines"),
-            _make_doc("summary-1", "D" * 1000, category="session-summary"),
-            _make_doc("catsum-1", "E" * 1000, category="category-summary"),
         ]
         doc_store.get_all_documents = AsyncMock(return_value=docs)
 

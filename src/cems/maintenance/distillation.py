@@ -23,10 +23,11 @@ DISTILLATION_THRESHOLD = 500  # chars
 # Cap content_detailed growth (condensed if exceeded)
 DETAILED_CAP = 10_000  # chars
 
-# Categories that should never be distilled
+# Categories that should never be distilled (user-controlled stable memories)
+# Only gate-rules and preferences are truly stable — session-summary and
+# category-summary are prime distillation targets (710+ at 1.5K chars each).
 PROTECTED_CATEGORIES = {
-    "gate-rules", "guidelines", "preferences",
-    "category-summary", "session-summary",
+    "gate-rules", "preferences",
 }
 
 DISTILLATION_MODEL = "google/gemini-2.5-flash-lite"
