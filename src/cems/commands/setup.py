@@ -493,10 +493,23 @@ def _install_claude_hooks(data_path: Path, api_url: str, team_id: str | None = N
 
 
 def _discover_mcp_url(api_url: str) -> str:
-    """Discover MCP URL from server, fall back to api_url + /mcp."""
+    """Get MCP URL: credentials override > server discovery > fallback.
+
+    Priority:
+    1. CEMS_MCP_URL from ~/.cems/credentials (user override, survives updates)
+    2. Server discovery endpoint (/api/config/setup)
+    3. Fallback: api_url + /mcp
+    """
     import urllib.request
     import urllib.error
 
+    # 1. Check credentials for explicit override
+    creds = _read_credentials()
+    creds_mcp = creds.get("CEMS_MCP_URL", "")
+    if creds_mcp:
+        return creds_mcp
+
+    # 2. Server discovery
     discovery_url = api_url.rstrip("/") + "/api/config/setup"
     try:
         req = urllib.request.Request(discovery_url, method="GET")
@@ -509,7 +522,7 @@ def _discover_mcp_url(api_url: str) -> str:
     except (urllib.error.URLError, json.JSONDecodeError, OSError):
         pass
 
-    # Fallback: assume MCP at same host
+    # 3. Fallback: assume MCP at same host
     return api_url.rstrip("/") + "/mcp"
 
 
