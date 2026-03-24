@@ -522,8 +522,14 @@ def _discover_mcp_url(api_url: str) -> str:
     except (urllib.error.URLError, json.JSONDecodeError, OSError):
         pass
 
-    # 3. Fallback: assume MCP at same host
-    return api_url.rstrip("/") + "/mcp"
+    # 3. Fallback: derive MCP URL from API URL
+    # API: https://cems.example.com → MCP: https://mcp-cems.example.com/mcp
+    # API: http://localhost:8765 → MCP: http://localhost:8766/mcp (local dev)
+    from urllib.parse import urlparse
+    parsed = urlparse(api_url.rstrip("/"))
+    if parsed.hostname in ("localhost", "127.0.0.1"):
+        return f"{parsed.scheme}://{parsed.hostname}:8766/mcp"
+    return f"{parsed.scheme}://mcp-{parsed.hostname}/mcp"
 
 
 def _register_claude_mcp_server(api_url: str, team_id: str | None = None) -> None:
