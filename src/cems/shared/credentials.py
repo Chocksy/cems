@@ -13,7 +13,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-_HOME = str(Path.home())
+_HOME = str(Path.home().resolve())  # Resolve symlinks for consistent walk-up comparison
 _DEFAULT_CREDENTIALS_PATH = str(Path.home() / ".cems" / "credentials")
 
 

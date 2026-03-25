@@ -20,10 +20,11 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-_HOME = str(Path.home())
+_HOME = str(Path.home().resolve())  # Resolve symlinks for consistent walk-up comparison
 _DEFAULT_CREDENTIALS_PATH = str(Path.home() / ".cems" / "credentials")
 
-# Cache keyed by resolved file path (supports per-project resolution)
+# Cache keyed by resolved file path (supports per-project resolution).
+# Tests may set this to None to force reload — guard writes accordingly.
 _cache: dict[str, dict[str, str]] = {}
 
 
@@ -34,7 +35,7 @@ def _get_credentials_path() -> Path:
 
 def _parse_credentials_file(path: str) -> dict[str, str]:
     """Parse a credentials file as key=value pairs."""
-    if _cache and path in _cache:
+    if _cache is not None and path in _cache:
         return _cache[path]
     result = {}
     try:
@@ -80,7 +81,9 @@ def resolve_credentials(cwd: str | None = None) -> dict[str, str]:
 
     Returns dict with all keys found (CEMS_API_URL, CEMS_API_KEY, etc.)
     """
-    # 1. Check env vars — if both URL and key are set, use them
+    # 1. Check env vars — require BOTH URL and key to be set.
+    # Partial env (e.g., URL in env, key in file) is intentionally not supported
+    # to avoid silently mixing credentials from different sources.
     env_url = os.environ.get("CEMS_API_URL", "")
     env_key = os.environ.get("CEMS_API_KEY", "")
     if env_url and env_key:
@@ -122,10 +125,6 @@ class CEMSClient:
         if url and key:
             return cls(url, key)
         return None
-
-    @property
-    def configured(self) -> bool:
-        return bool(self.url and self.key)
 
     def get(self, path: str, **kwargs):
         """HTTP GET to CEMS API. Returns httpx.Response."""

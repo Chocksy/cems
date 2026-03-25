@@ -395,24 +395,24 @@ class TestSetupProject:
 ## Acceptance Criteria
 
 ### Functional
-- [ ] `resolve_credentials(cwd)` walks up from CWD, stops before `$HOME`, falls back to global
-- [ ] Env vars override project file; project file overrides global
-- [ ] All 4 API-calling hooks use CWD-based resolution (no module-level creds)
-- [ ] Observer daemon routes observations to correct server based on session CWD
-- [ ] Per-URL failure isolation in daemon (one server down doesn't affect others)
-- [ ] Signal files include `cwd` field
-- [ ] `cems setup --project --api-url URL --api-key KEY` creates `.cems/credentials` in CWD
-- [ ] `.cems/` added to `.gitignore` during project setup
-- [ ] `cems env` shows resolved credentials for current directory
-- [ ] Cache keys include URL hash to prevent cross-server contamination
-- [ ] Version skew warning during `cems setup --project`
-- [ ] Backward compatible: projects without `.cems/credentials` work exactly as before
+- [x] `resolve_credentials(cwd)` walks up from CWD, stops before `$HOME`, falls back to global
+- [x] Env vars override project file; project file overrides global
+- [x] All 4 API-calling hooks use CWD-based resolution (no module-level creds)
+- [x] Observer daemon routes observations to correct server based on session CWD
+- [ ] Per-URL failure isolation in daemon (deferred — global failure counter sufficient for 1-2 projects)
+- [x] Signal files include `cwd` field
+- [x] `cems setup --project --api-url URL --api-key KEY` creates `.cems/credentials` in CWD
+- [x] `.cems/` added to `.gitignore` during project setup
+- [x] `cems env` shows resolved credentials for current directory
+- [ ] Cache keys include URL hash to prevent cross-server contamination (deferred — project-based keys sufficient for 1-2 projects)
+- [x] Version skew warning during `cems setup --project`
+- [x] Backward compatible: projects without `.cems/credentials` work exactly as before
 
 ### Non-Functional
-- [ ] `.cems/credentials` created with `chmod 600`
-- [ ] Partial project credentials (missing URL or key) logged and skipped, not crash
-- [ ] Hook latency increase < 5ms (filesystem walk is fast, ~3-4 stat calls typical)
-- [ ] Daemon client pool memory bounded (1-2 entries expected, pool is a simple dict)
+- [x] `.cems/credentials` created with `chmod 600`
+- [x] Partial project credentials (missing URL or key) logged and skipped, not crash
+- [x] Hook latency increase < 5ms (filesystem walk is fast, ~3-4 stat calls typical)
+- [x] Daemon client pool memory bounded (1-2 entries expected, pool is a simple dict)
 
 ## Dependencies & Risks
 
