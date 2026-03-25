@@ -77,22 +77,36 @@ class TestDistillationJob:
         assert result["distilled"] == 0
         doc_store.distill_document.assert_not_awaited()
 
-    def test_skips_protected_categories(self, mock_memory):
-        """Protected categories are never distilled."""
+    @patch("cems.maintenance.distillation.get_client")
+    def test_distills_all_categories(self, mock_get_client, mock_memory):
+        """All categories are eligible for distillation — only pinned tag protects."""
         from cems.maintenance.distillation import DistillationJob
 
         memory, doc_store = mock_memory
+        condensed = "Terse summary."
+        mock_client = MagicMock()
+        mock_client.complete.return_value = condensed
+        mock_get_client.return_value = mock_client
+
         docs = [
             _make_doc("gate-1", "A" * 1000, category="gate-rules"),
             _make_doc("pref-1", "B" * 1000, category="preferences"),
+            _make_doc("session-1", "C" * 1000, category="session-summary"),
+            _make_doc("pinned-1", "D" * 1000, category="general"),
         ]
+        # Mark last one as pinned
+        docs[3]["tags"] = ["pinned"]
+
         doc_store.get_all_documents = AsyncMock(return_value=docs)
+        doc_store.distill_document = AsyncMock(return_value=True)
 
         job = DistillationJob(memory)
         result = _run(job.run_async())
 
-        assert result["candidates"] == 0
-        doc_store.distill_document.assert_not_awaited()
+        # 3 candidates (gate-rules, preferences, session-summary), pinned skipped
+        assert result["candidates"] == 3
+        assert result["distilled"] == 3
+        assert doc_store.distill_document.await_count == 3
 
     @patch("cems.maintenance.distillation.get_client")
     def test_distills_verbose_content(self, mock_get_client, mock_memory):

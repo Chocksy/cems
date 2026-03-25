@@ -23,12 +23,10 @@ DISTILLATION_THRESHOLD = 500  # chars
 # Cap content_detailed growth (condensed if exceeded)
 DETAILED_CAP = 10_000  # chars
 
-# Categories that should never be distilled (user-controlled stable memories)
-# Only gate-rules and preferences are truly stable — session-summary and
-# category-summary are prime distillation targets (710+ at 1.5K chars each).
-PROTECTED_CATEGORIES = {
-    "gate-rules", "preferences",
-}
+# No category-based protection for distillation — all categories are eligible.
+# Only the 'pinned' tag protects individual memories from condensation.
+# (Summarization has its own PROTECTED_CATEGORIES for deletion/merging,
+# but that's a different concern — distillation preserves originals in content_detailed.)
 
 DISTILLATION_MODEL = "google/gemini-2.5-flash-lite"
 
@@ -88,11 +86,10 @@ class DistillationJob:
         # Oldest first so we distill the oldest content first
         all_docs = await doc_store.get_all_documents(user_id, limit=2000, order="asc")
 
-        # Find candidates: content > threshold, not protected category, not pinned
+        # Find candidates: content > threshold and not pinned
         candidates = [
             d for d in all_docs
             if len(d.get("content", "")) > DISTILLATION_THRESHOLD
-            and d.get("category", "general") not in PROTECTED_CATEGORIES
             and "pinned" not in (d.get("tags") or [])
         ]
 
