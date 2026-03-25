@@ -158,6 +158,14 @@ def get_cems_key(cwd: str | None = None) -> str:
     return resolve_credentials(cwd).get("CEMS_API_KEY", "")
 
 
+def get_search_mode(cwd: str | None = None) -> str:
+    """Get CEMS search mode with optional CWD-based project resolution.
+
+    Returns "auto" (default), "agentic", "vector", or "hybrid".
+    """
+    return resolve_credentials(cwd).get("CEMS_SEARCH_MODE", "")
+
+
 def get_credentials_env(cwd: str | None = None) -> dict[str, str]:
     """Get a dict of CEMS env vars suitable for subprocess.Popen(env=...).
 
@@ -166,7 +174,7 @@ def get_credentials_env(cwd: str | None = None) -> dict[str, str]:
     """
     env = dict(os.environ)
     creds = resolve_credentials(cwd)
-    for key in ("CEMS_API_URL", "CEMS_API_KEY"):
+    for key in ("CEMS_API_URL", "CEMS_API_KEY", "CEMS_SEARCH_MODE"):
         if not env.get(key) and key in creds:
             env[key] = creds[key]
     return env

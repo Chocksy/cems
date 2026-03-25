@@ -36,46 +36,28 @@ logger = logging.getLogger(__name__)
 class CredentialResolver:
     """Resolves CEMS credentials per-session CWD with caching.
 
-    Walks up from session CWD to find per-project .cems/credentials.
-    Falls back to global ~/.cems/credentials. Caches resolved (url, key)
-    pairs per CWD to avoid repeated filesystem walks.
+    Delegates walk-up and parsing to cems.config.credentials (shared module).
+    Adds per-CWD caching and (url, key) tuple interface for the daemon.
 
     For the daemon, file takes priority over env vars (env may be stale
     for a long-running process).
     """
 
     def __init__(self):
+        from cems.shared.credentials import parse_credentials_file
         self._cache: dict[str, tuple[str, str]] = {}  # cwd -> (url, key)
-        self._home = str(Path.home())
         # Load global credentials (the default)
-        global_creds = self._parse_file(
+        global_creds = parse_credentials_file(
             str(Path.home() / ".cems" / "credentials")
         )
         self.default_url = global_creds.get("CEMS_API_URL") or os.getenv("CEMS_API_URL", "")
         self.default_key = global_creds.get("CEMS_API_KEY") or os.getenv("CEMS_API_KEY", "")
 
-    def _parse_file(self, path: str) -> dict[str, str]:
-        """Parse a dotenv credentials file."""
-        result = {}
-        try:
-            p = Path(path)
-            if p.is_file():
-                for line in p.read_text().splitlines():
-                    line = line.strip()
-                    if line and not line.startswith("#") and "=" in line:
-                        k, _, v = line.partition("=")
-                        k, v = k.strip(), v.strip().strip("'\"")
-                        if k and v:
-                            result[k] = v
-        except OSError:
-            pass
-        return result
-
     def resolve(self, cwd: str = "") -> tuple[str, str]:
         """Resolve (api_url, api_key) for a session CWD.
 
-        Walks up from CWD looking for .cems/credentials, stops before $HOME.
-        Falls back to global credentials.
+        Delegates walk-up to shared find_project_credentials().
+        Caches results per CWD.
         """
         if not cwd:
             return self.default_url, self.default_key
@@ -83,23 +65,15 @@ class CredentialResolver:
         if cwd in self._cache:
             return self._cache[cwd]
 
-        # Walk up looking for project .cems/credentials
-        try:
-            path = Path(cwd).resolve()
-        except (OSError, ValueError):
-            self._cache[cwd] = (self.default_url, self.default_key)
-            return self.default_url, self.default_key
-
-        while str(path) != self._home and path != path.parent:
-            project_creds = path / ".cems" / "credentials"
-            if project_creds.is_file():
-                creds = self._parse_file(str(project_creds))
-                url = creds.get("CEMS_API_URL", "")
-                key = creds.get("CEMS_API_KEY", "")
-                if url and key:
-                    self._cache[cwd] = (url, key)
-                    return url, key
-            path = path.parent
+        from cems.shared.credentials import find_project_credentials, parse_credentials_file
+        project_path = find_project_credentials(cwd)
+        if project_path:
+            creds = parse_credentials_file(project_path)
+            url = creds.get("CEMS_API_URL", "")
+            key = creds.get("CEMS_API_KEY", "")
+            if url and key:
+                self._cache[cwd] = (url, key)
+                return url, key
 
         # Global fallback
         self._cache[cwd] = (self.default_url, self.default_key)

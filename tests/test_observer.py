@@ -14,7 +14,6 @@ def _test_resolver() -> CredentialResolver:
     """Create a resolver that returns fixed test credentials."""
     r = CredentialResolver.__new__(CredentialResolver)
     r._cache = {}
-    r._home = str(Path.home())
     r.default_url = "http://localhost:8765"
     r.default_key = "test-key"
     return r

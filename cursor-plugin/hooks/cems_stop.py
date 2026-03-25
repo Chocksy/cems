@@ -20,7 +20,11 @@ from pathlib import Path
 
 
 def write_signal(session_id: str, signal_type: str, cwd: str = "") -> None:
-    """Write a signal file for the observer daemon."""
+    """Write a signal file for the observer daemon.
+
+    Inlined from cems.observer.signals — hooks run standalone via uv and
+    cannot import from the cems package.
+    """
     signals_dir = Path.home() / ".cems" / "observer" / "signals"
     signals_dir.mkdir(parents=True, exist_ok=True)
     signal_file = signals_dir / f"{session_id}.json"

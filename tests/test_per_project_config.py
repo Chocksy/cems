@@ -172,41 +172,28 @@ class TestCEMSClient:
 class TestCredentialResolver:
     """Tests for the daemon's CredentialResolver."""
 
-    def _make_resolver(self, tmp_path, global_url="https://global.cems.io", global_key="gkey"):
-        """Create a resolver with a fake global credentials file."""
-        global_creds = tmp_path / "global_creds"
-        global_creds.write_text(
-            f"CEMS_API_URL={global_url}\n"
-            f"CEMS_API_KEY={global_key}\n"
-        )
-
+    def _make_resolver(self, global_url="https://global.cems.io", global_key="gkey"):
+        """Create a resolver that returns fixed global credentials."""
         from cems.observer.daemon import CredentialResolver
-        with patch.dict(os.environ, {}, clear=True):
-            r = CredentialResolver.__new__(CredentialResolver)
-            r._cache = {}
-            r._home = str(tmp_path / "fakehome")  # Ensure walk-up stops before this
-            r.default_url = global_url
-            r.default_key = global_key
+        r = CredentialResolver.__new__(CredentialResolver)
+        r._cache = {}
+        r.default_url = global_url
+        r.default_key = global_key
         return r
 
-    def test_resolve_without_cwd_returns_global(self, tmp_path):
+    def test_resolve_without_cwd_returns_global(self):
         """Empty CWD returns global credentials."""
-        resolver = self._make_resolver(tmp_path)
+        resolver = self._make_resolver()
         url, key = resolver.resolve("")
         assert url == "https://global.cems.io"
         assert key == "gkey"
 
     def test_resolve_with_project_cwd(self, tmp_path):
         """CWD in a project with .cems/credentials returns project creds."""
-        # Set up resolver with fakehome above tmp_path
-        from cems.observer.daemon import CredentialResolver
-        r = CredentialResolver.__new__(CredentialResolver)
-        r._cache = {}
-        r._home = str(tmp_path)  # Walk-up stops at tmp_path
-        r.default_url = "https://global.cems.io"
-        r.default_key = "gkey"
+        resolver = self._make_resolver()
 
-        # Create project credentials under tmp_path
+        # Create project credentials under tmp_path (walk-up will find them
+        # since tmp_path is below $HOME)
         project = tmp_path / "projects" / "hubstaff"
         project.mkdir(parents=True)
         (project / ".cems").mkdir()
@@ -215,27 +202,23 @@ class TestCredentialResolver:
             "CEMS_API_KEY=hubstaff_key\n"
         )
 
-        url, key = r.resolve(str(project / "src" / "deep"))
+        with patch.dict(os.environ, {}, clear=True):
+            url, key = resolver.resolve(str(project / "src" / "deep"))
         assert url == "https://hubstaff.cems.io"
         assert key == "hubstaff_key"
 
-    def test_resolve_caches_per_cwd(self, tmp_path):
+    def test_resolve_caches_per_cwd(self):
         """Same CWD returns cached result without re-walking."""
-        resolver = self._make_resolver(tmp_path)
+        resolver = self._make_resolver()
 
-        url1, key1 = resolver.resolve("/some/path")
-        url2, key2 = resolver.resolve("/some/path")
+        url1, _ = resolver.resolve("/some/path")
+        url2, _ = resolver.resolve("/some/path")
         assert url1 == url2
         assert "/some/path" in resolver._cache
 
     def test_per_url_isolation(self, tmp_path):
         """Different projects resolve to different servers."""
-        from cems.observer.daemon import CredentialResolver
-        r = CredentialResolver.__new__(CredentialResolver)
-        r._cache = {}
-        r._home = str(tmp_path)
-        r.default_url = "https://global.cems.io"
-        r.default_key = "gkey"
+        resolver = self._make_resolver()
 
         # Project A
         proj_a = tmp_path / "projects" / "alpha"
@@ -253,8 +236,9 @@ class TestCredentialResolver:
             "CEMS_API_URL=https://beta.cems.io\nCEMS_API_KEY=bkey\n"
         )
 
-        url_a, _ = r.resolve(str(proj_a))
-        url_b, _ = r.resolve(str(proj_b))
+        with patch.dict(os.environ, {}, clear=True):
+            url_a, _ = resolver.resolve(str(proj_a))
+            url_b, _ = resolver.resolve(str(proj_b))
 
         assert url_a == "https://alpha.cems.io"
         assert url_b == "https://beta.cems.io"
