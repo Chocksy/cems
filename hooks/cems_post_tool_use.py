@@ -36,12 +36,9 @@ from pathlib import Path
 import httpx
 
 sys.path.insert(0, str(Path(__file__).parent))
-from utils.credentials import get_cems_key, get_cems_url
+from utils.credentials import CEMSClient
 from utils.hook_logger import log_hook_event
 from utils.project import get_project_id
-
-CEMS_API_URL = get_cems_url()
-CEMS_API_KEY = get_cems_key()
 
 # Tools that might produce learnable events
 LEARNABLE_TOOLS = {
@@ -162,6 +159,7 @@ def extract_tool_output_summary(tool_response: dict) -> str:
 
 
 def send_to_cems(
+    client: CEMSClient,
     tool_name: str,
     tool_input: dict,
     tool_output: str,
@@ -170,9 +168,6 @@ def send_to_cems(
     cwd: str,
 ) -> bool:
     """Send tool learning to CEMS API."""
-    if not CEMS_API_URL or not CEMS_API_KEY:
-        return False
-
     try:
         payload = {
             "tool_name": tool_name,
@@ -188,12 +183,7 @@ def send_to_cems(
         if project:
             payload["source_ref"] = f"project:{project}"
 
-        response = httpx.post(
-            f"{CEMS_API_URL}/api/tool/learning",
-            json=payload,
-            headers={"Authorization": f"Bearer {CEMS_API_KEY}"},
-            timeout=10.0,  # Allow time for LLM extraction
-        )
+        response = client.post("/api/tool/learning", json=payload, timeout=10.0)
 
         if response.status_code == 200:
             data = response.json()
@@ -214,10 +204,6 @@ def main():
     try:
         input_data = json.load(sys.stdin)
 
-        # Skip if CEMS not configured
-        if not CEMS_API_URL or not CEMS_API_KEY:
-            sys.exit(0)
-
         # Extract fields
         session_id = input_data.get("session_id", "unknown")
         tool_name = input_data.get("tool_name") or input_data.get("tool", "unknown")
@@ -228,6 +214,13 @@ def main():
         is_background_agent = input_data.get("is_background_agent", False)
 
         log_hook_event("PostToolUse", session_id, {"tool": tool_name}, input_data=input_data)
+
+        # Resolve credentials using CWD (per-project or global)
+        client = CEMSClient.from_cwd(cwd)
+
+        # Skip if CEMS not configured
+        if not client:
+            sys.exit(0)
 
         # Skip background agents (parent handles)
         if is_background_agent:
@@ -245,6 +238,7 @@ def main():
 
         # Send to CEMS for learning extraction
         send_to_cems(
+            client=client,
             tool_name=tool_name,
             tool_input=tool_input,
             tool_output=tool_output,

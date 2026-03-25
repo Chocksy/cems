@@ -31,12 +31,8 @@ import httpx
 # Import utilities
 sys.path.insert(0, str(Path(__file__).parent))
 from utils.constants import ensure_session_log_dir
-from utils.credentials import get_cems_key, get_cems_url
+from utils.credentials import CEMSClient
 from utils.hook_logger import log_hook_event
-
-# CEMS configuration
-CEMS_API_URL = get_cems_url()
-CEMS_API_KEY = get_cems_key()
 
 RELEVANCE_CACHE_DIR = Path.home() / ".cems" / "cache" / "relevance"
 
@@ -113,15 +109,13 @@ def parse_relevance_line(text: str) -> dict | None:
     return None
 
 
-def send_relevance_feedback(session_id: str, input_data: dict) -> None:
+def send_relevance_feedback(client: CEMSClient, session_id: str, input_data: dict) -> None:
     """Parse relevance line from Claude's response and send feedback to CEMS.
 
     Reads `last_assistant_message` from the Stop hook's input_data (provided
     by Claude Code), parses the relevance line, maps #N to memory IDs via
     the mapping file, and POSTs feedback to CEMS.
     """
-    if not CEMS_API_URL or not CEMS_API_KEY:
-        return
 
     # Get last_assistant_message from input
     last_message = input_data.get("last_assistant_message", "")
@@ -204,16 +198,11 @@ def send_relevance_feedback(session_id: str, input_data: dict) -> None:
 
     # Fire-and-forget POST to CEMS
     try:
-        httpx.post(
-            f"{CEMS_API_URL}/api/memory/log-relevance",
-            json={
-                "relevant_ids": relevant_ids,
-                "noise_ids": noise_ids,
-                "noise_snippet_ids": noise_snippet_ids,
-            },
-            headers={"Authorization": f"Bearer {CEMS_API_KEY}"},
-            timeout=3.0,
-        )
+        client.post("/api/memory/log-relevance", json={
+            "relevant_ids": relevant_ids,
+            "noise_ids": noise_ids,
+            "noise_snippet_ids": noise_snippet_ids,
+        }, timeout=3.0)
     except (httpx.RequestError, httpx.TimeoutException):
         pass
 
@@ -274,8 +263,12 @@ def main():
 
         log_hook_event("Stop", session_id, {"cwd": cwd}, input_data=input_data)
 
+        # Resolve credentials using CWD (per-project or global)
+        client = CEMSClient.from_cwd(cwd)
+
         # --- Relevance feedback (parse + send before session logging) ---
-        send_relevance_feedback(session_id, input_data)
+        if client:
+            send_relevance_feedback(client, session_id, input_data)
 
         # --- Session logging ---
         log_dir = ensure_session_log_dir(session_id)

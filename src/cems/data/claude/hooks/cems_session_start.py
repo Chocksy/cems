@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import subprocess
 import sys
 from pathlib import Path
@@ -28,38 +27,19 @@ from pathlib import Path
 import httpx
 
 sys.path.insert(0, str(Path(__file__).parent))
-from utils.credentials import get_cems_key, get_cems_url
+from utils.credentials import CEMSClient
 from utils.hook_logger import log_hook_event
 from utils.project import get_project_id
 
-CEMS_API_URL = get_cems_url()
-CEMS_API_KEY = get_cems_key()
 
-
-def fetch_profile(project: str | None = None, token_budget: int = 2500) -> dict:
-    """Fetch profile context from CEMS /api/memory/profile endpoint.
-
-    Args:
-        project: Optional project ID (org/repo) for project-scoped context
-        token_budget: Maximum tokens for context (default 2500)
-
-    Returns:
-        Profile dict with 'context' field, or empty dict on error
-    """
-    if not CEMS_API_URL or not CEMS_API_KEY:
-        return {}
-
+def fetch_profile(client: CEMSClient, project: str | None = None, token_budget: int = 2500) -> dict:
+    """Fetch profile context from CEMS /api/memory/profile endpoint."""
     try:
         params = {"token_budget": str(token_budget)}
         if project:
             params["project"] = project
 
-        response = httpx.get(
-            f"{CEMS_API_URL}/api/memory/profile",
-            params=params,
-            headers={"Authorization": f"Bearer {CEMS_API_KEY}"},
-            timeout=8.0,  # Allow more time for profile aggregation
-        )
+        response = client.get("/api/memory/profile", params=params, timeout=8.0)
 
         if response.status_code == 200:
             return response.json()
@@ -86,19 +66,9 @@ def _get_foundation_cache_path(project: str | None) -> Path:
     return FOUNDATION_CACHE_DIR / "global.json"
 
 
-def fetch_foundation(project: str | None = None) -> list[dict]:
-    """Fetch foundation guidelines from CEMS, with local cache.
-
-    Uses /api/memory/foundation endpoint. Caches locally for 15 minutes.
-    On server error, falls back to stale cache if available.
-
-    Returns:
-        List of foundation guideline dicts with 'content' and 'tags'
-    """
+def fetch_foundation(client: CEMSClient, project: str | None = None) -> list[dict]:
+    """Fetch foundation guidelines from CEMS, with local cache."""
     import time
-
-    if not CEMS_API_URL or not CEMS_API_KEY:
-        return []
 
     cache_path = _get_foundation_cache_path(project)
 
@@ -113,15 +83,11 @@ def fetch_foundation(project: str | None = None) -> list[dict]:
 
     # Fetch from API
     try:
-        url = f"{CEMS_API_URL}/api/memory/foundation"
+        url = "/api/memory/foundation"
         if project:
             url += f"?project={project}"
 
-        response = httpx.get(
-            url,
-            headers={"Authorization": f"Bearer {CEMS_API_KEY}"},
-            timeout=5.0,
-        )
+        response = client.get(url)
 
         if response.status_code != 200:
             # On error, return stale cache if available
@@ -251,8 +217,11 @@ def main():
         if is_background_agent or source == "resume":
             sys.exit(0)
 
+        # Resolve credentials using CWD (per-project or global)
+        client = CEMSClient.from_cwd(cwd)
+
         # Skip if CEMS is not configured
-        if not CEMS_API_URL or not CEMS_API_KEY:
+        if not client:
             sys.exit(0)
 
         # Auto-update check (background, non-blocking)
@@ -269,8 +238,8 @@ def main():
             pass  # Observer is nice-to-have, never block session start
 
         project = get_project_id(cwd) if cwd else None
-        profile = fetch_profile(project)
-        foundation = fetch_foundation(project)
+        profile = fetch_profile(client, project)
+        foundation = fetch_foundation(client, project)
 
         context_parts = []
 

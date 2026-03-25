@@ -31,15 +31,10 @@ from pathlib import Path
 import httpx
 
 sys.path.insert(0, str(Path(__file__).parent))
-from utils.credentials import get_cems_key, get_cems_url, get_search_mode
+from utils.credentials import CEMSClient
 from utils.hook_logger import log_hook_event
 from utils.project import get_project_id
 from utils.transcript import read_last_assistant_message
-
-# CEMS configuration — env vars first, then ~/.cems/credentials fallback
-CEMS_API_URL = get_cems_url()
-CEMS_API_KEY = get_cems_key()
-CEMS_SEARCH_MODE = get_search_mode()  # "agentic", "auto", "vector", "hybrid", or ""
 
 CONFIRMATORY = re.compile(
     r'^(yes|yeah|yep|yup|ok|okay|sure|go|do it|proceed|'
@@ -91,37 +86,20 @@ def _clean_search_query(text: str) -> str:
     return cleaned
 
 
-def search_cems(query: str, project: str | None = None) -> tuple[str | None, list[str], list[bool], list[dict]]:
+def search_cems(client: CEMSClient, query: str, project: str | None = None) -> tuple[str | None, list[str], list[bool], list[dict]]:
+    """Search CEMS for relevant memories.
+
+    Returns (formatted_string, memory_ids, truncation_flags, score_details) tuple.
     """
-    Search CEMS for relevant memories.
-    Returns (formatted_string, memory_ids, score_details) tuple.
-
-    Args:
-        query: Search query string
-        project: Optional project ID (e.g., 'org/repo') to boost project-scoped memories
-
-    Note: No limit imposed here - the API handles relevance filtering and limits.
-    """
-    if not CEMS_API_URL or not CEMS_API_KEY:
-        return None, [], [], []
-
     if not query or len(query) < 3:
         return None, [], [], []
 
     try:
-        limit = 3 if CEMS_SEARCH_MODE == "agentic" else 5  # Agentic finds better matches, fewer needed
-        payload = {"query": query, "scope": "both", "limit": limit}
-        if CEMS_SEARCH_MODE:
-            payload["mode"] = CEMS_SEARCH_MODE  # "agentic" uses LLM agents instead of embeddings
+        payload = {"query": query, "scope": "both", "limit": 5}
         if project:
             payload["project"] = project  # Boosts same-project memories via source_ref scoring
 
-        response = httpx.post(
-            f"{CEMS_API_URL}/api/memory/search",
-            json=payload,
-            headers={"Authorization": f"Bearer {CEMS_API_KEY}"},
-            timeout=15.0,  # Agentic mode needs ~4s (3 parallel LLM calls)
-        )
+        response = client.post("/api/memory/search", json=payload)
 
         if response.status_code != 200:
             return None, [], [], []
@@ -175,16 +153,12 @@ def search_cems(query: str, project: str | None = None) -> tuple[str | None, lis
             short_id = mem_id[:8] if mem_id else ""
             score = r.get("score", 0.0)
             truncated = r.get("truncated", False)
-            has_detailed = r.get("has_detailed", False)
             full_len = r.get("full_length", 0)
-            needs_expansion = truncated or has_detailed
             suffix = f" [truncated — full doc: {full_len} chars]" if truncated else ""
-            if has_detailed and not truncated:
-                suffix = " [distilled — full details available]"
             formatted.append(f"{i}. [{category}] (score: {score:.2f}) {content}{suffix} (id: {short_id})")
-            if needs_expansion and (full_len or has_detailed):
+            if truncated and full_len:
                 truncated_hints.append(
-                    f"  #{i} ({category}{f', {full_len} chars' if full_len else ''}) — use `/recall {short_id}` to read full document"
+                    f"  #{i} ({category}, {full_len} chars) — use `/recall {short_id}` to read full document"
                 )
             truncation_flags.append(truncated)
             if mem_id:
@@ -196,12 +170,11 @@ def search_cems(query: str, project: str | None = None) -> tuple[str | None, lis
         avg_score = sum(scores) / len(scores) if scores else 0
         top_score = max(scores) if scores else 0
         formatted.append(f"\n--- Retrieval: {len(results)} results, avg score {avg_score:.2f}, top {top_score:.2f} ---")
-        formatted.append("When the user says 'always remember', 'don't forget', or 'this is important' about something, use `/pin` or `mcp__cems__memory_pin` to protect that memory permanently.")
         if truncated_hints:
-            formatted.append("Some memories are truncated or distilled — you're seeing a summary, not the full content.")
-            formatted.append("If any memory looks partially relevant, read the full version BEFORE proceeding:")
+            formatted.append("Truncated memories — you're seeing a snippet, not the full document.")
+            formatted.append("If any truncated memory looks partially relevant, read the full version BEFORE proceeding:")
             formatted.extend(truncated_hints)
-            formatted.append("Do NOT mark truncated/distilled memories as noise without reading the full document first.")
+            formatted.append("Do NOT mark truncated memories as noise without reading the full document first.")
 
         return "\n".join(formatted), memory_ids, truncation_flags, score_details
 
@@ -209,22 +182,12 @@ def search_cems(query: str, project: str | None = None) -> tuple[str | None, lis
         return None, [], [], []
 
 
-def log_shown_memories(memory_ids: list[str]) -> None:
-    """Fire-and-forget: log that memories were shown to the user.
-
-    Calls /api/memory/log-shown to increment shown_count and update last_shown_at.
-    Failures are silently ignored (non-critical telemetry).
-    """
-    if not memory_ids or not CEMS_API_URL or not CEMS_API_KEY:
+def log_shown_memories(client: CEMSClient, memory_ids: list[str]) -> None:
+    """Fire-and-forget: log that memories were shown to the user."""
+    if not memory_ids:
         return
-
     try:
-        httpx.post(
-            f"{CEMS_API_URL}/api/memory/log-shown",
-            json={"memory_ids": memory_ids},
-            headers={"Authorization": f"Bearer {CEMS_API_KEY}"},
-            timeout=2.0,
-        )
+        client.post("/api/memory/log-shown", json={"memory_ids": memory_ids}, timeout=2.0)
     except (httpx.RequestError, httpx.TimeoutException):
         pass
 
@@ -394,32 +357,14 @@ def extract_gate_pattern(
     }
 
 
-def search_gate_rules(project: str | None = None) -> list[dict]:
-    """Fetch gate rules from CEMS using dedicated endpoint.
-
-    Uses /api/memory/gate-rules which queries by category directly,
-    bypassing semantic search for reliable results.
-
-    Args:
-        project: Optional project ID to filter rules (e.g., "org/repo")
-
-    Returns:
-        List of gate rule memories
-    """
-    if not CEMS_API_URL or not CEMS_API_KEY:
-        return []
-
+def search_gate_rules(client: CEMSClient, project: str | None = None) -> list[dict]:
+    """Fetch gate rules from CEMS using dedicated endpoint."""
     try:
-        # Use dedicated gate-rules endpoint that queries by category
-        url = f"{CEMS_API_URL}/api/memory/gate-rules"
+        url = "/api/memory/gate-rules"
         if project:
             url += f"?project={project}"
 
-        response = httpx.get(
-            url,
-            headers={"Authorization": f"Bearer {CEMS_API_KEY}"},
-            timeout=5.0,
-        )
+        response = client.get(url)
 
         if response.status_code != 200:
             return []
@@ -434,17 +379,8 @@ def search_gate_rules(project: str | None = None) -> list[dict]:
         return []
 
 
-def populate_gate_cache(project: str | None = None) -> int:
-    """Populate gate rule cache for a project.
-
-    Fetches gate rules from CEMS and caches them locally.
-
-    Args:
-        project: Project ID (org/repo) or None for global
-
-    Returns:
-        Number of rules cached
-    """
+def populate_gate_cache(client: CEMSClient, project: str | None = None) -> int:
+    """Populate gate rule cache for a project."""
     cache_path = get_cache_path(project)
 
     # Skip if cache exists and is fresh (< 5 minutes old)
@@ -458,7 +394,7 @@ def populate_gate_cache(project: str | None = None) -> int:
             pass
 
     # Fetch gate rules from CEMS
-    rules = search_gate_rules(project)
+    rules = search_gate_rules(client, project)
 
     # If server returned empty AND we have an existing cache, keep the old cache
     # rather than overwriting with nothing (protects against temporary outages)
@@ -533,6 +469,9 @@ def main():
         if os.environ.get('CLAUDE_AGENT_ID'):
             return
 
+        # Resolve credentials using CWD (per-project or global)
+        client = CEMSClient.from_cwd(cwd)
+
         # Ensure observer daemon is running (rate-limited, checks every 5 min)
         try:
             from utils.observer_manager import ensure_daemon_running
@@ -549,12 +488,12 @@ def main():
 
             # Derive search query from what Claude just proposed — send raw text
             transcript_path = input_data.get('transcript_path', '')
-            if transcript_path:
+            if transcript_path and client:
                 assistant_text = read_last_assistant_message(transcript_path, max_chars=5000)
                 if assistant_text and len(assistant_text.strip()) >= 3:
                     project = get_project_id(cwd) if cwd else None
                     clean_assistant = _clean_search_query(assistant_text.strip())
-                    memories, memory_ids, _, _ = search_cems(clean_assistant, project=project)
+                    memories, memory_ids, _, _ = search_cems(client, clean_assistant, project=project)
                     if memories:
                         output_parts.append(f"""<memory-recall>
 CONTEXT for confirmed action:
@@ -563,7 +502,7 @@ CONTEXT for confirmed action:
 
 Review these memories before proceeding.
 </memory-recall>""")
-                        log_shown_memories(memory_ids)
+                        log_shown_memories(client, memory_ids)
                         write_relevance_mapping(session_id, memory_ids)
 
             if output_parts:
@@ -583,6 +522,10 @@ Review these memories before proceeding.
         if user_text.startswith('/'):
             return
 
+        # Skip if CEMS is not configured (after ultrathink processing)
+        if not client:
+            return
+
         output_parts = []
 
         # Extract project ID from git remote for project-scoped search
@@ -590,12 +533,12 @@ Review these memories before proceeding.
 
         # 0. Gate cache population (runs once per project, cached for 5 min)
         # This ensures PreToolUse hook has cached gate rules to check
-        populate_gate_cache(project)
+        populate_gate_cache(client, project)
 
         # 1. Memory awareness - search CEMS (clean query for better embedding match)
         if len(user_text) >= 3:
             search_query = _clean_search_query(user_text)
-            memories, memory_ids, truncation_flags, score_details = search_cems(search_query, project=project)
+            memories, memory_ids, truncation_flags, score_details = search_cems(client, search_query, project=project)
             if memories:
                 memory_context = f"""<memory-recall>
 RELEVANT MEMORIES found for "{search_query}":
@@ -618,7 +561,7 @@ After responding, note which memories (by number) were relevant vs noise.
                     }, input_data={"query": user_text, "score_details": score_details})
 
                 # Log that these memories were shown (fire-and-forget)
-                log_shown_memories(memory_ids)
+                log_shown_memories(client, memory_ids)
 
                 # Write mapping file for Stop hook relevance feedback
                 write_relevance_mapping(session_id, memory_ids, truncation_flags)
