@@ -503,6 +503,35 @@ class DocumentStore:
             result = await conn.execute(query, *values)
         return result == "UPDATE 1"
 
+    async def pin_document(self, document_id: str, user_id: str) -> bool:
+        """Add 'pinned' tag to a document (idempotent)."""
+        pool = await self._get_pool()
+        async with pool.acquire() as conn:
+            result = await conn.execute(
+                """
+                UPDATE memory_documents
+                SET tags = array_append(tags, 'pinned'), updated_at = NOW()
+                WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL
+                  AND NOT ('pinned' = ANY(tags))
+                """,
+                UUID(document_id), UUID(user_id),
+            )
+            return result in ("UPDATE 1", "UPDATE 0")  # 0 means already pinned
+
+    async def unpin_document(self, document_id: str, user_id: str) -> bool:
+        """Remove 'pinned' tag from a document."""
+        pool = await self._get_pool()
+        async with pool.acquire() as conn:
+            result = await conn.execute(
+                """
+                UPDATE memory_documents
+                SET tags = array_remove(tags, 'pinned'), updated_at = NOW()
+                WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL
+                """,
+                UUID(document_id), UUID(user_id),
+            )
+            return result == "UPDATE 1"
+
     async def get_project_counts(
         self,
         user_id: str,

@@ -209,7 +209,7 @@ class SummarizationJob:
         # Group never-shown memories by project + category
         groups: dict[tuple[str, str], list[dict]] = defaultdict(list)
         for d in all_docs:
-            if d.get("shown_count", 0) == 0 and d.get("category", "general") not in PROTECTED_CATEGORIES:
+            if d.get("shown_count", 0) == 0 and d.get("category", "general") not in PROTECTED_CATEGORIES and "pinned" not in (d.get("tags") or []):
                 project = d.get("source_ref") or "(none)"
                 category = d.get("category", "general")
                 groups[(project, category)].append(d)
@@ -311,8 +311,10 @@ class SummarizationJob:
             noise_ratio = noise / total
             if noise_ratio <= self.NOISE_MAX_RATIO:
                 continue
-            # Skip protected categories
+            # Skip protected categories and pinned memories
             if d.get("category", "general") in PROTECTED_CATEGORIES:
+                continue
+            if "pinned" in (d.get("tags") or []):
                 continue
             candidates.append(d)
 

@@ -127,6 +127,10 @@ class ConsolidationJob:
             if doc_id in processed:
                 continue
 
+            # Skip pinned memories — fully untouchable
+            if "pinned" in (doc.get("tags") or []):
+                continue
+
             content = doc.get("content", "")
             if not content:
                 continue

@@ -88,11 +88,12 @@ class DistillationJob:
         # Oldest first so we distill the oldest content first
         all_docs = await doc_store.get_all_documents(user_id, limit=2000, order="asc")
 
-        # Find candidates: content > threshold and not protected
+        # Find candidates: content > threshold, not protected category, not pinned
         candidates = [
             d for d in all_docs
             if len(d.get("content", "")) > DISTILLATION_THRESHOLD
             and d.get("category", "general") not in PROTECTED_CATEGORIES
+            and "pinned" not in (d.get("tags") or [])
         ]
 
         logger.info(

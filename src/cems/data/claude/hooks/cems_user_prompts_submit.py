@@ -196,6 +196,7 @@ def search_cems(query: str, project: str | None = None) -> tuple[str | None, lis
         avg_score = sum(scores) / len(scores) if scores else 0
         top_score = max(scores) if scores else 0
         formatted.append(f"\n--- Retrieval: {len(results)} results, avg score {avg_score:.2f}, top {top_score:.2f} ---")
+        formatted.append("When the user says 'always remember', 'don't forget', or 'this is important' about something, use `/pin` or `mcp__cems__memory_pin` to protect that memory permanently.")
         if truncated_hints:
             formatted.append("Some memories are truncated or distilled — you're seeing a summary, not the full content.")
             formatted.append("If any memory looks partially relevant, read the full version BEFORE proceeding:")

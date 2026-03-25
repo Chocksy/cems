@@ -856,6 +856,40 @@ async def api_memory_update(request: Request):
         return JSONResponse({"error": "Internal server error"}, status_code=500)
 
 
+async def api_memory_pin(request: Request):
+    """REST API endpoint to pin/unpin a memory.
+
+    POST /api/memory/pin
+    Body: {"memory_id": "...", "pin": true|false}
+
+    Pinned memories are protected from distillation, consolidation, and noise pruning.
+    """
+    try:
+        body = await request.json()
+        memory_id = body.get("memory_id", "")
+        pin = body.get("pin", True)
+
+        if not memory_id:
+            return JSONResponse({"error": "memory_id required"}, status_code=400)
+
+        memory = get_memory()
+        doc_store = await memory._ensure_document_store()
+
+        if pin:
+            success = await doc_store.pin_document(memory_id, user_id=memory.config.user_id)
+        else:
+            success = await doc_store.unpin_document(memory_id, user_id=memory.config.user_id)
+
+        return JSONResponse({
+            "success": True,
+            "memory_id": memory_id,
+            "pinned": pin,
+        })
+    except Exception as e:
+        logger.error(f"API memory_pin error: {e}")
+        return JSONResponse({"error": "Internal server error"}, status_code=500)
+
+
 async def api_memory_promote(request: Request):
     """REST API endpoint to promote a personal memory to shared (team) scope.
 

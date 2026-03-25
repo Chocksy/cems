@@ -182,6 +182,18 @@ def memory_maintenance(
 
 
 @mcp.tool()
+def memory_pin(
+    memory_id: str,
+    pin: bool = True,
+) -> str:
+    """Pin or unpin a memory. Pinned memories are protected from distillation, consolidation, and noise pruning."""
+    return json.dumps(_request("POST", "/api/memory/pin", {
+        "memory_id": memory_id,
+        "pin": pin,
+    }))
+
+
+@mcp.tool()
 def memory_get(
     memory_id: str,
 ) -> str:
