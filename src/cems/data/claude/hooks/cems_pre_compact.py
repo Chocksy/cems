@@ -24,7 +24,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from utils.hook_logger import log_hook_event
 
 
-def write_signal(session_id: str, signal_type: str, tool: str = "claude") -> None:
+def write_signal(session_id: str, signal_type: str, tool: str = "claude", cwd: str = "") -> None:
     """Write a signal file for the observer daemon to pick up.
 
     Inlined from cems.observer.signals — hooks run standalone via uv and
@@ -34,7 +34,7 @@ def write_signal(session_id: str, signal_type: str, tool: str = "claude") -> Non
     signals_dir.mkdir(parents=True, exist_ok=True)
     signal_file = signals_dir / f"{session_id}.json"
 
-    data = {"type": signal_type, "ts": time.time(), "tool": tool}
+    data = {"type": signal_type, "ts": time.time(), "tool": tool, "cwd": cwd}
     try:
         tmp = signal_file.with_suffix(".tmp")
         tmp.write_text(json.dumps(data))
@@ -48,7 +48,6 @@ def main():
         input_data = json.load(sys.stdin)
 
         session_id = input_data.get("session_id", "")
-        transcript_path = input_data.get("transcript_path", "")
         trigger = input_data.get("trigger", "unknown")
         cwd = input_data.get("cwd", os.getcwd())
 
@@ -59,7 +58,7 @@ def main():
 
         # Signal the observer daemon about compaction (triggers epoch bump)
         if session_id:
-            write_signal(session_id, "compact", "claude")
+            write_signal(session_id, "compact", "claude", cwd=cwd)
 
         sys.exit(0)
 

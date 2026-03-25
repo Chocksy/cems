@@ -7,6 +7,18 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from cems.observer.daemon import CredentialResolver
+
+
+def _test_resolver() -> CredentialResolver:
+    """Create a resolver that returns fixed test credentials."""
+    r = CredentialResolver.__new__(CredentialResolver)
+    r._cache = {}
+    r._home = str(Path.home())
+    r.default_url = "http://localhost:8765"
+    r.default_key = "test-key"
+    return r
+
 
 class TestSessionDiscovery:
     """Tests for session discovery from ~/.claude/projects/."""
@@ -290,7 +302,7 @@ class TestDaemon:
              patch("cems.observer.daemon.send_summary", return_value=True) as mock_send, \
              patch("cems.observer.session._get_project_id", return_value="test/proj"):
 
-            triggered = run_cycle("http://localhost:8765", "test-key")
+            triggered = run_cycle(_test_resolver())
 
         assert triggered == 1
         mock_send.assert_called_once()
@@ -316,7 +328,7 @@ class TestDaemon:
              patch("cems.observer.daemon.get_adapters", return_value=[ClaudeAdapter()]), \
              patch("cems.observer.daemon.send_summary") as mock_send:
 
-            triggered = run_cycle("http://localhost:8765", "test-key")
+            triggered = run_cycle(_test_resolver())
 
         assert triggered == 0
         mock_send.assert_not_called()

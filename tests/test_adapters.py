@@ -8,6 +8,17 @@ from unittest.mock import patch, MagicMock
 import pytest
 
 from cems.observer.adapters.base import SessionInfo
+from cems.observer.daemon import CredentialResolver
+
+
+def _test_resolver() -> CredentialResolver:
+    """Create a resolver that returns fixed test credentials."""
+    r = CredentialResolver.__new__(CredentialResolver)
+    r._cache = {}
+    r._home = str(Path.home())
+    r.default_url = "http://localhost:8765"
+    r.default_key = "key"
+    return r
 
 
 class TestClaudeAdapter:
@@ -452,7 +463,7 @@ class TestHandleSignal:
         with patch("cems.observer.daemon.send_summary", return_value=True), \
              patch("cems.observer.state.OBSERVER_STATE_DIR", state_dir), \
              patch("cems.observer.signals.SIGNALS_DIR", signals_dir):
-            handle_signal(sig, session, state, adapter, "http://localhost:8765", "key")
+            handle_signal(sig, session, state, adapter, _test_resolver())
 
         assert state.epoch == 1
         assert state.is_done is False  # compact doesn't end session
@@ -490,7 +501,7 @@ class TestHandleSignal:
         with patch("cems.observer.daemon.send_summary", return_value=True) as mock_send, \
              patch("cems.observer.state.OBSERVER_STATE_DIR", state_dir), \
              patch("cems.observer.signals.SIGNALS_DIR", signals_dir):
-            handle_signal(sig, session, state, adapter, "http://localhost:8765", "key")
+            handle_signal(sig, session, state, adapter, _test_resolver())
 
         assert state.is_done is True
         assert state.epoch == 1  # stop doesn't bump epoch
@@ -529,7 +540,7 @@ class TestHandleSignal:
         with patch("cems.observer.daemon.send_summary") as mock_send, \
              patch("cems.observer.state.OBSERVER_STATE_DIR", state_dir), \
              patch("cems.observer.signals.SIGNALS_DIR", signals_dir):
-            handle_signal(sig, session, state, adapter, "http://localhost:8765", "key")
+            handle_signal(sig, session, state, adapter, _test_resolver())
 
         assert state.is_done is True
         mock_send.assert_not_called()  # no content to finalize
@@ -567,7 +578,7 @@ class TestHandleSignal:
         with patch("cems.observer.daemon.send_summary", return_value=True), \
              patch("cems.observer.state.OBSERVER_STATE_DIR", state_dir), \
              patch("cems.observer.signals.SIGNALS_DIR", signals_dir):
-            handle_signal(sig, session, state, adapter, "http://localhost:8765", "key")
+            handle_signal(sig, session, state, adapter, _test_resolver())
 
         assert not signal_file.exists()
 
@@ -600,7 +611,7 @@ class TestHandleFinalize:
 
         with patch("cems.observer.daemon.send_summary", return_value=True) as mock_send, \
              patch("cems.observer.state.OBSERVER_STATE_DIR", state_dir):
-            handle_finalize(session, state, adapter, "http://localhost:8765", "key")
+            handle_finalize(session, state, adapter, _test_resolver())
 
         # Staleness finalize is non-terminal: bumps epoch, does NOT set is_done
         assert state.is_done is False
@@ -636,7 +647,7 @@ class TestHandleFinalize:
 
         with patch("cems.observer.daemon.send_summary", return_value=True) as mock_send, \
              patch("cems.observer.state.OBSERVER_STATE_DIR", state_dir):
-            handle_finalize(session, state, adapter, "http://localhost:8765", "key")
+            handle_finalize(session, state, adapter, _test_resolver())
 
         call_args = mock_send.call_args
         assert call_args.kwargs.get("epoch") == 3

@@ -18,6 +18,7 @@ import signal
 import time
 import urllib.error
 import urllib.request
+from pathlib import Path
 
 from cems.observer.adapters import SessionAdapter, SessionInfo, get_adapters
 from cems.observer.signals import Signal, clear_signal, read_signal
@@ -30,6 +31,80 @@ from cems.observer.state import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+class CredentialResolver:
+    """Resolves CEMS credentials per-session CWD with caching.
+
+    Walks up from session CWD to find per-project .cems/credentials.
+    Falls back to global ~/.cems/credentials. Caches resolved (url, key)
+    pairs per CWD to avoid repeated filesystem walks.
+
+    For the daemon, file takes priority over env vars (env may be stale
+    for a long-running process).
+    """
+
+    def __init__(self):
+        self._cache: dict[str, tuple[str, str]] = {}  # cwd -> (url, key)
+        self._home = str(Path.home())
+        # Load global credentials (the default)
+        global_creds = self._parse_file(
+            str(Path.home() / ".cems" / "credentials")
+        )
+        self.default_url = global_creds.get("CEMS_API_URL") or os.getenv("CEMS_API_URL", "")
+        self.default_key = global_creds.get("CEMS_API_KEY") or os.getenv("CEMS_API_KEY", "")
+
+    def _parse_file(self, path: str) -> dict[str, str]:
+        """Parse a dotenv credentials file."""
+        result = {}
+        try:
+            p = Path(path)
+            if p.is_file():
+                for line in p.read_text().splitlines():
+                    line = line.strip()
+                    if line and not line.startswith("#") and "=" in line:
+                        k, _, v = line.partition("=")
+                        k, v = k.strip(), v.strip().strip("'\"")
+                        if k and v:
+                            result[k] = v
+        except OSError:
+            pass
+        return result
+
+    def resolve(self, cwd: str = "") -> tuple[str, str]:
+        """Resolve (api_url, api_key) for a session CWD.
+
+        Walks up from CWD looking for .cems/credentials, stops before $HOME.
+        Falls back to global credentials.
+        """
+        if not cwd:
+            return self.default_url, self.default_key
+
+        if cwd in self._cache:
+            return self._cache[cwd]
+
+        # Walk up looking for project .cems/credentials
+        try:
+            path = Path(cwd).resolve()
+        except (OSError, ValueError):
+            self._cache[cwd] = (self.default_url, self.default_key)
+            return self.default_url, self.default_key
+
+        while str(path) != self._home and path != path.parent:
+            project_creds = path / ".cems" / "credentials"
+            if project_creds.is_file():
+                creds = self._parse_file(str(project_creds))
+                url = creds.get("CEMS_API_URL", "")
+                key = creds.get("CEMS_API_KEY", "")
+                if url and key:
+                    self._cache[cwd] = (url, key)
+                    return url, key
+            path = path.parent
+
+        # Global fallback
+        self._cache[cwd] = (self.default_url, self.default_key)
+        return self.default_url, self.default_key
+
 
 # Two-phase threshold: cheap raw-byte pre-filter + real extracted-text gate
 MIN_RAW_DELTA_BYTES = 10_000   # Cheap pre-filter: skip tiny file changes
@@ -167,8 +242,7 @@ def handle_signal(
     session: SessionInfo,
     state: ObservationState,
     adapter: SessionAdapter,
-    api_url: str,
-    api_key: str,
+    resolver: CredentialResolver,
 ) -> None:
     """Handle a lifecycle signal (compact or stop).
 
@@ -191,6 +265,8 @@ def handle_signal(
         project_context = _build_project_context(session)
 
         # Even if no new content, send a finalize to polish the existing summary
+        cwd = sig.cwd or session.cwd or ""
+        api_url, api_key = resolver.resolve(cwd)
         success = send_summary(
             content=content or "(session ended)",
             session_id=session.session_id,
@@ -228,8 +304,7 @@ def handle_finalize(
     session: SessionInfo,
     state: ObservationState,
     adapter: SessionAdapter,
-    api_url: str,
-    api_key: str,
+    resolver: CredentialResolver,
     reason: str = "staleness",
 ) -> None:
     """Finalize the current epoch (from staleness or other non-signal trigger).
@@ -245,6 +320,7 @@ def handle_finalize(
     adapter.enrich_metadata(session)
     project_context = _build_project_context(session)
 
+    api_url, api_key = resolver.resolve(session.cwd or "")
     success = send_summary(
         content="(session idle — epoch finalized)",
         session_id=session.session_id,
@@ -273,8 +349,7 @@ def process_session_growth(
     session: SessionInfo,
     state: ObservationState,
     adapter: SessionAdapter,
-    api_url: str,
-    api_key: str,
+    resolver: CredentialResolver,
 ) -> bool:
     """Check for file growth and send incremental observation if threshold met.
 
@@ -308,6 +383,7 @@ def process_session_growth(
 
     project_context = _build_project_context(session)
 
+    api_url, api_key = resolver.resolve(session.cwd or "")
     success = send_summary(
         content=content,
         session_id=session.session_id,
@@ -344,7 +420,7 @@ def process_session_growth(
     return success
 
 
-def run_cycle(api_url: str, api_key: str) -> int:
+def run_cycle(resolver: CredentialResolver) -> int:
     """Run one observation cycle across all adapters.
 
     For each adapter, discovers sessions and processes them:
@@ -399,13 +475,13 @@ def run_cycle(api_url: str, api_key: str) -> int:
                 # 1. Check signals (cheap file stat)
                 sig = read_signal(session.session_id)
                 if sig:
-                    handle_signal(sig, session, state, adapter, api_url, api_key)
+                    handle_signal(sig, session, state, adapter, resolver)
                     observations_triggered += 1
                     continue
 
                 # 2. Check file growth → incremental observation
                 grew = process_session_growth(
-                    session, state, adapter, api_url, api_key,
+                    session, state, adapter, resolver,
                 )
                 if grew:
                     observations_triggered += 1
@@ -415,7 +491,7 @@ def run_cycle(api_url: str, api_key: str) -> int:
                 state = load_state(session.session_id)
                 if not state.is_done and check_staleness(state):
                     handle_finalize(
-                        session, state, adapter, api_url, api_key,
+                        session, state, adapter, resolver,
                         reason="staleness",
                     )
 
@@ -441,7 +517,7 @@ def _handle_sigterm(signum, frame):
     _shutdown_requested = True
 
 
-def run_daemon(api_url: str, api_key: str) -> None:
+def run_daemon(resolver: CredentialResolver) -> None:
     """Run the observer daemon continuously.
 
     Polls every POLL_INTERVAL seconds, processes active sessions
@@ -456,7 +532,7 @@ def run_daemon(api_url: str, api_key: str) -> None:
 
     logger.info(f"Observer daemon started (PID {os.getpid()}, polling every {POLL_INTERVAL}s)")
     logger.info(f"Adapters: {', '.join(adapter_names)}")
-    logger.info(f"CEMS API: {api_url}")
+    logger.info(f"CEMS API: {resolver.default_url}")
     logger.info(f"Thresholds: raw={MIN_RAW_DELTA_BYTES}B, extracted={MIN_EXTRACTED_CHARS}chars")
     logger.info(f"Staleness threshold: {STALE_THRESHOLD}s")
 
@@ -465,7 +541,7 @@ def run_daemon(api_url: str, api_key: str) -> None:
 
     while not _shutdown_requested:
         try:
-            triggered = run_cycle(api_url, api_key)
+            triggered = run_cycle(resolver)
 
             if triggered > 0:
                 logger.info(f"Cycle {cycle}: {triggered} observation(s) triggered")

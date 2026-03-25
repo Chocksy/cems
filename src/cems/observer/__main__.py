@@ -162,46 +162,25 @@ def main():
     except Exception:
         pass  # Migration is best-effort
 
-    # Load credentials: ~/.cems/credentials first, then env vars fallback
-    # NOTE: This dotenv parser duplicates hooks/utils/credentials.py intentionally.
-    # The observer runs as a standalone daemon (python -m cems.observer) and cannot
-    # import from the hooks/ directory which lives outside the package.
-    _creds_file = Path.home() / ".cems" / "credentials"
-    _file_creds: dict[str, str] = {}
-    try:
-        if _creds_file.exists():
-            for _line in _creds_file.read_text().splitlines():
-                _line = _line.strip()
-                if _line and not _line.startswith("#") and "=" in _line:
-                    _k, _, _v = _line.partition("=")
-                    _k, _v = _k.strip(), _v.strip().strip("'\"")
-                    if _k and _v:
-                        _file_creds[_k] = _v
-    except OSError:
-        pass
+    # Load credentials with per-project support via CredentialResolver.
+    # The daemon resolves credentials per-session CWD, falling back to global.
+    from cems.observer.daemon import CredentialResolver, run_cycle, run_daemon
 
-    # Credentials file takes priority for daemon (env vars may be stale/session-specific)
-    api_url = _file_creds.get("CEMS_API_URL") or os.getenv("CEMS_API_URL", "")
-    api_key = _file_creds.get("CEMS_API_KEY") or os.getenv("CEMS_API_KEY", "")
+    resolver = CredentialResolver()
 
-    if not api_url:
-        print("Error: Set CEMS_API_URL in ~/.cems/credentials or environment", file=sys.stderr)
+    if not resolver.default_url or not resolver.default_key:
+        print("Error: Set CEMS_API_URL and CEMS_API_KEY in ~/.cems/credentials or environment", file=sys.stderr)
         sys.exit(1)
-    if not api_key:
-        print("Error: Set CEMS_API_KEY in ~/.cems/credentials or environment", file=sys.stderr)
-        sys.exit(1)
-
-    from cems.observer.daemon import run_cycle, run_daemon
 
     if args.once:
-        triggered = run_cycle(api_url, api_key)
+        triggered = run_cycle(resolver)
         print(f"Observations triggered: {triggered}")
     else:
         _write_pid_file()
         atexit.register(_cleanup_pid_file)
         # SIGTERM is handled in daemon.py — raises SystemExit(0)
         # which triggers atexit → _cleanup_pid_file()
-        run_daemon(api_url, api_key)
+        run_daemon(resolver)
 
 
 if __name__ == "__main__":

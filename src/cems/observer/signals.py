@@ -28,9 +28,10 @@ class Signal:
     type: SignalType
     ts: float
     tool: ToolName
+    cwd: str = ""
 
 
-def write_signal(session_id: str, signal_type: SignalType, tool: ToolName = "claude") -> None:
+def write_signal(session_id: str, signal_type: SignalType, tool: ToolName = "claude", cwd: str = "") -> None:
     """Write a signal file for the daemon to pick up.
 
     Overwrites any existing signal for this session (last write wins).
@@ -39,6 +40,7 @@ def write_signal(session_id: str, signal_type: SignalType, tool: ToolName = "cla
         session_id: Session UUID.
         signal_type: "compact" or "stop".
         tool: Tool that generated the signal.
+        cwd: Working directory for per-project credential resolution.
     """
     SIGNALS_DIR.mkdir(parents=True, exist_ok=True)
     signal_file = SIGNALS_DIR / f"{session_id}.json"
@@ -47,6 +49,7 @@ def write_signal(session_id: str, signal_type: SignalType, tool: ToolName = "cla
         "type": signal_type,
         "ts": time.time(),
         "tool": tool,
+        "cwd": cwd,
     }
 
     try:
@@ -78,6 +81,7 @@ def read_signal(session_id: str) -> Signal | None:
             type=data["type"],
             ts=data["ts"],
             tool=data.get("tool", "claude"),
+            cwd=data.get("cwd", ""),
         )
     except (json.JSONDecodeError, KeyError, OSError) as e:
         logger.warning(f"Could not read signal for {session_id}: {e}")

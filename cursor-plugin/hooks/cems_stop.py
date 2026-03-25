@@ -19,13 +19,13 @@ import time
 from pathlib import Path
 
 
-def write_signal(session_id: str, signal_type: str) -> None:
+def write_signal(session_id: str, signal_type: str, cwd: str = "") -> None:
     """Write a signal file for the observer daemon."""
     signals_dir = Path.home() / ".cems" / "observer" / "signals"
     signals_dir.mkdir(parents=True, exist_ok=True)
     signal_file = signals_dir / f"{session_id}.json"
 
-    data = {"type": signal_type, "ts": time.time(), "tool": "cursor"}
+    data = {"type": signal_type, "ts": time.time(), "tool": "cursor", "cwd": cwd}
     try:
         tmp = signal_file.with_suffix(".tmp")
         tmp.write_text(json.dumps(data))
@@ -45,8 +45,10 @@ def main():
         if not session_id:
             return
 
+        cwd = input_data.get("cwd", "")
+
         # Write observer signal for session finalization
-        write_signal(session_id, "stop")
+        write_signal(session_id, "stop", cwd=cwd)
 
     except json.JSONDecodeError:
         pass
