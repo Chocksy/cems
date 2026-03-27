@@ -24,17 +24,18 @@ from mcp.server.fastmcp import FastMCP
 # Credentials
 # ---------------------------------------------------------------------------
 
-def _get_config() -> tuple[str, str]:
-    """Return (api_url, api_key) using the shared credential resolver.
+def _get_config() -> tuple[str, str, str]:
+    """Return (api_url, api_key, search_mode) using the shared credential resolver.
     Precedence: env vars > per-project .cems/credentials > global ~/.cems/credentials.
     """
     creds = resolve_credentials(os.getcwd())
     api_url = creds.get("CEMS_API_URL", "")
     api_key = creds.get("CEMS_API_KEY", "")
-    return api_url.rstrip("/"), api_key
+    search_mode = creds.get("CEMS_SEARCH_MODE", "")
+    return api_url.rstrip("/"), api_key, search_mode
 
 
-API_URL, API_KEY = _get_config()
+API_URL, API_KEY, SEARCH_MODE = _get_config()
 
 # ---------------------------------------------------------------------------
 # HTTP helpers (stdlib only — no extra deps)
@@ -100,8 +101,8 @@ def memory_search(
     }
     if project:
         payload["project"] = project
-    # Pass search mode from credentials or env (CEMS_SEARCH_MODE=agentic)
-    search_mode = os.getenv("CEMS_SEARCH_MODE") or resolve_credentials(os.getcwd()).get("CEMS_SEARCH_MODE", "")
+    # Pass search mode resolved at startup (env > project creds > global creds)
+    search_mode = SEARCH_MODE
     if search_mode:
         payload["mode"] = search_mode
     return json.dumps(_request("POST", "/api/memory/search", payload))

@@ -20,7 +20,7 @@ _real_get_config = _mcp_module._get_config
 @pytest.fixture(autouse=True)
 def _patch_mcp_config():
     """Patch _get_config and _fetch_profile so module-level code doesn't hit real APIs."""
-    with patch("cems.mcp_stdio._get_config", return_value=("http://test:8765", "test-key")):
+    with patch("cems.mcp_stdio._get_config", return_value=("http://test:8765", "test-key", "")):
         with patch("cems.mcp_stdio._fetch_profile", return_value="test profile"):
             yield
 
@@ -45,7 +45,7 @@ class TestGetConfigWithResolver:
             "CEMS_API_URL": "http://project:8765",
             "CEMS_API_KEY": "project-key",
         }):
-            api_url, api_key = _real_get_config()
+            api_url, api_key, _ = _real_get_config()
 
         assert api_url == "http://project:8765"
         assert api_key == "project-key"
@@ -56,7 +56,7 @@ class TestGetConfigWithResolver:
             "CEMS_API_URL": "http://global:8765",
             "CEMS_API_KEY": "global-key",
         }):
-            api_url, api_key = _real_get_config()
+            api_url, api_key, _ = _real_get_config()
 
         assert api_url == "http://global:8765"
         assert api_key == "global-key"
@@ -67,7 +67,7 @@ class TestGetConfigWithResolver:
             "CEMS_API_URL": "http://env:8765",
             "CEMS_API_KEY": "env-key",
         }):
-            api_url, api_key = _real_get_config()
+            api_url, api_key, _ = _real_get_config()
 
         assert api_url == "http://env:8765"
         assert api_key == "env-key"
@@ -78,7 +78,7 @@ class TestGetConfigWithResolver:
             "CEMS_API_URL": "http://host:8765/",
             "CEMS_API_KEY": "some-key",
         }):
-            api_url, api_key = _real_get_config()
+            api_url, api_key, _ = _real_get_config()
 
         assert api_url == "http://host:8765"
 
