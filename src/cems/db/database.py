@@ -169,6 +169,92 @@ def run_migrations() -> None:
     db = get_database()
 
     migrations = [
+        # =====================================================================
+        # CRITICAL: Create core memory tables if they don't exist.
+        #
+        # These tables are NOT in SQLAlchemy models (Base.metadata), so
+        # create_tables() does NOT create them. Without this migration, any
+        # fresh CEMS deployment will 500 on every memory operation because
+        # memory_documents and memory_chunks simply don't exist.
+        #
+        # This was the cause of a production outage on the hubstaff-server
+        # CEMS instance (2026-03-27) — the Docker image was up to date but
+        # the database had no memory tables.
+        # =====================================================================
+        (
+            "core_memory_tables_v1",
+            """
+            -- Enable pgvector extension (required for embedding columns)
+            CREATE EXTENSION IF NOT EXISTS vector;
+
+            -- Document-level storage (deduplicated by content_hash)
+            CREATE TABLE IF NOT EXISTS memory_documents (
+                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                team_id UUID REFERENCES teams(id) ON DELETE SET NULL,
+                scope TEXT NOT NULL DEFAULT 'personal',
+                category TEXT NOT NULL DEFAULT 'document',
+                title TEXT,
+                source TEXT,
+                source_ref TEXT,
+                tags TEXT[] DEFAULT '{}',
+                content TEXT NOT NULL,
+                content_hash TEXT NOT NULL,
+                content_bytes INT NOT NULL,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                CONSTRAINT valid_doc_scope CHECK (scope IN ('personal', 'shared', 'team', 'company'))
+            );
+
+            -- Indexes for memory_documents
+            CREATE UNIQUE INDEX IF NOT EXISTS memory_documents_hash_user_idx
+                ON memory_documents (content_hash, user_id);
+            CREATE INDEX IF NOT EXISTS memory_documents_user_id_idx ON memory_documents(user_id);
+            CREATE INDEX IF NOT EXISTS memory_documents_team_id_idx ON memory_documents(team_id);
+            CREATE INDEX IF NOT EXISTS memory_documents_scope_idx ON memory_documents(scope);
+            CREATE INDEX IF NOT EXISTS memory_documents_category_idx ON memory_documents(category);
+            CREATE INDEX IF NOT EXISTS memory_documents_tags_idx ON memory_documents USING gin(tags);
+            CREATE INDEX IF NOT EXISTS memory_documents_source_ref_idx ON memory_documents(source_ref);
+            CREATE INDEX IF NOT EXISTS memory_documents_created_at_idx ON memory_documents(created_at);
+
+            -- Chunked content with embeddings for vector search
+            CREATE TABLE IF NOT EXISTS memory_chunks (
+                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                document_id UUID NOT NULL REFERENCES memory_documents(id) ON DELETE CASCADE,
+                seq INT NOT NULL,
+                pos INT NOT NULL,
+                content TEXT NOT NULL,
+                embedding vector(1536) NOT NULL,
+                tokens INT,
+                bytes INT,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                CONSTRAINT valid_seq CHECK (seq >= 0),
+                CONSTRAINT valid_pos CHECK (pos >= 0)
+            );
+
+            CREATE INDEX IF NOT EXISTS memory_chunks_doc_seq_idx
+                ON memory_chunks (document_id, seq);
+            CREATE INDEX IF NOT EXISTS memory_chunks_embedding_hnsw_idx
+                ON memory_chunks USING hnsw (embedding vector_cosine_ops)
+                WITH (m=16, ef_construction=64);
+
+            -- Graph relations between documents
+            CREATE TABLE IF NOT EXISTS memory_relations (
+                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                source_id UUID NOT NULL,
+                target_id UUID NOT NULL,
+                relation_type TEXT NOT NULL DEFAULT 'related',
+                weight FLOAT NOT NULL DEFAULT 1.0,
+                metadata JSONB DEFAULT '{}',
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                CONSTRAINT no_self_relation CHECK (source_id != target_id)
+            );
+
+            CREATE INDEX IF NOT EXISTS memory_relations_source_idx ON memory_relations(source_id);
+            CREATE INDEX IF NOT EXISTS memory_relations_target_idx ON memory_relations(target_id);
+            CREATE INDEX IF NOT EXISTS memory_relations_type_idx ON memory_relations(relation_type);
+            """,
+        ),
         # Fix api_key_prefix column size (10 -> 20 chars)
         (
             "api_key_prefix_size_v1",
