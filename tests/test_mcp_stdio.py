@@ -10,6 +10,11 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+import cems.mcp_stdio as _mcp_module
+
+# Keep a reference to the real _get_config before any patching
+_real_get_config = _mcp_module._get_config
+
 
 # Patch module-level config before importing anything from mcp_stdio
 @pytest.fixture(autouse=True)
@@ -20,99 +25,72 @@ def _patch_mcp_config():
             yield
 
 
-class TestReadCredentials:
-    """Tests for _read_credentials."""
+class TestGetConfigWithResolver:
+    """Tests for _get_config using the shared credential resolver.
 
-    def test_reads_credentials_file(self, tmp_path):
-        from cems.mcp_stdio import _read_credentials
-
-        creds_file = tmp_path / ".cems" / "credentials"
-        creds_file.parent.mkdir(parents=True)
-        creds_file.write_text("CEMS_API_URL=http://localhost:8765\nCEMS_API_KEY=my-key\n")
-
-        with patch("cems.mcp_stdio.Path.home", return_value=tmp_path):
-            result = _read_credentials()
-
-        assert result["CEMS_API_URL"] == "http://localhost:8765"
-        assert result["CEMS_API_KEY"] == "my-key"
-
-    def test_skips_comments_and_blank_lines(self, tmp_path):
-        from cems.mcp_stdio import _read_credentials
-
-        creds_file = tmp_path / ".cems" / "credentials"
-        creds_file.parent.mkdir(parents=True)
-        creds_file.write_text("# comment\n\nKEY=value\n")
-
-        with patch("cems.mcp_stdio.Path.home", return_value=tmp_path):
-            result = _read_credentials()
-
-        assert result == {"KEY": "value"}
-
-    def test_returns_empty_on_missing_file(self, tmp_path):
-        from cems.mcp_stdio import _read_credentials
-
-        with patch("cems.mcp_stdio.Path.home", return_value=tmp_path):
-            result = _read_credentials()
-
-        assert result == {}
-
-    def test_strips_quotes(self, tmp_path):
-        from cems.mcp_stdio import _read_credentials
-
-        creds_file = tmp_path / ".cems" / "credentials"
-        creds_file.parent.mkdir(parents=True)
-        creds_file.write_text("KEY='quoted-value'\nKEY2=\"double-quoted\"\n")
-
-        with patch("cems.mcp_stdio.Path.home", return_value=tmp_path):
-            result = _read_credentials()
-
-        assert result["KEY"] == "quoted-value"
-        assert result["KEY2"] == "double-quoted"
-
-
-class TestGetConfig:
-    """Tests for _get_config.
-
-    These tests call the real _get_config function (not the autouse mock)
-    by explicitly overriding the patch context.
+    These tests call the real _get_config (via _real_get_config saved before
+    autouse patching) and only mock resolve_credentials to control credential
+    resolution behavior.
     """
 
-    def test_env_vars_take_priority(self):
-        """Env vars override credentials file."""
-        from cems.mcp_stdio import _read_credentials
+    def test_per_project_credentials_from_cwd(self, tmp_path):
+        """Per-project .cems/credentials in CWD takes precedence over global."""
+        project_creds = tmp_path / ".cems" / "credentials"
+        project_creds.parent.mkdir(parents=True)
+        project_creds.write_text(
+            "CEMS_API_URL=http://project:8765\nCEMS_API_KEY=project-key\n"
+        )
 
-        with patch.dict("os.environ", {"CEMS_API_URL": "http://env:8765", "CEMS_API_KEY": "env-key"}):
-            # Call the real logic inline (same as _get_config)
-            api_url = os.environ.get("CEMS_API_URL", "")
-            api_key = os.environ.get("CEMS_API_KEY", "")
+        with patch("cems.mcp_stdio.resolve_credentials", return_value={
+            "CEMS_API_URL": "http://project:8765",
+            "CEMS_API_KEY": "project-key",
+        }):
+            api_url, api_key = _real_get_config()
+
+        assert api_url == "http://project:8765"
+        assert api_key == "project-key"
+
+    def test_fallback_to_global_credentials(self):
+        """Falls back to global ~/.cems/credentials when no project creds exist."""
+        with patch("cems.mcp_stdio.resolve_credentials", return_value={
+            "CEMS_API_URL": "http://global:8765",
+            "CEMS_API_KEY": "global-key",
+        }):
+            api_url, api_key = _real_get_config()
+
+        assert api_url == "http://global:8765"
+        assert api_key == "global-key"
+
+    def test_env_vars_win_over_file_credentials(self):
+        """Env vars take highest precedence via resolve_credentials."""
+        with patch("cems.mcp_stdio.resolve_credentials", return_value={
+            "CEMS_API_URL": "http://env:8765",
+            "CEMS_API_KEY": "env-key",
+        }):
+            api_url, api_key = _real_get_config()
 
         assert api_url == "http://env:8765"
         assert api_key == "env-key"
 
-    def test_falls_back_to_credentials(self):
-        """When env vars empty, falls back to credentials file."""
-        with patch.dict("os.environ", {"CEMS_API_URL": "", "CEMS_API_KEY": ""}, clear=False):
-            with patch("cems.mcp_stdio._read_credentials", return_value={
-                "CEMS_API_URL": "http://creds:8765",
-                "CEMS_API_KEY": "creds-key",
-            }):
-                from cems.mcp_stdio import _get_config as _gc
-                # Bypass autouse by calling directly with context managers active
-                api_url = os.environ.get("CEMS_API_URL", "")
-                api_key = os.environ.get("CEMS_API_KEY", "")
-                if not api_url or not api_key:
-                    from cems.mcp_stdio import _read_credentials
-                    creds = _read_credentials()
-                    api_url = api_url or creds.get("CEMS_API_URL", "")
-                    api_key = api_key or creds.get("CEMS_API_KEY", "")
-
-        assert api_url == "http://creds:8765"
-        assert api_key == "creds-key"
-
     def test_strips_trailing_slash(self):
         """API URL has trailing slash stripped."""
-        url = "http://host:8765/"
-        assert url.rstrip("/") == "http://host:8765"
+        with patch("cems.mcp_stdio.resolve_credentials", return_value={
+            "CEMS_API_URL": "http://host:8765/",
+            "CEMS_API_KEY": "some-key",
+        }):
+            api_url, api_key = _real_get_config()
+
+        assert api_url == "http://host:8765"
+
+    def test_passes_cwd_to_resolver(self):
+        """_get_config passes os.getcwd() to resolve_credentials."""
+        with patch("cems.mcp_stdio.resolve_credentials", return_value={
+            "CEMS_API_URL": "http://test:8765",
+            "CEMS_API_KEY": "test-key",
+        }) as mock_resolve:
+            _real_get_config()
+
+        mock_resolve.assert_called_once_with(os.getcwd())
 
 
 class TestRequest:

@@ -13,7 +13,8 @@ import json
 import logging
 import os
 import urllib.request
-from pathlib import Path
+
+from cems.shared.credentials import resolve_credentials
 
 logger = logging.getLogger(__name__)
 
@@ -23,32 +24,13 @@ from mcp.server.fastmcp import FastMCP
 # Credentials
 # ---------------------------------------------------------------------------
 
-def _read_credentials() -> dict[str, str]:
-    """Read ~/.cems/credentials as key=value pairs."""
-    creds_file = Path.home() / ".cems" / "credentials"
-    result: dict[str, str] = {}
-    try:
-        if creds_file.exists():
-            for line in creds_file.read_text().splitlines():
-                line = line.strip()
-                if not line or line.startswith("#"):
-                    continue
-                if "=" in line:
-                    key, _, value = line.partition("=")
-                    result[key.strip()] = value.strip().strip("'\"")
-    except OSError:
-        pass
-    return result
-
-
 def _get_config() -> tuple[str, str]:
-    """Return (api_url, api_key) from env vars or ~/.cems/credentials."""
-    api_url = os.environ.get("CEMS_API_URL", "")
-    api_key = os.environ.get("CEMS_API_KEY", "")
-    if not api_url or not api_key:
-        creds = _read_credentials()
-        api_url = api_url or creds.get("CEMS_API_URL", "")
-        api_key = api_key or creds.get("CEMS_API_KEY", "")
+    """Return (api_url, api_key) using the shared credential resolver.
+    Precedence: env vars > per-project .cems/credentials > global ~/.cems/credentials.
+    """
+    creds = resolve_credentials(os.getcwd())
+    api_url = creds.get("CEMS_API_URL", "")
+    api_key = creds.get("CEMS_API_KEY", "")
     return api_url.rstrip("/"), api_key
 
 
@@ -119,7 +101,7 @@ def memory_search(
     if project:
         payload["project"] = project
     # Pass search mode from credentials or env (CEMS_SEARCH_MODE=agentic)
-    search_mode = os.getenv("CEMS_SEARCH_MODE") or _read_credentials().get("CEMS_SEARCH_MODE", "")
+    search_mode = os.getenv("CEMS_SEARCH_MODE") or resolve_credentials(os.getcwd()).get("CEMS_SEARCH_MODE", "")
     if search_mode:
         payload["mode"] = search_mode
     return json.dumps(_request("POST", "/api/memory/search", payload))
