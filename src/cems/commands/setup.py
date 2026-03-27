@@ -492,51 +492,12 @@ def _install_claude_hooks(data_path: Path, api_url: str, team_id: str | None = N
     _register_claude_mcp_server(api_url, team_id=team_id)
 
 
-def _discover_mcp_url(api_url: str) -> str:
-    """Get MCP URL: credentials override > server discovery > fallback.
-
-    Priority:
-    1. CEMS_MCP_URL from ~/.cems/credentials (user override, survives updates)
-    2. Server discovery endpoint (/api/config/setup)
-    3. Fallback: api_url + /mcp
-    """
-    import urllib.request
-    import urllib.error
-
-    # 1. Check credentials for explicit override
-    creds = _read_credentials()
-    creds_mcp = creds.get("CEMS_MCP_URL", "")
-    if creds_mcp:
-        return creds_mcp
-
-    # 2. Server discovery
-    discovery_url = api_url.rstrip("/") + "/api/config/setup"
-    try:
-        req = urllib.request.Request(discovery_url, method="GET")
-        req.add_header("User-Agent", "CEMS-CLI/1.0")
-        with urllib.request.urlopen(req, timeout=5) as resp:
-            data = json.loads(resp.read().decode())
-            mcp_url = data.get("mcp_url")
-            if mcp_url:
-                return mcp_url
-    except (urllib.error.URLError, json.JSONDecodeError, OSError):
-        pass
-
-    # 3. Fallback: derive MCP URL from API URL
-    # API: https://cems.example.com → MCP: https://mcp-cems.example.com/mcp
-    # API: http://localhost:8765 → MCP: http://localhost:8766/mcp (local dev)
-    from urllib.parse import urlparse
-    parsed = urlparse(api_url.rstrip("/"))
-    if parsed.hostname in ("localhost", "127.0.0.1"):
-        return f"{parsed.scheme}://{parsed.hostname}:8766/mcp"
-    return f"{parsed.scheme}://mcp-{parsed.hostname}/mcp"
-
-
 def _register_claude_mcp_server(api_url: str, team_id: str | None = None) -> None:
     """Register CEMS MCP server in Claude Code config (~/.claude.json).
 
-    Queries the server's discovery endpoint for the MCP URL,
-    falls back to {api_url}/mcp if unavailable.
+    Uses stdio transport — Claude Code spawns `cems-mcp` locally.
+    The server resolves credentials from CWD, so per-project
+    .cems/credentials files are picked up automatically.
     """
     claude_json = Path.home() / ".claude.json"
 
@@ -549,20 +510,13 @@ def _register_claude_mcp_server(api_url: str, team_id: str | None = None) -> Non
 
     mcp_servers = existing.setdefault("mcpServers", {})
 
-    mcp_url = _discover_mcp_url(api_url)
-
-    headers = {"Authorization": "Bearer ${CEMS_API_KEY}"}
-    if team_id:
-        headers["X-Team-Id"] = team_id
-
     mcp_servers["cems"] = {
-        "type": "http",
-        "url": mcp_url,
-        "headers": headers,
+        "command": "cems-mcp",
+        "args": [],
     }
 
     claude_json.write_text(json.dumps(existing, indent=2) + "\n")
-    console.print(f"  MCP server registered: {mcp_url}")
+    console.print("  MCP server registered: cems-mcp (stdio)")
 
 
 def _migrate_old_hook_names(hooks: dict) -> None:
