@@ -1,7 +1,11 @@
 """Health check handlers."""
 
+from importlib.metadata import version
+
 from starlette.requests import Request
 from starlette.responses import JSONResponse
+
+CEMS_VERSION = version("cems")
 
 
 async def ping(request: Request):
@@ -30,6 +34,7 @@ async def health_check(request: Request):
 
     return JSONResponse({
         "status": overall,
+        "version": CEMS_VERSION,
         "service": "cems-mcp-server",
         "mode": "http",
         "auth": "database",
