@@ -330,6 +330,35 @@ class DocumentStore:
 
         return self._doc_row_to_dict(row)
 
+    async def get_document_by_prefix(
+        self, id_prefix: str, user_id: str | None = None, include_deleted: bool = False
+    ) -> dict[str, Any] | None:
+        """Get a document by ID prefix.
+
+        Looks up documents whose UUID starts with the given prefix.
+        Returns the document if exactly one match is found, None otherwise.
+
+        Args:
+            id_prefix: The first N characters of the document UUID
+            user_id: Owner user ID for ownership check (prevents IDOR).
+            include_deleted: If True, also match soft-deleted documents (for restore).
+        """
+        pool = await self._get_pool()
+        deleted_filter = "" if include_deleted else " AND deleted_at IS NULL"
+        if user_id:
+            query = f"SELECT {DOCUMENT_COLUMNS} FROM memory_documents WHERE id::text LIKE $1 AND user_id = $2{deleted_filter} LIMIT 2"
+            async with pool.acquire() as conn:
+                rows = await conn.fetch(query, f"{id_prefix}%", UUID(user_id))
+        else:
+            query = f"SELECT {DOCUMENT_COLUMNS} FROM memory_documents WHERE id::text LIKE $1{deleted_filter} LIMIT 2"
+            async with pool.acquire() as conn:
+                rows = await conn.fetch(query, f"{id_prefix}%")
+
+        if len(rows) != 1:
+            return None
+
+        return self._doc_row_to_dict(rows[0])
+
     async def delete_document(
         self, document_id: str, hard: bool = False, user_id: str | None = None
     ) -> bool:
@@ -1118,6 +1147,7 @@ class DocumentStore:
         team_id: str | None = None,
         scope: str | None = None,
         category: str | None = None,
+        tag_prefix: str | None = None,
     ) -> int:
         """Count documents for a user with optional filters.
 
@@ -1129,6 +1159,7 @@ class DocumentStore:
             team_id: Team ID (enables cross-user visibility for shared scope)
             scope: Optional scope filter
             category: Optional category filter
+            tag_prefix: Optional tag prefix filter (matches any tag starting with prefix)
 
         Returns:
             Document count matching the filters
@@ -1142,6 +1173,8 @@ class DocumentStore:
         )
         if category:
             fb.add_param("category = ${}", category)
+        if tag_prefix:
+            fb.add_param("EXISTS (SELECT 1 FROM unnest(tags) t WHERE t LIKE ${} || '%')", tag_prefix)
 
         query = f"SELECT COUNT(*) FROM memory_documents WHERE {fb.build()}"
 
@@ -1375,6 +1408,7 @@ class DocumentStore:
         document_id: str,
         relation_type: str | None = None,
         limit: int = 10,
+        user_id: str | None = None,
     ) -> list[dict[str, Any]]:
         """Get documents related to a given document via memory_relations.
 
@@ -1385,6 +1419,7 @@ class DocumentStore:
             document_id: Starting document ID
             relation_type: Optional relation type filter
             limit: Maximum results
+            user_id: If provided, only return related docs owned by this user
 
         Returns:
             List of related document dicts with relation_type and relation_similarity
@@ -1397,26 +1432,35 @@ class DocumentStore:
             f"d.{col.strip()}" for col in DOCUMENT_COLUMNS.split(",")
         )
 
+        # Always filter out soft-deleted target documents
+        base_filter = "d.deleted_at IS NULL"
+        if user_id:
+            base_filter += f" AND d.user_id = ${4 if relation_type else 3}::uuid"
+
         if relation_type:
             query = f"""
                 SELECT {doc_cols}, r.relation_type, r.similarity AS relation_similarity
                 FROM memory_relations r
                 JOIN memory_documents d ON r.target_id = d.id
-                WHERE r.source_id = $1 AND r.relation_type = $2
+                WHERE r.source_id = $1 AND r.relation_type = $2 AND {base_filter}
                 ORDER BY r.similarity DESC NULLS LAST
                 LIMIT $3
             """
             values: list = [doc_uuid, relation_type, limit]
+            if user_id:
+                values.append(UUID(user_id))
         else:
             query = f"""
                 SELECT {doc_cols}, r.relation_type, r.similarity AS relation_similarity
                 FROM memory_relations r
                 JOIN memory_documents d ON r.target_id = d.id
-                WHERE r.source_id = $1
+                WHERE r.source_id = $1 AND {base_filter}
                 ORDER BY r.similarity DESC NULLS LAST
                 LIMIT $2
             """
             values = [doc_uuid, limit]
+            if user_id:
+                values.append(UUID(user_id))
 
         async with pool.acquire() as conn:
             rows = await conn.fetch(query, *values)
@@ -1466,13 +1510,14 @@ class DocumentStore:
     # Feedback Operations
     # =========================================================================
 
-    async def increment_shown_count(self, document_ids: list[str]) -> int:
+    async def increment_shown_count(self, document_ids: list[str], user_id: str | None = None) -> int:
         """Increment shown_count and update last_shown_at for documents.
 
         Called when memories are surfaced in search results to track usage.
 
         Args:
             document_ids: List of document IDs that were shown
+            user_id: If provided, only update documents owned by this user
 
         Returns:
             Number of documents updated
@@ -1483,16 +1528,25 @@ class DocumentStore:
         pool = await self._get_pool()
         uuids = [UUID(did) for did in document_ids]
 
-        async with pool.acquire() as conn:
-            result = await conn.execute(
-                """
+        if user_id:
+            sql = """
+                UPDATE memory_documents
+                SET shown_count = shown_count + 1,
+                    last_shown_at = NOW()
+                WHERE id = ANY($1) AND user_id = $2 AND deleted_at IS NULL
+            """
+            args: list = [uuids, UUID(user_id)]
+        else:
+            sql = """
                 UPDATE memory_documents
                 SET shown_count = shown_count + 1,
                     last_shown_at = NOW()
                 WHERE id = ANY($1) AND deleted_at IS NULL
-                """,
-                uuids,
-            )
+            """
+            args = [uuids]
+
+        async with pool.acquire() as conn:
+            result = await conn.execute(sql, *args)
 
         count = int(result.split()[1]) if result else 0
         logger.debug(f"Incremented shown_count for {count} documents")
@@ -1502,6 +1556,7 @@ class DocumentStore:
         self,
         document_ids: list[str],
         feedback_type: Literal["relevant", "noise", "noise_snippet"],
+        user_id: str | None = None,
     ) -> int:
         """Increment relevant_count, noise_count, or noise_snippet_count for documents.
 
@@ -1511,6 +1566,7 @@ class DocumentStore:
             document_ids: List of document IDs to update
             feedback_type: "relevant", "noise" (full-content), or "noise_snippet"
                           (Claude only saw a truncated snippet — lighter signal)
+            user_id: If provided, only update documents owned by this user
 
         Returns:
             Number of documents updated
@@ -1527,15 +1583,23 @@ class DocumentStore:
         pool = await self._get_pool()
         uuids = [UUID(did) for did in document_ids]
 
-        async with pool.acquire() as conn:
-            result = await conn.execute(
-                f"""
+        if user_id:
+            sql = f"""
+                UPDATE memory_documents
+                SET {column} = {column} + 1
+                WHERE id = ANY($1) AND user_id = $2 AND deleted_at IS NULL
+            """
+            args: list = [uuids, UUID(user_id)]
+        else:
+            sql = f"""
                 UPDATE memory_documents
                 SET {column} = {column} + 1
                 WHERE id = ANY($1) AND deleted_at IS NULL
-                """,
-                uuids,
-            )
+            """
+            args = [uuids]
+
+        async with pool.acquire() as conn:
+            result = await conn.execute(sql, *args)
 
         count = int(result.split()[1]) if result else 0
         logger.debug(f"Incremented {column} for {count} documents")
@@ -1602,10 +1666,12 @@ class DocumentStore:
                     doc_bytes = len(content.encode("utf-8"))
 
                     # Check for existing document with same hash (non-deleted only)
+                    # Use FOR UPDATE to prevent TOCTOU race with concurrent batches
                     existing = await conn.fetchrow(
                         """
                         SELECT id FROM memory_documents
                         WHERE content_hash = $1 AND user_id = $2 AND deleted_at IS NULL
+                        FOR UPDATE
                         """,
                         doc_hash,
                         user_uuid,
@@ -1806,27 +1872,39 @@ class DocumentStore:
         self,
         conflict_id: str,
         resolution: str = "resolved",
+        user_id: str | None = None,
     ) -> bool:
         """Mark a conflict as resolved or dismissed.
 
         Args:
             conflict_id: Conflict UUID
             resolution: Status to set ("resolved" or "dismissed")
+            user_id: If provided, only resolve conflicts owned by this user
 
         Returns:
             True if conflict was found and updated
         """
         pool = await self._get_pool()
+        cid = UUID(conflict_id) if isinstance(conflict_id, str) else conflict_id
         async with pool.acquire() as conn:
-            result = await conn.execute(
-                """
-                UPDATE memory_conflicts
-                SET status = $2, resolved_at = NOW()
-                WHERE id = $1 AND status = 'open'
-                """,
-                UUID(conflict_id) if isinstance(conflict_id, str) else conflict_id,
-                resolution,
-            )
+            if user_id:
+                result = await conn.execute(
+                    """
+                    UPDATE memory_conflicts
+                    SET status = $2, resolved_at = NOW()
+                    WHERE id = $1 AND user_id = $3 AND status = 'open'
+                    """,
+                    cid, resolution, UUID(user_id),
+                )
+            else:
+                result = await conn.execute(
+                    """
+                    UPDATE memory_conflicts
+                    SET status = $2, resolved_at = NOW()
+                    WHERE id = $1 AND status = 'open'
+                    """,
+                    cid, resolution,
+                )
             return result == "UPDATE 1"
 
 

@@ -50,18 +50,16 @@ def _make_search_result_from_chunk(chunk: dict, user_id: str) -> SearchResult:
         last_accessed=last_accessed,
     )
 
-    result = SearchResult(
+    return SearchResult(
         memory_id=memory_id,
         content=chunk.get("content", chunk.get("chunk_content", "")),
         score=chunk.get("score", 0.0),
         scope=memory_scope,
         metadata=metadata,
+        relevant_count=chunk.get("relevant_count", 0),
+        noise_count=chunk.get("noise_count", 0),
+        noise_snippet_count=chunk.get("noise_snippet_count", 0),
     )
-    # Attach relevance feedback counts for scoring (not in Pydantic model)
-    result._relevant_count = chunk.get("relevant_count", 0)  # type: ignore[attr-defined]
-    result._noise_count = chunk.get("noise_count", 0)  # type: ignore[attr-defined]
-    result._noise_snippet_count = chunk.get("noise_snippet_count", 0)  # type: ignore[attr-defined]
-    return result
 
 
 def _dedupe_by_document(results: list[SearchResult]) -> list[SearchResult]:
@@ -75,35 +73,15 @@ def _dedupe_by_document(results: list[SearchResult]) -> list[SearchResult]:
 
 
 def _apply_score_adjustments(results: list[SearchResult]) -> list[SearchResult]:
-    """Apply priority boost and time decay to scores in-place.
+    """Apply time decay and relevance feedback to scores in-place.
 
-    Mutates scores on each result and returns the same list for chaining.
-    Uses category-aware decay from retrieval module.
+    Delegates to retrieval.apply_score_adjustments (single source of truth).
+    Passes no project/config for basic search path (no project scoring).
     """
-    from cems.retrieval import _category_half_life
+    from cems.retrieval import apply_score_adjustments
 
-    now = datetime.now(UTC)
     for result in results:
-        if result.metadata:
-            days_since_access = (now - result.metadata.last_accessed).days
-            half_life = _category_half_life(result.metadata.category)
-            time_decay = 1.0 / (1.0 + (days_since_access / half_life))
-            # Relevance feedback adjustment (min 2 signals to act)
-            # Full-content feedback (strong signal — Claude saw the whole memory)
-            relevant_count = getattr(result, "_relevant_count", 0)
-            noise_count = getattr(result, "_noise_count", 0)
-            total_feedback = relevant_count + noise_count
-            if total_feedback >= 2:
-                relevance_ratio = relevant_count / total_feedback
-                # Scale: 0.50 (all noise) → 1.0 (50/50) → 1.20 (all relevant)
-                time_decay *= 0.50 + 0.70 * relevance_ratio
-            # Snippet-level noise (lighter signal — Claude only saw a truncated view)
-            noise_snippet = getattr(result, "_noise_snippet_count", 0)
-            if noise_snippet >= 5:
-                # Mild penalty: snippet didn't match, but full doc might still be valuable
-                # Cap at 20% penalty even with many snippet-noise votes
-                time_decay *= max(0.80, 1.0 - (noise_snippet * 0.02))
-            result.score *= time_decay
+        result.score = apply_score_adjustments(result, project=None, config=None)
     return results
 
 

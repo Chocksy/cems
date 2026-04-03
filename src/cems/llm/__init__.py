@@ -6,7 +6,7 @@ OpenAI SDK interface.
 
 Environment Variables:
     OPENROUTER_API_KEY: Required. Your OpenRouter API key.
-    CEMS_LLM_MODEL: Optional. Model in OpenRouter format (default: anthropic/claude-3-haiku)
+    CEMS_LLM_MODEL: Optional. Model in OpenRouter format (default: qwen/qwen3-32b)
     CEMS_OPENROUTER_SITE_URL: Optional. Attribution URL for OpenRouter dashboard.
     CEMS_OPENROUTER_SITE_NAME: Optional. Attribution name for OpenRouter dashboard.
 
@@ -26,7 +26,6 @@ from cems.llm.client import (
     OPENROUTER_MODELS,
     OpenRouterClient,
     get_client,
-    get_llm_client,  # Deprecated, kept for backwards compatibility
 )
 
 # Summarization exports
@@ -55,7 +54,6 @@ __all__ = [
     # Client
     "OpenRouterClient",
     "get_client",
-    "get_llm_client",
     "OPENROUTER_BASE_URL",
     "OPENROUTER_MODELS",
     "FAST_PROVIDERS",

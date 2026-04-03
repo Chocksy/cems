@@ -131,7 +131,7 @@ class CEMSMemory(WriteMixin, SearchMixin, CRUDMixin, MetadataMixin, RelationsMix
 
     # add() and add_async() are provided by WriteMixin
     # search(), search_async(), _search_raw(), _search_raw_async() are provided by SearchMixin
-    # get(), get_all(), update(), update_async(), delete(), delete_async(), forget(), history() are provided by CRUDMixin
+    # get(), get_all(), update(), update_async(), delete(), delete_async(), forget() are provided by CRUDMixin
     # get_metadata(), get_metadata_async(), get_category_counts_async() are provided by MetadataMixin
-    # graph_store, get_related_memories(), get_related_memories_async(), get_memories_by_entity(), get_graph_stats() are provided by RelationsMixin
+    # get_related_memories(), get_related_memories_async() are provided by RelationsMixin
     # retrieve_for_inference(), retrieve_for_inference_async() are provided by RetrievalMixin

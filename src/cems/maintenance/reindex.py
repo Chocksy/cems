@@ -9,6 +9,8 @@ import logging
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
+from cems.maintenance import PROTECTED_CATEGORIES
+
 if TYPE_CHECKING:
     from cems.memory import CEMSMemory
 
@@ -130,11 +132,6 @@ class ReindexJob:
         )
         return refreshed
 
-    # Categories that should never be archived (long-lived config docs)
-    PROTECTED_CATEGORIES = {
-        "gate-rules", "guidelines", "preferences",
-        "category-summary", "session-summary",
-    }
 
     async def _archive_dead(self, doc_store, docs: list[dict]) -> int:
         """Soft-delete documents created before archive_days ago.
@@ -158,7 +155,7 @@ class ReindexJob:
 
         for doc in docs:
             # Never archive protected categories (long-lived config docs)
-            if doc.get("category", "general") in self.PROTECTED_CATEGORIES:
+            if doc.get("category", "general") in PROTECTED_CATEGORIES:
                 continue
 
             created_at = doc.get("created_at")

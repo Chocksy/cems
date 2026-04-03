@@ -3,6 +3,7 @@
 These routes require admin authentication via CEMS_ADMIN_KEY.
 """
 
+import hmac
 import logging
 import os
 import uuid
@@ -44,7 +45,7 @@ def require_admin_auth(request: Request) -> JSONResponse | None:
         )
 
     provided_key = auth_header[7:]  # Strip "Bearer "
-    if provided_key != admin_key:
+    if not hmac.compare_digest(provided_key, admin_key):
         return JSONResponse({"error": "Invalid admin key"}, status_code=403)
 
     return None  # Authenticated

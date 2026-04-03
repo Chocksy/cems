@@ -190,36 +190,3 @@ def get_client() -> OpenRouterClient:
     if _client is None:
         _client = OpenRouterClient()
     return _client
-
-
-# Backwards compatibility functions
-def get_llm_client(provider: str = "openrouter") -> OpenAI:
-    """Get the LLM client.
-
-    DEPRECATED: Use get_client() instead. This function is kept for backwards
-    compatibility but always returns an OpenRouter-based client.
-
-    Args:
-        provider: Ignored. OpenRouter is always used.
-
-    Returns:
-        The underlying OpenAI client configured for OpenRouter
-    """
-    logger.warning(
-        "get_llm_client() is deprecated. Use get_client() which returns OpenRouterClient."
-    )
-    return get_client()._client
-
-
-def _resolve_openrouter_model(model: str | None) -> str:
-    """Resolve a model name to OpenRouter format.
-
-    DEPRECATED: Unused — use OpenRouterClient._resolve_model() instead.
-    """
-    if model is None:
-        return OPENROUTER_MODELS["default"]
-    if "/" in model:
-        return model
-    if model in OPENROUTER_MODELS:
-        return OPENROUTER_MODELS[model]
-    return model

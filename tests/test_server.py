@@ -48,6 +48,11 @@ def mock_memory():
     })
     mock.get_category_counts_async = AsyncMock(return_value={"general": 5})
 
+    # Set up doc store for prefix-based ID resolution
+    mock_doc_store = MagicMock()
+    mock_doc_store.get_document_by_prefix = AsyncMock(return_value={"id": "mem-123-full-uuid"})
+    mock._ensure_document_store = AsyncMock(return_value=mock_doc_store)
+
     return mock
 
 
@@ -863,7 +868,9 @@ class TestLogShownEndpoint:
             data = response.json()
             assert data["success"] is True
             assert data["updated"] == 3
-            mock_doc_store.increment_shown_count.assert_called_once_with(["id-1", "id-2", "id-3"])
+            mock_doc_store.increment_shown_count.assert_called_once_with(
+                ["id-1", "id-2", "id-3"], user_id="test-user-uuid"
+            )
 
     @patch("cems.db.database.is_database_initialized", return_value=True)
     @patch("cems.db.database.get_database")
@@ -940,8 +947,8 @@ class TestSoftDelete:
             data = response.json()
             assert data["success"] is True
             assert "soft-deleted" in data["message"]
-            # Verify delete_async was called with hard=False
-            mock_memory.delete_async.assert_called_once_with("mem-123", hard=False)
+            # Verify delete_async was called with resolved ID and hard=False
+            mock_memory.delete_async.assert_called_once_with("mem-123-full-uuid", hard=False)
 
     @patch("cems.db.database.is_database_initialized", return_value=True)
     @patch("cems.db.database.get_database")
@@ -971,8 +978,8 @@ class TestSoftDelete:
             data = response.json()
             assert data["success"] is True
             assert "deleted" in data["message"]
-            # Verify delete_async was called with hard=True
-            mock_memory.delete_async.assert_called_once_with("mem-123", hard=True)
+            # Verify delete_async was called with resolved ID and hard=True
+            mock_memory.delete_async.assert_called_once_with("mem-123-full-uuid", hard=True)
 
 
 class TestFoundationEndpoint:

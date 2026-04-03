@@ -146,14 +146,33 @@ def create_http_app():
 
                     # Set user context from database (using UUID for pgvector)
                     user_id = str(user.id)
-                    # Get team from header (optional, to select team context)
-                    team_id = request.headers.get("x-team-id")
+                    from cems.admin.services import TeamService
+                    team_service = TeamService(session)
+                    user_teams = team_service.get_user_teams(user.id)
 
-                    # Auto-resolve team_id from membership if not provided
-                    if not team_id:
-                        from cems.admin.services import TeamService
-                        team_service = TeamService(session)
-                        user_teams = team_service.get_user_teams(user.id)
+                    # Get team from header (optional, to select team context)
+                    raw_team_id = request.headers.get("x-team-id")
+                    team_id = None
+
+                    if raw_team_id:
+                        # Normalize to UUID string for consistent comparison
+                        from uuid import UUID as _UUID
+                        try:
+                            team_id = str(_UUID(raw_team_id))
+                        except ValueError:
+                            return JSONResponse(
+                                {"error": "Invalid team ID format"},
+                                status_code=400,
+                            )
+                        # Validate membership — reject if user not in this team
+                        valid_team_ids = {str(t.id) for t in user_teams}
+                        if team_id not in valid_team_ids:
+                            return JSONResponse(
+                                {"error": "Not a member of the specified team"},
+                                status_code=403,
+                            )
+                    else:
+                        # Auto-resolve team_id from membership if not provided
                         if len(user_teams) == 1:
                             team_id = str(user_teams[0].id)
             except Exception as e:

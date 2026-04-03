@@ -119,7 +119,7 @@ class RepositoryIndexer:
         """Clone and index a git repository.
 
         Args:
-            repo_url: Git repository URL
+            repo_url: Git repository URL (pre-validated for SSRF safety)
             branch: Branch to clone
             scope: Memory scope
             patterns: Optional list of pattern names to use

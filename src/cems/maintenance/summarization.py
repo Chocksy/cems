@@ -15,11 +15,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Categories that should never be summarized or pruned
-PROTECTED_CATEGORIES = {
-    "gate-rules", "guidelines", "preferences",
-    "category-summary", "session-summary",
-}
+from cems.maintenance import PROTECTED_CATEGORIES
 
 
 def _doc_age_exceeds(doc: dict, days: int, field: str = "created_at") -> bool:

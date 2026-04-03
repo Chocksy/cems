@@ -379,6 +379,39 @@ def run_migrations() -> None:
             ALTER TABLE memory_documents ADD COLUMN IF NOT EXISTS noise_snippet_count INT NOT NULL DEFAULT 0;
             """,
         ),
+        # Add content_detailed to memory_documents (used by distillation)
+        (
+            "content_detailed_v1",
+            """
+            ALTER TABLE memory_documents ADD COLUMN IF NOT EXISTS content_detailed TEXT;
+            """,
+        ),
+        # Add content_tsv to memory_chunks (used by hybrid/full-text search)
+        (
+            "content_tsv_v1",
+            """
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name = 'memory_chunks' AND column_name = 'content_tsv'
+                ) THEN
+                    ALTER TABLE memory_chunks ADD COLUMN content_tsv tsvector
+                        GENERATED ALWAYS AS (to_tsvector('english', content)) STORED;
+                    RAISE NOTICE 'Added memory_chunks.content_tsv';
+                END IF;
+            END $$;
+            CREATE INDEX IF NOT EXISTS memory_chunks_tsv_idx
+                ON memory_chunks USING gin(content_tsv);
+            """,
+        ),
+        # Add similarity column to memory_relations (used by graph traversal queries)
+        (
+            "memory_relations_similarity_v1",
+            """
+            ALTER TABLE memory_relations ADD COLUMN IF NOT EXISTS similarity FLOAT;
+            """,
+        ),
     ]
 
     for migration_id, sql in migrations:

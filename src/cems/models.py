@@ -18,17 +18,6 @@ class MemoryScope(str, Enum):
     SHARED = "shared"
 
 
-class MemoryCategory(str, Enum):
-    """Pre-defined memory categories."""
-
-    PREFERENCES = "preferences"
-    DECISIONS = "decisions"
-    PATTERNS = "patterns"
-    CONTEXT = "context"
-    LEARNINGS = "learnings"
-    GENERAL = "general"
-    GATE_RULES = "gate-rules"  # Tool-blocking rules for PreToolUse hooks
-
 
 class MemoryMetadata(BaseModel):
     """Extended metadata for a memory item."""
@@ -56,6 +45,10 @@ class SearchResult(BaseModel):
     scope: MemoryScope
     metadata: MemoryMetadata | None = None
     has_detailed: bool = False  # True when content_detailed exists (distilled memory)
+    # Relevance feedback signals for scoring (excluded from serialization)
+    relevant_count: int = Field(default=0, exclude=True)
+    noise_count: int = Field(default=0, exclude=True)
+    noise_snippet_count: int = Field(default=0, exclude=True)
 
 
 class CategorySummary(BaseModel):

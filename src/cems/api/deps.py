@@ -36,21 +36,13 @@ def get_base_config() -> CEMSConfig:
 
 
 def _config_for_user(user_id: str, team_id: str | None = None) -> CEMSConfig:
-    """Build a CEMSConfig for a specific user, inheriting base settings."""
+    """Build a CEMSConfig for a specific user, inheriting ALL base settings."""
     base = get_base_config()
-    return CEMSConfig(
-        user_id=user_id,
-        team_id=team_id,
-        database_url=base.database_url,
-        storage_dir=base.storage_dir,
-        embedding_model=base.embedding_model,
-        llm_model=base.llm_model,
-        enable_graph=base.enable_graph,
-        enable_scheduler=False,  # Scheduler runs separately
-        enable_query_synthesis=base.enable_query_synthesis,
-        relevance_threshold=base.relevance_threshold,
-        default_max_tokens=base.default_max_tokens,
-    )
+    return base.model_copy(update={
+        "user_id": user_id,
+        "team_id": team_id,
+        "enable_scheduler": False,  # Scheduler runs separately
+    })
 
 
 def get_memory() -> CEMSMemory:

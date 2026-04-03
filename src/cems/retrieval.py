@@ -728,15 +728,15 @@ def apply_score_adjustments(
         time_decay = 1.0 / (1.0 + (days_since_access / half_life))
         # Relevance feedback adjustment (min 2 signals to act)
         # Full-content feedback (strong signal — Claude saw the whole memory)
-        relevant_count = getattr(result, "_relevant_count", 0)
-        noise_count = getattr(result, "_noise_count", 0)
+        relevant_count = getattr(result, "relevant_count", 0)
+        noise_count = getattr(result, "noise_count", 0)
         total_feedback = relevant_count + noise_count
         if total_feedback >= 2:
             relevance_ratio = relevant_count / total_feedback
             # Scale: 0.50 (all noise) → 1.0 (50/50) → 1.20 (all relevant)
             time_decay *= 0.50 + 0.70 * relevance_ratio
         # Snippet-level noise (lighter signal — Claude only saw a truncated view)
-        noise_snippet = getattr(result, "_noise_snippet_count", 0)
+        noise_snippet = getattr(result, "noise_snippet_count", 0)
         if noise_snippet >= 5:
             # Mild penalty: snippet didn't match, but full doc might still be valuable
             # Cap at 20% penalty even with many snippet-noise votes
