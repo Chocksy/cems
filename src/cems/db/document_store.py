@@ -121,6 +121,28 @@ class DocumentStore:
         """Setup each connection with pgvector extension."""
         await register_vector(conn)
 
+    @staticmethod
+    async def _batch_insert_chunks(
+        conn: "asyncpg.Connection",
+        doc_id: "UUID",
+        chunks: list,
+        embeddings: list,
+    ) -> None:
+        """Insert chunks with embeddings in a single batch (executemany)."""
+        chunk_rows = [
+            (uuid4(), doc_id, chunk.seq, chunk.pos,
+             chunk.content, embedding, chunk.tokens, chunk.bytes)
+            for chunk, embedding in zip(chunks, embeddings)
+        ]
+        await conn.executemany(
+            """
+            INSERT INTO memory_chunks (
+                id, document_id, seq, pos, content, embedding, tokens, bytes
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            """,
+            chunk_rows,
+        )
+
     async def close(self) -> None:
         """Close the connection pool."""
         if self._pool:
@@ -246,20 +268,8 @@ class DocumentStore:
                         doc_bytes,
                     )
 
-                    # Insert chunks in a single batch call
-                    chunk_rows = [
-                        (uuid4(), doc_id, chunk.seq, chunk.pos,
-                         chunk.content, embedding, chunk.tokens, chunk.bytes)
-                        for chunk, embedding in zip(chunks, embeddings)
-                    ]
-                    await conn.executemany(
-                        """
-                        INSERT INTO memory_chunks (
-                            id, document_id, seq, pos, content, embedding, tokens, bytes
-                        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-                        """,
-                        chunk_rows,
-                    )
+                    # Insert chunks in batch
+                    await self._batch_insert_chunks(conn, doc_id, chunks, embeddings)
             except asyncpg.UniqueViolationError:
                 # Concurrent insert won the race — fetch the existing doc
                 existing = await conn.fetchrow(
@@ -738,23 +748,8 @@ class DocumentStore:
                     doc_uuid,
                 )
 
-                # Insert new chunks
-                for chunk, embedding in zip(chunks, embeddings):
-                    await conn.execute(
-                        """
-                        INSERT INTO memory_chunks (
-                            id, document_id, seq, pos, content, embedding, tokens, bytes
-                        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-                        """,
-                        uuid4(),
-                        doc_uuid,
-                        chunk.seq,
-                        chunk.pos,
-                        chunk.content,
-                        embedding,
-                        chunk.tokens,
-                        chunk.bytes,
-                    )
+                # Insert new chunks in batch
+                await self._batch_insert_chunks(conn, doc_uuid, chunks, embeddings)
 
         logger.debug(f"Updated document {document_id} with {len(chunks)} chunks")
         return True
@@ -802,23 +797,8 @@ class DocumentStore:
                     doc_uuid,
                 )
 
-                # Insert new chunks
-                for chunk, embedding in zip(chunks, embeddings):
-                    await conn.execute(
-                        """
-                        INSERT INTO memory_chunks (
-                            id, document_id, seq, pos, content, embedding, tokens, bytes
-                        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-                        """,
-                        uuid4(),
-                        doc_uuid,
-                        chunk.seq,
-                        chunk.pos,
-                        chunk.content,
-                        embedding,
-                        chunk.tokens,
-                        chunk.bytes,
-                    )
+                # Insert new chunks in batch
+                await self._batch_insert_chunks(conn, doc_uuid, chunks, embeddings)
 
         logger.debug(f"Refreshed chunks for document {document_id} ({len(chunks)} chunks)")
         return True
@@ -933,17 +913,7 @@ class DocumentStore:
                         "DELETE FROM memory_chunks WHERE document_id = $1",
                         doc_id,
                     )
-                    for chunk, embedding in zip(chunks, embeddings):
-                        await conn.execute(
-                            """
-                            INSERT INTO memory_chunks (
-                                id, document_id, seq, pos, content,
-                                embedding, tokens, bytes
-                            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-                            """,
-                            uuid4(), doc_id, chunk.seq, chunk.pos,
-                            chunk.content, embedding, chunk.tokens, chunk.bytes,
-                        )
+                    await self._batch_insert_chunks(conn, doc_id, chunks, embeddings)
 
                     logger.debug(
                         f"Upsert: {action} document {doc_id_str} "
@@ -965,17 +935,7 @@ class DocumentStore:
                         source_ref, tags or [], content, doc_hash, doc_bytes,
                     )
 
-                    for chunk, embedding in zip(chunks, embeddings):
-                        await conn.execute(
-                            """
-                            INSERT INTO memory_chunks (
-                                id, document_id, seq, pos, content,
-                                embedding, tokens, bytes
-                            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-                            """,
-                            uuid4(), doc_id, chunk.seq, chunk.pos,
-                            chunk.content, embedding, chunk.tokens, chunk.bytes,
-                        )
+                    await self._batch_insert_chunks(conn, doc_id, chunks, embeddings)
 
                     logger.debug(
                         f"Upsert: created document {doc_id} "
