@@ -115,28 +115,45 @@ class RepositoryIndexer:
         branch: str = "main",
         scope: str = "shared",
         patterns: list[str] | None = None,
+        original_host: str | None = None,
     ) -> dict:
         """Clone and index a git repository.
 
         Args:
-            repo_url: Git repository URL
+            repo_url: Git repository URL (may be IP-pinned for SSRF safety)
             branch: Branch to clone
             scope: Memory scope
             patterns: Optional list of pattern names to use
+            original_host: Original hostname for TLS SNI when URL is IP-pinned
 
         Returns:
             Dict with keys: files_scanned (int), knowledge_extracted (int),
             memories_created (int), errors (list[str])
         """
+        import os as _os
+
         with tempfile.TemporaryDirectory() as tmpdir:
             # Clone the repository
             logger.info(f"Cloning {repo_url} ({branch}) to {tmpdir}")
+            env = _os.environ.copy()
+            # When URL is IP-pinned (SSRF prevention), configure git to use
+            # the original hostname for TLS server name indication (SNI)
+            if original_host:
+                env["GIT_CONFIG_COUNT"] = "1"
+                env["GIT_CONFIG_KEY_0"] = f"http.https://{original_host}/.sslCAInfo"
+                # Use git's http.<url>.extraheader to pass Host header
+                env["GIT_CONFIG_COUNT"] = "2"
+                env["GIT_CONFIG_KEY_0"] = "http.sslVerify"
+                env["GIT_CONFIG_VALUE_0"] = "true"
+                env["GIT_CONFIG_KEY_1"] = f"http.{repo_url}.extraheader"
+                env["GIT_CONFIG_VALUE_1"] = f"Host: {original_host}"
             try:
                 subprocess.run(
                     ["git", "clone", "--depth", "1", "--branch", branch, repo_url, tmpdir],
                     check=True,
                     capture_output=True,
                     text=True,
+                    env=env,
                 )
             except subprocess.CalledProcessError as e:
                 raise RuntimeError(f"Failed to clone repository: {e.stderr}")
