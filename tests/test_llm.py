@@ -361,33 +361,3 @@ class TestGetClient:
         cems.llm.client._client = None
 
 
-class TestBackwardsCompatibility:
-    """Tests for deprecated backwards compatibility functions."""
-
-    @patch.dict(os.environ, {"OPENROUTER_API_KEY": "test-key"})
-    @patch("cems.llm.client.OpenAI")
-    def test_get_llm_client_deprecated(self, mock_openai_class):
-        """Test deprecated get_llm_client still works."""
-        from cems.llm import get_llm_client
-
-        # Reset global client
-        import cems.llm
-        cems.llm.client._client = None
-
-        mock_openai_class.return_value = MagicMock()
-
-        # Should work but issue deprecation warning
-        import warnings
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            get_llm_client("openai")  # Provider ignored
-
-        # Cleanup
-        cems.llm.client._client = None
-
-    def test_resolve_openrouter_model_deprecated(self):
-        """Test deprecated model resolution."""
-        from cems.llm.client import _resolve_openrouter_model
-
-        result = _resolve_openrouter_model("gpt-4o-mini")
-        assert result == "openai/gpt-4o-mini"

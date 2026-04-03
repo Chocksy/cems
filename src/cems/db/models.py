@@ -8,16 +8,12 @@ from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import (
-    ARRAY,
     JSON,
     Boolean,
     DateTime,
-    Float,
     ForeignKey,
     Integer,
     String,
-    Text,
-    UniqueConstraint,
 )
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
@@ -64,9 +60,6 @@ class User(Base):
     team_memberships: Mapped[list["TeamMember"]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
     )
-    memories: Mapped[list["MemoryMetadata"]] = relationship(
-        back_populates="user", cascade="all, delete-orphan"
-    )
     api_keys: Mapped[list["ApiKey"]] = relationship(
         back_populates="created_by_user",
         foreign_keys="ApiKey.created_by",
@@ -94,9 +87,6 @@ class Team(Base):
 
     # Relationships
     members: Mapped[list["TeamMember"]] = relationship(
-        back_populates="team", cascade="all, delete-orphan"
-    )
-    memories: Mapped[list["MemoryMetadata"]] = relationship(
         back_populates="team", cascade="all, delete-orphan"
     )
     api_keys: Mapped[list["ApiKey"]] = relationship(
@@ -131,119 +121,6 @@ class TeamMember(Base):
 
     def __repr__(self) -> str:
         return f"<TeamMember user={self.user_id} team={self.team_id} role={self.role}>"
-
-
-class MemoryMetadata(Base):
-    """Extended metadata for memories (PostgreSQL version)."""
-
-    __tablename__ = "memory_metadata"
-
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
-    memory_id: Mapped[str] = mapped_column(
-        String(255), unique=True, nullable=False
-    )  # Mem0 memory ID
-    user_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
-    )
-    team_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("teams.id", ondelete="SET NULL"), nullable=True
-    )
-    scope: Mapped[str] = mapped_column(
-        String(50), nullable=False
-    )  # 'personal', 'team', 'company'
-    category: Mapped[str] = mapped_column(String(255), default="general")
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=utc_now
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=utc_now, onupdate=utc_now
-    )
-    last_accessed: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=utc_now
-    )
-    access_count: Mapped[int] = mapped_column(Integer, default=0)
-    source: Mapped[str | None] = mapped_column(
-        String(255), nullable=True
-    )  # 'conversation', 'indexer', 'manual'
-    source_ref: Mapped[str | None] = mapped_column(
-        String(500), nullable=True
-    )  # e.g., 'repo:company/backend:path/to/file.rb'
-    tags: Mapped[list[str]] = mapped_column(ARRAY(Text), default=list)
-    archived: Mapped[bool] = mapped_column(Boolean, default=False)
-    priority: Mapped[float] = mapped_column(Float, default=1.0)
-    pinned: Mapped[bool] = mapped_column(Boolean, default=False)
-    pin_reason: Mapped[str | None] = mapped_column(String(500), nullable=True)
-    pin_category: Mapped[str | None] = mapped_column(
-        String(100), nullable=True
-    )  # 'guideline', 'convention', etc.
-    expires_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
-
-    # Relationships
-    user: Mapped["User | None"] = relationship(back_populates="memories")
-    team: Mapped["Team | None"] = relationship(back_populates="memories")
-
-    def __repr__(self) -> str:
-        return f"<MemoryMetadata {self.memory_id}>"
-
-
-class CategorySummary(Base):
-    """Category summaries for tiered retrieval."""
-
-    __tablename__ = "category_summaries"
-
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
-    scope: Mapped[str] = mapped_column(String(50), nullable=False)
-    scope_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), nullable=True
-    )  # user_id or team_id
-    category: Mapped[str] = mapped_column(String(255), nullable=False)
-    summary: Mapped[str | None] = mapped_column(Text, nullable=True)
-    item_count: Mapped[int] = mapped_column(Integer, default=0)
-    last_updated: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=utc_now
-    )
-    version: Mapped[int] = mapped_column(Integer, default=1)
-
-    __table_args__ = (UniqueConstraint("scope", "scope_id", "category"),)
-
-    def __repr__(self) -> str:
-        return f"<CategorySummary {self.scope}:{self.category}>"
-
-
-class MaintenanceLog(Base):
-    """Log of maintenance job executions."""
-
-    __tablename__ = "maintenance_log"
-
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
-    job_type: Mapped[str] = mapped_column(String(100), nullable=False)
-    scope: Mapped[str] = mapped_column(String(50), nullable=False)
-    scope_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), nullable=True
-    )
-    started_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=utc_now
-    )
-    completed_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
-    status: Mapped[str] = mapped_column(
-        String(50), nullable=False
-    )  # 'started', 'completed', 'failed'
-    details: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
-    memories_processed: Mapped[int] = mapped_column(Integer, default=0)
-    memories_affected: Mapped[int] = mapped_column(Integer, default=0)
-
-    def __repr__(self) -> str:
-        return f"<MaintenanceLog {self.job_type} {self.status}>"
 
 
 class ApiKey(Base):

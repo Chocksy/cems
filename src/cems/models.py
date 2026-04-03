@@ -18,17 +18,6 @@ class MemoryScope(str, Enum):
     SHARED = "shared"
 
 
-class MemoryCategory(str, Enum):
-    """Pre-defined memory categories."""
-
-    PREFERENCES = "preferences"
-    DECISIONS = "decisions"
-    PATTERNS = "patterns"
-    CONTEXT = "context"
-    LEARNINGS = "learnings"
-    GENERAL = "general"
-    GATE_RULES = "gate-rules"  # Tool-blocking rules for PreToolUse hooks
-
 
 class MemoryMetadata(BaseModel):
     """Extended metadata for a memory item."""

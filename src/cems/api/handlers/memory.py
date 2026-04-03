@@ -1295,18 +1295,12 @@ async def api_memory_status(request: Request):
             "storage_dir": str(config.storage_dir),  # Convert Path to string for JSON
             "backend": "documentstore",
             "vector_store": "pgvector",  # Using native pgvector
-            "graph_store": "postgresql" if config.enable_graph else None,
             "scheduler": scheduler_running,
             "scheduler_jobs": scheduler_jobs,
             "query_synthesis": config.enable_query_synthesis,
             "relevance_threshold": config.relevance_threshold,
             "max_tokens": config.default_max_tokens,
         }
-
-        # Add graph stats if enabled
-        if memory.graph_store:
-            stats = memory.get_graph_stats()
-            status["graph_stats"] = stats
 
         return JSONResponse(status)
     except Exception as e:
