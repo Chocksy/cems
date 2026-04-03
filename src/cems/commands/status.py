@@ -25,16 +25,9 @@ def status(ctx: click.Context) -> None:
         table.add_row("Status", data.get("status", "unknown"))
         table.add_row("Backend", data.get("backend", "?"))
         table.add_row("Vector Store", data.get("vector_store", "?"))
-        table.add_row("Graph Store", data.get("graph_store") or "disabled")
         table.add_row("Query Synthesis", str(data.get("query_synthesis", False)))
 
         console.print(table)
-
-        # Show graph stats if available
-        if data.get("graph_stats"):
-            console.print("\n[bold]Graph Statistics:[/bold]")
-            for key, value in data["graph_stats"].items():
-                console.print(f"  {key}: {value}")
 
     except CEMSClientError as e:
         handle_error(e)
