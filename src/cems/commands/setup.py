@@ -510,13 +510,34 @@ def _register_claude_mcp_server(api_url: str, team_id: str | None = None) -> Non
 
     mcp_servers = existing.setdefault("mcpServers", {})
 
+    # Show what was there before (helps debug why config didn't change)
+    old_config = mcp_servers.get("cems")
+    if old_config:
+        old_cmd = old_config.get("command", old_config.get("url", "unknown"))
+        old_type = old_config.get("type", "stdio")
+        if old_cmd == "cems-mcp" and old_type == "stdio":
+            console.print("  MCP server already configured: cems-mcp (stdio) — no change needed")
+        else:
+            console.print(f"  Replacing old MCP config: {old_type} ({old_cmd}) → stdio (cems-mcp)")
+
+    # Remove any old env overrides that would bypass credential resolution
+    if "env" in (old_config or {}):
+        console.print("  [yellow]Removing old env overrides from MCP config (credentials now resolved from files)[/yellow]")
+
+    # Set the stdio config (overwrites any old HTTP/SSE/env config)
     mcp_servers["cems"] = {
         "command": "cems-mcp",
         "args": [],
     }
 
     claude_json.write_text(json.dumps(existing, indent=2) + "\n")
-    console.print("  MCP server registered: cems-mcp (stdio)")
+
+    # Verify cems-mcp is on PATH
+    if shutil.which("cems-mcp"):
+        console.print("  MCP server registered: cems-mcp (stdio) ✓")
+    else:
+        console.print("  MCP server registered: cems-mcp (stdio)")
+        console.print("  [yellow]⚠ cems-mcp not found on PATH — run: pip install cems[/yellow]")
 
 
 def _migrate_old_hook_names(hooks: dict) -> None:
