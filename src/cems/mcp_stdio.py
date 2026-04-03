@@ -24,18 +24,19 @@ from mcp.server.fastmcp import FastMCP
 # Credentials
 # ---------------------------------------------------------------------------
 
-def _get_config() -> tuple[str, str, str]:
-    """Return (api_url, api_key, search_mode) using the shared credential resolver.
+def _get_config() -> tuple[str, str, str, str]:
+    """Return (api_url, api_key, search_mode, team_id) using the shared credential resolver.
     Precedence: env vars > per-project .cems/credentials > global ~/.cems/credentials.
     """
     creds = resolve_credentials(os.getcwd())
     api_url = creds.get("CEMS_API_URL", "")
     api_key = creds.get("CEMS_API_KEY", "")
     search_mode = creds.get("CEMS_SEARCH_MODE", "")
-    return api_url.rstrip("/"), api_key, search_mode
+    team_id = creds.get("CEMS_TEAM_ID", "")
+    return api_url.rstrip("/"), api_key, search_mode, team_id
 
 
-API_URL, API_KEY, SEARCH_MODE = _get_config()
+API_URL, API_KEY, SEARCH_MODE, TEAM_ID = _get_config()
 
 # ---------------------------------------------------------------------------
 # HTTP helpers (stdlib only — no extra deps)
@@ -48,6 +49,8 @@ def _request(method: str, path: str, body: dict | None = None) -> dict:
     req = urllib.request.Request(url, data=data, method=method)
     req.add_header("Authorization", f"Bearer {API_KEY}")
     req.add_header("User-Agent", "CEMS-MCP/1.0")
+    if TEAM_ID:
+        req.add_header("X-Team-Id", TEAM_ID)
     if data:
         req.add_header("Content-Type", "application/json")
     with urllib.request.urlopen(req, timeout=30) as resp:

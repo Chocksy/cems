@@ -8,6 +8,7 @@ REST API endpoints for repository indexing:
 
 import asyncio
 import logging
+import re
 
 from starlette.requests import Request
 from starlette.responses import JSONResponse
@@ -15,6 +16,9 @@ from starlette.responses import JSONResponse
 from cems.api.deps import get_memory
 
 logger = logging.getLogger(__name__)
+
+# Only allow HTTPS git URLs (prevent SSRF via file://, ext::, internal IPs)
+_SAFE_REPO_URL = re.compile(r"^https://[a-zA-Z0-9._-]+[a-zA-Z0-9]/")
 
 
 async def api_index_repo(request: Request):
@@ -33,6 +37,13 @@ async def api_index_repo(request: Request):
         repo_url = body.get("repo_url")
         if not repo_url:
             return JSONResponse({"error": "repo_url is required"}, status_code=400)
+
+        # SSRF prevention: only allow HTTPS URLs
+        if not _SAFE_REPO_URL.match(repo_url):
+            return JSONResponse(
+                {"error": "Only HTTPS git URLs are allowed (e.g. https://github.com/org/repo)"},
+                status_code=400,
+            )
 
         branch = body.get("branch", "main")
         scope = body.get("scope", "shared")
@@ -74,39 +85,14 @@ async def api_index_path(request: Request):
         "scope": "shared",         (optional, default "shared")
         "patterns": ["readme_docs"]  (optional, all if omitted)
     }
+
+    SECURITY: This endpoint is disabled over HTTP to prevent arbitrary
+    filesystem reads. Use the CLI (`cems index path`) for local indexing.
     """
-    try:
-        body = await request.json()
-        path = body.get("path")
-        if not path:
-            return JSONResponse({"error": "path is required"}, status_code=400)
-
-        scope = body.get("scope", "shared")
-        patterns = body.get("patterns")
-
-        memory = get_memory()
-
-        from cems.indexer import RepositoryIndexer
-
-        indexer = RepositoryIndexer(memory)
-
-        # Run sync indexer in thread pool to avoid blocking the event loop
-        result = await asyncio.to_thread(
-            indexer.index_local_path,
-            repo_path=path,
-            scope=scope,
-            patterns=patterns,
-        )
-
-        return JSONResponse({
-            "success": True,
-            "result": result,
-        })
-    except ValueError as e:
-        return JSONResponse({"error": str(e)}, status_code=400)
-    except Exception as e:
-        logger.error(f"API index_path error: {e}")
-        return JSONResponse({"error": "Internal server error"}, status_code=500)
+    return JSONResponse(
+        {"error": "Path indexing is disabled over HTTP. Use the CLI: cems index path /path/to/dir"},
+        status_code=403,
+    )
 
 
 async def api_index_patterns(request: Request):

@@ -1666,10 +1666,12 @@ class DocumentStore:
                     doc_bytes = len(content.encode("utf-8"))
 
                     # Check for existing document with same hash (non-deleted only)
+                    # Use FOR UPDATE to prevent TOCTOU race with concurrent batches
                     existing = await conn.fetchrow(
                         """
                         SELECT id FROM memory_documents
                         WHERE content_hash = $1 AND user_id = $2 AND deleted_at IS NULL
+                        FOR UPDATE
                         """,
                         doc_hash,
                         user_uuid,
