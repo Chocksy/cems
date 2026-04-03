@@ -424,6 +424,54 @@ def _append_credential(key: str, value: str) -> None:
     creds_file.chmod(stat.S_IRUSR | stat.S_IWUSR)
 
 
+_CEMS_INSTRUCTIONS = """\
+## CEMS — Long-Term Memory System
+
+You have CEMS (Contextual Episodic Memory System) connected as an MCP server. It provides persistent memory across all projects and sessions.
+
+### MCP Tools (use ONLY these for memory operations)
+
+| Tool | Purpose |
+|------|---------|
+| `mcp__cems__memory_search` | Search memories (primary recall tool) |
+| `mcp__cems__memory_add` | Store a new memory |
+| `mcp__cems__memory_forget` | Delete/archive a memory |
+| `mcp__cems__memory_update` | Update existing memory content |
+| `mcp__cems__memory_get` | Get full document by ID (for truncated results) |
+| `mcp__cems__memory_pin` | Pin/unpin a memory (protect from pruning) |
+| `mcp__cems__memory_maintenance` | Run maintenance jobs |
+
+### Important Rules
+
+- **When user says "remember"** -> use `mcp__cems__memory_add`, NOT built-in markdown memory
+- **When searching memories** -> use `mcp__cems__memory_search`, NOT any `Context` tool from other MCP servers
+- **NEVER use `mcp__apigcp__context` or similar tools for memory** — those are different systems
+- **Always detect project** for source_ref: `git remote get-url origin` -> `project:org/repo`
+- **Memories are auto-injected** by hooks on each prompt — manual search only when user explicitly asks
+"""
+
+
+def _append_cems_instructions(config_file: Path, marker: str = "## CEMS") -> None:
+    """Append CEMS instructions to an IDE config file if not already present.
+
+    Idempotent — checks for the marker before appending.
+    """
+    existing = ""
+    if config_file.exists():
+        existing = config_file.read_text()
+
+    if marker in existing:
+        console.print(f"  CEMS instructions already in {config_file.name}")
+        return
+
+    if existing and not existing.endswith("\n"):
+        existing += "\n"
+
+    config_file.parent.mkdir(parents=True, exist_ok=True)
+    config_file.write_text(existing + "\n" + _CEMS_INSTRUCTIONS)
+    console.print(f"  CEMS instructions added to {config_file}")
+
+
 def _install_claude_hooks(data_path: Path, api_url: str, team_id: str | None = None) -> None:
     """Install Claude Code hooks, skills, settings, and MCP config."""
     claude_dir = Path.home() / ".claude"
@@ -491,6 +539,9 @@ def _install_claude_hooks(data_path: Path, api_url: str, team_id: str | None = N
     # Register MCP server
     _register_claude_mcp_server(api_url, team_id=team_id)
 
+    # Add CEMS instructions to CLAUDE.md
+    _append_cems_instructions(claude_dir / "CLAUDE.md")
+
 
 def _register_claude_mcp_server(api_url: str, team_id: str | None = None) -> None:
     """Register CEMS MCP server in Claude Code config (~/.claude.json).
@@ -524,20 +575,30 @@ def _register_claude_mcp_server(api_url: str, team_id: str | None = None) -> Non
     if "env" in (old_config or {}):
         console.print("  [yellow]Removing old env overrides from MCP config (credentials now resolved from files)[/yellow]")
 
+    # Resolve full path to cems-mcp binary — don't assume it's on PATH
+    # This ensures the MCP server works even without `eval "$(cems env)"` in shell profile
+    cems_mcp_cmd = shutil.which("cems-mcp")
+    if not cems_mcp_cmd:
+        # Try common locations
+        for candidate in [
+            Path(sys.prefix) / "bin" / "cems-mcp",  # Current venv
+            Path.home() / ".local" / "bin" / "cems-mcp",  # uv tool / pipx
+        ]:
+            if candidate.exists():
+                cems_mcp_cmd = str(candidate)
+                break
+    if not cems_mcp_cmd:
+        cems_mcp_cmd = "cems-mcp"  # Fall back to bare name
+        console.print("  [yellow]⚠ cems-mcp not found — run: uv tool install cems[/yellow]")
+
     # Set the stdio config (overwrites any old HTTP/SSE/env config)
     mcp_servers["cems"] = {
-        "command": "cems-mcp",
+        "command": cems_mcp_cmd,
         "args": [],
     }
 
     claude_json.write_text(json.dumps(existing, indent=2) + "\n")
-
-    # Verify cems-mcp is on PATH
-    if shutil.which("cems-mcp"):
-        console.print("  MCP server registered: cems-mcp (stdio) ✓")
-    else:
-        console.print("  MCP server registered: cems-mcp (stdio)")
-        console.print("  [yellow]⚠ cems-mcp not found on PATH — run: pip install cems[/yellow]")
+    console.print(f"  MCP server registered: {cems_mcp_cmd} (stdio) ✓")
 
 
 def _migrate_old_hook_names(hooks: dict) -> None:
@@ -706,6 +767,9 @@ def _install_codex_config(data_path: Path, api_url: str) -> None:
     # Register MCP server in config.toml
     _register_codex_mcp(codex_dir, api_url)
 
+    # Add CEMS instructions to AGENTS.md
+    _append_cems_instructions(codex_dir / "AGENTS.md")
+
 
 def _register_codex_mcp(codex_dir: Path, api_url: str) -> None:
     """Register CEMS MCP server in Codex config.toml."""
@@ -778,6 +842,11 @@ def _install_cursor_hooks(data_path: Path, api_url: str, team_id: str | None = N
 
     # Register MCP server in mcp.json
     _register_cursor_mcp(cursor_dir, api_url, team_id=team_id)
+
+    # Add CEMS instructions to Cursor rules
+    rules_dir = cursor_dir / "rules"
+    rules_dir.mkdir(parents=True, exist_ok=True)
+    _append_cems_instructions(rules_dir / "cems.md")
 
 
 def _register_cursor_mcp(cursor_dir: Path, api_url: str, team_id: str | None = None) -> None:
