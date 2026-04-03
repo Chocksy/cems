@@ -131,7 +131,8 @@ class ConsolidationJob:
             if "pinned" in (doc.get("tags") or []):
                 continue
 
-            content = doc.get("content", "")
+            # Use content_detailed (full text) if available (distilled docs have terse content)
+            content = doc.get("content_detailed") or doc.get("content", "")
             if not content:
                 continue
 
@@ -174,8 +175,9 @@ class ConsolidationJob:
                     logger.info(
                         f"Auto-merging {doc_id[:8]}+{chunk_doc_id[:8]} (score={score:.3f})"
                     )
+                    dup_content = dup_doc.get("content_detailed") or dup_doc.get("content", "")
                     merged_content = merge_memory_contents(
-                        memories=[{"memory": content}, {"memory": dup_doc.get("content", "")}],
+                        memories=[{"memory": content}, {"memory": dup_content}],
                         model=self.config.llm_model,
                     )
                     if merged_content and merged_content != content:
@@ -191,8 +193,9 @@ class ConsolidationJob:
                 if self._metadata_distinct(doc, dup_doc):
                     continue
 
+                dup_content = dup_doc.get("content_detailed") or dup_doc.get("content", "")
                 classification = classify_memory_pair(
-                    content, dup_doc.get("content", ""),
+                    content, dup_content,
                     model=self.config.llm_model,
                 )
                 llm_classifications += 1
@@ -206,7 +209,7 @@ class ConsolidationJob:
                         f"(score={score:.3f}, confidence={confidence:.2f})"
                     )
                     merged_content = merge_memory_contents(
-                        memories=[{"memory": content}, {"memory": dup_doc.get("content", "")}],
+                        memories=[{"memory": content}, {"memory": dup_content}],
                         model=self.config.llm_model,
                     )
                     if merged_content:
