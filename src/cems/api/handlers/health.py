@@ -1,11 +1,14 @@
 """Health check handlers."""
 
-from importlib.metadata import version
+from importlib.metadata import PackageNotFoundError, version
 
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
-CEMS_VERSION = version("cems")
+try:
+    CEMS_VERSION = version("cems")
+except PackageNotFoundError:
+    CEMS_VERSION = "dev"
 
 
 async def ping(request: Request):
@@ -26,8 +29,8 @@ async def health_check(request: Request):
         if is_database_initialized():
             db = get_database()
             db_status = "healthy" if db.health_check() else "unhealthy"
-    except Exception as e:
-        db_status = f"error: {e}"
+    except Exception:
+        db_status = "error"
 
     overall = "healthy" if db_status in ("healthy", "not_configured") else "unhealthy"
     status_code = 200 if overall == "healthy" else 503

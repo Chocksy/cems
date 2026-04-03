@@ -59,7 +59,7 @@ async def api_index_repo(request: Request):
         })
     except RuntimeError as e:
         logger.error(f"API index_repo error: {e}")
-        return JSONResponse({"error": str(e)}, status_code=400)
+        return JSONResponse({"error": "Indexing failed"}, status_code=400)
     except Exception as e:
         logger.error(f"API index_repo error: {e}")
         return JSONResponse({"error": "Internal server error"}, status_code=500)

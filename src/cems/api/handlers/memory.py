@@ -18,6 +18,26 @@ from cems.chunking import Chunk, chunk_document
 logger = logging.getLogger(__name__)
 
 FOUNDATION_GUIDELINE_TAGS = {"foundation", "constitution"}
+
+
+async def _resolve_memory_id(memory_id: str, memory) -> str | None:
+    """Resolve a memory ID that may be a prefix (e.g. '8f34f38c') to a full UUID.
+
+    Returns the full UUID string, or None if no unique match found.
+    """
+    from uuid import UUID
+    try:
+        UUID(memory_id)
+        return memory_id  # already a full UUID
+    except ValueError:
+        pass
+
+    # Prefix lookup
+    doc_store = await memory._ensure_document_store()
+    doc = await doc_store.get_document_by_prefix(memory_id, user_id=memory.config.user_id)
+    if doc:
+        return doc["id"]
+    return None
 FOUNDATION_SOURCE_REF_PREFIX = "foundation:constitution"
 
 
@@ -741,13 +761,17 @@ async def api_memory_forget(request: Request):
         hard_delete = body.get("hard_delete", False)
 
         memory = get_memory()
-        await memory.delete_async(memory_id, hard=hard_delete)
+        resolved_id = await _resolve_memory_id(memory_id, memory)
+        if not resolved_id:
+            return JSONResponse({"error": f"Document not found for id '{memory_id}'"}, status_code=404)
+
+        await memory.delete_async(resolved_id, hard=hard_delete)
 
         action = "deleted" if hard_delete else "soft-deleted"
         return JSONResponse({
             "success": True,
-            "message": f"Memory {memory_id} {action}",
-            "memory_id": memory_id,
+            "message": f"Memory {resolved_id} {action}",
+            "memory_id": resolved_id,
         })
     except Exception as e:
         logger.error(f"API memory_forget error: {e}")
@@ -759,6 +783,7 @@ async def api_memory_get(request: Request):
 
     GET /api/memory/get?id=<memory_id>
 
+    Accepts a full UUID or a prefix (e.g. first 8 chars from recall results).
     Returns the full document content, category, tags, and metadata.
     Used by LLMs to fetch full context after seeing a snippet in search results.
     """
@@ -768,11 +793,15 @@ async def api_memory_get(request: Request):
             return JSONResponse({"error": "id query param is required"}, status_code=400)
 
         memory = get_memory()
+        resolved_id = await _resolve_memory_id(memory_id, memory)
+        if not resolved_id:
+            return JSONResponse({"error": f"Document not found for id '{memory_id}'"}, status_code=404)
+
         doc_store = await memory._ensure_document_store()
-        doc = await doc_store.get_document(memory_id, user_id=memory.config.user_id)
+        doc = await doc_store.get_document(resolved_id, user_id=memory.config.user_id)
 
         if not doc:
-            return JSONResponse({"error": "Document not found"}, status_code=404)
+            return JSONResponse({"error": f"Document not found for id '{memory_id}'"}, status_code=404)
 
         document = {
             "id": doc["id"],
@@ -825,10 +854,13 @@ async def api_memory_update(request: Request):
             return JSONResponse({"error": "content or metadata fields required"}, status_code=400)
 
         memory = get_memory()
+        resolved_id = await _resolve_memory_id(memory_id, memory)
+        if not resolved_id:
+            return JSONResponse({"error": f"Document not found for id '{memory_id}'"}, status_code=404)
 
         # Update content (re-chunks + re-embeds)
         if has_content:
-            await memory.update_async(memory_id, content)
+            await memory.update_async(resolved_id, content)
 
         # Update metadata fields (no re-embedding needed)
         if has_metadata:
@@ -839,7 +871,7 @@ async def api_memory_update(request: Request):
 
             doc_store = await memory._ensure_document_store()
             await doc_store.update_document_metadata(
-                memory_id,
+                resolved_id,
                 user_id=memory.config.user_id,
                 category=category,
                 tags=tags,
@@ -848,8 +880,8 @@ async def api_memory_update(request: Request):
 
         return JSONResponse({
             "success": True,
-            "message": f"Memory {memory_id} updated",
-            "memory_id": memory_id,
+            "message": f"Memory {resolved_id} updated",
+            "memory_id": resolved_id,
         })
     except Exception as e:
         logger.error(f"API memory_update error: {e}")
@@ -873,16 +905,20 @@ async def api_memory_pin(request: Request):
             return JSONResponse({"error": "memory_id required"}, status_code=400)
 
         memory = get_memory()
+        resolved_id = await _resolve_memory_id(memory_id, memory)
+        if not resolved_id:
+            return JSONResponse({"error": f"Document not found for id '{memory_id}'"}, status_code=404)
+
         doc_store = await memory._ensure_document_store()
 
         if pin:
-            success = await doc_store.pin_document(memory_id, user_id=memory.config.user_id)
+            success = await doc_store.pin_document(resolved_id, user_id=memory.config.user_id)
         else:
-            success = await doc_store.unpin_document(memory_id, user_id=memory.config.user_id)
+            success = await doc_store.unpin_document(resolved_id, user_id=memory.config.user_id)
 
         return JSONResponse({
             "success": True,
-            "memory_id": memory_id,
+            "memory_id": resolved_id,
             "pinned": pin,
         })
     except Exception as e:
@@ -913,9 +949,13 @@ async def api_memory_promote(request: Request):
                 status_code=400,
             )
 
+        resolved_id = await _resolve_memory_id(memory_id, memory)
+        if not resolved_id:
+            return JSONResponse({"error": f"Document not found for id '{memory_id}'"}, status_code=404)
+
         doc_store = await memory._ensure_document_store()
         promoted = await doc_store.promote_document(
-            memory_id, user_id=memory.config.user_id, team_id=team_id
+            resolved_id, user_id=memory.config.user_id, team_id=team_id
         )
 
         if not promoted:
@@ -926,8 +966,8 @@ async def api_memory_promote(request: Request):
 
         return JSONResponse({
             "success": True,
-            "message": f"Memory {memory_id} promoted to shared",
-            "memory_id": memory_id,
+            "message": f"Memory {resolved_id} promoted to shared",
+            "memory_id": resolved_id,
             "team_id": team_id,
         })
     except Exception as e:
@@ -948,16 +988,20 @@ async def api_memory_restore(request: Request):
             return JSONResponse({"error": "memory_id is required"}, status_code=400)
 
         memory = get_memory()
+        resolved_id = await _resolve_memory_id(memory_id, memory)
+        if not resolved_id:
+            return JSONResponse({"error": f"Document not found for id '{memory_id}'"}, status_code=404)
+
         doc_store = await memory._ensure_document_store()
-        restored = await doc_store.restore_document(memory_id, user_id=memory.config.user_id)
+        restored = await doc_store.restore_document(resolved_id, user_id=memory.config.user_id)
 
         if not restored:
             return JSONResponse({"error": "Memory not found or not deleted"}, status_code=404)
 
         return JSONResponse({
             "success": True,
-            "message": f"Memory {memory_id} restored",
-            "memory_id": memory_id,
+            "message": f"Memory {resolved_id} restored",
+            "memory_id": resolved_id,
         })
     except Exception as e:
         logger.error(f"API memory_restore error: {e}")
