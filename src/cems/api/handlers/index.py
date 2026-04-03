@@ -7,8 +7,9 @@ REST API endpoints for repository indexing:
 """
 
 import asyncio
+import ipaddress
 import logging
-import re
+from urllib.parse import urlparse
 
 from starlette.requests import Request
 from starlette.responses import JSONResponse
@@ -17,8 +18,34 @@ from cems.api.deps import get_memory
 
 logger = logging.getLogger(__name__)
 
-# Only allow HTTPS git URLs (prevent SSRF via file://, ext::, internal IPs)
-_SAFE_REPO_URL = re.compile(r"^https://[a-zA-Z0-9._-]+[a-zA-Z0-9]/")
+
+def _is_safe_repo_url(url: str) -> bool:
+    """Validate that a repo URL is safe (HTTPS, public host, no SSRF)."""
+    try:
+        parsed = urlparse(url)
+    except Exception:
+        return False
+
+    if parsed.scheme != "https":
+        return False
+
+    hostname = parsed.hostname
+    if not hostname:
+        return False
+
+    # Reject localhost and common internal hostnames
+    if hostname in ("localhost", "0.0.0.0"):
+        return False
+
+    # Reject IP addresses in private/reserved ranges
+    try:
+        addr = ipaddress.ip_address(hostname)
+        if addr.is_private or addr.is_loopback or addr.is_link_local or addr.is_reserved:
+            return False
+    except ValueError:
+        pass  # hostname is a DNS name, not an IP — OK
+
+    return True
 
 
 async def api_index_repo(request: Request):
@@ -38,10 +65,10 @@ async def api_index_repo(request: Request):
         if not repo_url:
             return JSONResponse({"error": "repo_url is required"}, status_code=400)
 
-        # SSRF prevention: only allow HTTPS URLs
-        if not _SAFE_REPO_URL.match(repo_url):
+        # SSRF prevention: only allow HTTPS URLs to public hosts
+        if not _is_safe_repo_url(repo_url):
             return JSONResponse(
-                {"error": "Only HTTPS git URLs are allowed (e.g. https://github.com/org/repo)"},
+                {"error": "Only HTTPS git URLs to public hosts are allowed"},
                 status_code=400,
             )
 

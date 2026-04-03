@@ -151,9 +151,19 @@ def create_http_app():
                     user_teams = team_service.get_user_teams(user.id)
 
                     # Get team from header (optional, to select team context)
-                    team_id = request.headers.get("x-team-id")
+                    raw_team_id = request.headers.get("x-team-id")
+                    team_id = None
 
-                    if team_id:
+                    if raw_team_id:
+                        # Normalize to UUID string for consistent comparison
+                        from uuid import UUID as _UUID
+                        try:
+                            team_id = str(_UUID(raw_team_id))
+                        except ValueError:
+                            return JSONResponse(
+                                {"error": "Invalid team ID format"},
+                                status_code=400,
+                            )
                         # Validate membership — reject if user not in this team
                         valid_team_ids = {str(t.id) for t in user_teams}
                         if team_id not in valid_team_ids:

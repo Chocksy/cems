@@ -398,11 +398,11 @@ def run_migrations() -> None:
                 ) THEN
                     ALTER TABLE memory_chunks ADD COLUMN content_tsv tsvector
                         GENERATED ALWAYS AS (to_tsvector('english', content)) STORED;
-                    CREATE INDEX IF NOT EXISTS memory_chunks_tsv_idx
-                        ON memory_chunks USING gin(content_tsv);
-                    RAISE NOTICE 'Added memory_chunks.content_tsv + GIN index';
+                    RAISE NOTICE 'Added memory_chunks.content_tsv';
                 END IF;
             END $$;
+            CREATE INDEX IF NOT EXISTS memory_chunks_tsv_idx
+                ON memory_chunks USING gin(content_tsv);
             """,
         ),
         # Add similarity column to memory_relations (used by graph traversal queries)
