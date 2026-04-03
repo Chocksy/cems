@@ -29,15 +29,12 @@ def _is_private_ip(addr_str: str) -> bool:
         return False
 
 
-def validate_repo_url(url: str) -> tuple[str, str | None]:
-    """Validate a repo URL for SSRF safety and return a pinned URL.
+def validate_repo_url(url: str) -> None:
+    """Validate a repo URL for SSRF safety.
 
-    Resolves DNS once and rewrites the URL to use the resolved IP,
-    preventing TOCTOU DNS rebinding attacks. Returns the pinned URL
-    and the original hostname (for git TLS SNI).
+    Checks scheme, hostname, and resolves DNS to reject private IPs.
+    The original URL is used for git clone (TLS needs the real hostname).
 
-    Returns:
-        (pinned_url, original_hostname) on success
     Raises:
         ValueError with user-safe message on failure
     """
@@ -67,26 +64,14 @@ def validate_repo_url(url: str) -> tuple[str, str | None]:
     except socket.gaierror:
         raise ValueError("DNS resolution failed for hostname")
 
-    safe_ip = None
+    if not addrinfos:
+        raise ValueError("No DNS records found for hostname")
+
     for family, _, _, _, sockaddr in addrinfos:
         resolved_ip = sockaddr[0]
         if _is_private_ip(resolved_ip):
             logger.warning(f"SSRF blocked: {hostname} resolves to private IP {resolved_ip}")
             raise ValueError("Hostname resolves to a private IP address")
-        if safe_ip is None:
-            safe_ip = resolved_ip
-
-    if safe_ip is None:
-        raise ValueError("No DNS records found for hostname")
-
-    # Pin the URL to the resolved IP to prevent TOCTOU DNS rebinding.
-    # Replace hostname with resolved IP; caller must set git TLS SNI.
-    port_str = f":{parsed.port}" if parsed.port else ""
-    pinned_url = f"https://{safe_ip}{port_str}{parsed.path}"
-    if parsed.query:
-        pinned_url += f"?{parsed.query}"
-
-    return pinned_url, hostname
 
 
 async def api_index_repo(request: Request):
@@ -106,9 +91,9 @@ async def api_index_repo(request: Request):
         if not repo_url:
             return JSONResponse({"error": "repo_url is required"}, status_code=400)
 
-        # SSRF prevention: validate URL and pin to resolved IP
+        # SSRF prevention: validate URL, reject private IPs
         try:
-            pinned_url, original_host = validate_repo_url(repo_url)
+            validate_repo_url(repo_url)
         except ValueError as e:
             return JSONResponse({"error": str(e)}, status_code=400)
 
@@ -123,14 +108,12 @@ async def api_index_repo(request: Request):
         indexer = RepositoryIndexer(memory)
 
         # Run sync indexer in thread pool to avoid blocking the event loop
-        # Pass pinned URL (resolved IP) + original hostname for git TLS SNI
         result = await asyncio.to_thread(
             indexer.index_git_repo,
-            repo_url=pinned_url,
+            repo_url=repo_url,
             branch=branch,
             scope=scope,
             patterns=patterns,
-            original_host=original_host,
         )
 
         return JSONResponse({
