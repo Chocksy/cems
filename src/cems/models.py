@@ -56,6 +56,10 @@ class SearchResult(BaseModel):
     scope: MemoryScope
     metadata: MemoryMetadata | None = None
     has_detailed: bool = False  # True when content_detailed exists (distilled memory)
+    # Relevance feedback signals for scoring (excluded from serialization)
+    relevant_count: int = Field(default=0, exclude=True)
+    noise_count: int = Field(default=0, exclude=True)
+    noise_snippet_count: int = Field(default=0, exclude=True)
 
 
 class CategorySummary(BaseModel):

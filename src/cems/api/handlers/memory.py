@@ -20,10 +20,12 @@ logger = logging.getLogger(__name__)
 FOUNDATION_GUIDELINE_TAGS = {"foundation", "constitution"}
 
 
-async def _resolve_memory_id(memory_id: str, memory) -> str | None:
+async def _resolve_memory_id(memory_id: str, memory, include_deleted: bool = False) -> str | None:
     """Resolve a memory ID that may be a prefix (e.g. '8f34f38c') to a full UUID.
 
     Returns the full UUID string, or None if no unique match found.
+    Args:
+        include_deleted: If True, also match soft-deleted documents (for restore).
     """
     from uuid import UUID
     try:
@@ -34,7 +36,9 @@ async def _resolve_memory_id(memory_id: str, memory) -> str | None:
 
     # Prefix lookup
     doc_store = await memory._ensure_document_store()
-    doc = await doc_store.get_document_by_prefix(memory_id, user_id=memory.config.user_id)
+    doc = await doc_store.get_document_by_prefix(
+        memory_id, user_id=memory.config.user_id, include_deleted=include_deleted
+    )
     if doc:
         return doc["id"]
     return None
@@ -988,7 +992,7 @@ async def api_memory_restore(request: Request):
             return JSONResponse({"error": "memory_id is required"}, status_code=400)
 
         memory = get_memory()
-        resolved_id = await _resolve_memory_id(memory_id, memory)
+        resolved_id = await _resolve_memory_id(memory_id, memory, include_deleted=True)
         if not resolved_id:
             return JSONResponse({"error": f"Document not found for id '{memory_id}'"}, status_code=404)
 
@@ -1148,10 +1152,7 @@ async def api_memory_conflicts(request: Request):
         doc_store = await memory._ensure_document_store()
         user_id = memory.config.user_id
 
-        if status_filter == "open":
-            conflicts = await doc_store.get_open_conflicts(user_id, limit=limit)
-        else:
-            conflicts = await doc_store.get_open_conflicts(user_id, limit=limit)
+        conflicts = await doc_store.get_open_conflicts(user_id, limit=limit)
 
         # Format for API response
         result = []
@@ -1354,8 +1355,9 @@ async def api_memory_log_shown(request: Request):
 
         memory = get_memory()
         doc_store = await memory._ensure_document_store()
+        user_id = memory.config.user_id
 
-        updated = await doc_store.increment_shown_count(memory_ids)
+        updated = await doc_store.increment_shown_count(memory_ids, user_id=user_id)
 
         logger.info(f"[API] Log shown: {updated}/{len(memory_ids)} memories updated")
 
@@ -1407,18 +1409,19 @@ async def api_memory_log_relevance(request: Request):
 
         memory = get_memory()
         doc_store = await memory._ensure_document_store()
+        user_id = memory.config.user_id
 
         relevant_updated = 0
         noise_updated = 0
         noise_snippet_updated = 0
 
         if relevant_ids:
-            relevant_updated = await doc_store.increment_relevance_count(relevant_ids, "relevant")
+            relevant_updated = await doc_store.increment_relevance_count(relevant_ids, "relevant", user_id=user_id)
         if noise_ids:
-            noise_updated = await doc_store.increment_relevance_count(noise_ids, "noise")
+            noise_updated = await doc_store.increment_relevance_count(noise_ids, "noise", user_id=user_id)
         if noise_snippet_ids:
             noise_snippet_updated = await doc_store.increment_relevance_count(
-                noise_snippet_ids, "noise_snippet"
+                noise_snippet_ids, "noise_snippet", user_id=user_id
             )
 
         logger.info(
@@ -1501,6 +1504,7 @@ async def api_memory_list(request: Request):
             team_id=team_id,
             scope=scope,
             category=category,
+            tag_prefix=tag_prefix,
         )
 
         results = []

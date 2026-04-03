@@ -50,18 +50,16 @@ def _make_search_result_from_chunk(chunk: dict, user_id: str) -> SearchResult:
         last_accessed=last_accessed,
     )
 
-    result = SearchResult(
+    return SearchResult(
         memory_id=memory_id,
         content=chunk.get("content", chunk.get("chunk_content", "")),
         score=chunk.get("score", 0.0),
         scope=memory_scope,
         metadata=metadata,
+        relevant_count=chunk.get("relevant_count", 0),
+        noise_count=chunk.get("noise_count", 0),
+        noise_snippet_count=chunk.get("noise_snippet_count", 0),
     )
-    # Attach relevance feedback counts for scoring (not in Pydantic model)
-    result._relevant_count = chunk.get("relevant_count", 0)  # type: ignore[attr-defined]
-    result._noise_count = chunk.get("noise_count", 0)  # type: ignore[attr-defined]
-    result._noise_snippet_count = chunk.get("noise_snippet_count", 0)  # type: ignore[attr-defined]
-    return result
 
 
 def _dedupe_by_document(results: list[SearchResult]) -> list[SearchResult]:
