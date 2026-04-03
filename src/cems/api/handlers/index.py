@@ -9,6 +9,7 @@ REST API endpoints for repository indexing:
 import asyncio
 import ipaddress
 import logging
+import socket
 from urllib.parse import urlparse
 
 from starlette.requests import Request
@@ -19,8 +20,21 @@ from cems.api.deps import get_memory
 logger = logging.getLogger(__name__)
 
 
+def _is_private_ip(addr_str: str) -> bool:
+    """Check if an IP address string is in a private/reserved range."""
+    try:
+        addr = ipaddress.ip_address(addr_str)
+        return addr.is_private or addr.is_loopback or addr.is_link_local or addr.is_reserved
+    except ValueError:
+        return False
+
+
 def _is_safe_repo_url(url: str) -> bool:
-    """Validate that a repo URL is safe (HTTPS, public host, no SSRF)."""
+    """Validate that a repo URL is safe (HTTPS, public host, no SSRF).
+
+    Checks both the hostname directly and its DNS resolution to prevent
+    DNS rebinding attacks (e.g., evil.com resolving to 127.0.0.1).
+    """
     try:
         parsed = urlparse(url)
     except Exception:
@@ -37,13 +51,22 @@ def _is_safe_repo_url(url: str) -> bool:
     if hostname in ("localhost", "0.0.0.0"):
         return False
 
-    # Reject IP addresses in private/reserved ranges
+    # Reject literal IP addresses in private/reserved ranges
+    if _is_private_ip(hostname):
+        return False
+
+    # Resolve DNS and reject if ANY resolved address is private
+    # (prevents DNS rebinding: evil.com → 127.0.0.1)
     try:
-        addr = ipaddress.ip_address(hostname)
-        if addr.is_private or addr.is_loopback or addr.is_link_local or addr.is_reserved:
-            return False
-    except ValueError:
-        pass  # hostname is a DNS name, not an IP — OK
+        addrinfos = socket.getaddrinfo(hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
+        for family, _, _, _, sockaddr in addrinfos:
+            resolved_ip = sockaddr[0]
+            if _is_private_ip(resolved_ip):
+                logger.warning(f"SSRF blocked: {hostname} resolves to private IP {resolved_ip}")
+                return False
+    except socket.gaierror:
+        # DNS resolution failed — reject (can't verify safety)
+        return False
 
     return True
 
