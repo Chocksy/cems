@@ -77,8 +77,8 @@ async def list_users(request: Request) -> JSONResponse:
         return err
 
     include_inactive = request.query_params.get("include_inactive", "false") == "true"
-    limit = int(request.query_params.get("limit", "100"))
-    offset = int(request.query_params.get("offset", "0"))
+    limit = min(max(1, int(request.query_params.get("limit", "100") or "100")), 1000)
+    offset = max(0, int(request.query_params.get("offset", "0") or "0"))
 
     db = get_database()
     with db.session() as session:
@@ -303,8 +303,8 @@ async def list_teams(request: Request) -> JSONResponse:
     if err := require_database(request):
         return err
 
-    limit = int(request.query_params.get("limit", "100"))
-    offset = int(request.query_params.get("offset", "0"))
+    limit = min(max(1, int(request.query_params.get("limit", "100") or "100")), 1000)
+    offset = max(0, int(request.query_params.get("offset", "0") or "0"))
 
     db = get_database()
     with db.session() as session:

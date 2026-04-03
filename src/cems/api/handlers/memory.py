@@ -13,6 +13,16 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 from cems.api.deps import _scheduler_cache, get_memory
+
+
+def _safe_int(value: str | None, default: int, max_val: int = 10000) -> int:
+    """Parse an int from a query param, clamping to [0, max_val]."""
+    if value is None:
+        return default
+    try:
+        return max(0, min(int(value), max_val))
+    except (ValueError, TypeError):
+        return default
 from cems.chunking import Chunk, chunk_document
 
 logger = logging.getLogger(__name__)
@@ -88,6 +98,15 @@ async def api_memory_add(request: Request):
         content = body.get("content")
         if not content:
             return JSONResponse({"error": "content is required"}, status_code=400)
+
+        # Input length limits to prevent resource exhaustion
+        MAX_CONTENT_BYTES = 100_000  # 100KB
+        if len(content.encode("utf-8", errors="replace")) > MAX_CONTENT_BYTES:
+            return JSONResponse({"error": f"Content exceeds {MAX_CONTENT_BYTES} byte limit"}, status_code=400)
+
+        tags = body.get("tags", [])
+        if isinstance(tags, list) and len(tags) > 50:
+            return JSONResponse({"error": "Maximum 50 tags allowed"}, status_code=400)
 
         from cems.llm import normalize_category
 
@@ -605,7 +624,7 @@ async def api_memory_profile(request: Request):
     """
     try:
         project = request.query_params.get("project")
-        token_budget = int(request.query_params.get("token_budget", "2500"))
+        token_budget = _safe_int(request.query_params.get("token_budget"), 2500, max_val=10000)
 
         memory = get_memory()
         await memory._ensure_initialized_async()
@@ -1146,7 +1165,7 @@ async def api_memory_conflicts(request: Request):
     """
     try:
         status_filter = request.query_params.get("status", "open")
-        limit = int(request.query_params.get("limit", "50"))
+        limit = _safe_int(request.query_params.get("limit"), 50, max_val=200)
 
         memory = get_memory()
         doc_store = await memory._ensure_document_store()
@@ -1443,8 +1462,8 @@ async def api_memory_list(request: Request):
     instead of listing. `tag_prefix` filters for docs with any tag starting with the prefix.
     """
     try:
-        limit = min(int(request.query_params.get("limit", "50")), 200)
-        offset = int(request.query_params.get("offset", "0"))
+        limit = _safe_int(request.query_params.get("limit"), 50, max_val=200)
+        offset = _safe_int(request.query_params.get("offset"), 0, max_val=100000)
         category = request.query_params.get("category")
         scope = request.query_params.get("scope")
         tag_prefix = request.query_params.get("tag_prefix")
