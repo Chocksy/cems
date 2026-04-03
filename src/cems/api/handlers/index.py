@@ -7,9 +7,7 @@ REST API endpoints for repository indexing:
 """
 
 import asyncio
-import ipaddress
 import logging
-import socket
 from urllib.parse import urlparse
 
 from starlette.requests import Request
@@ -20,20 +18,28 @@ from cems.api.deps import get_memory
 logger = logging.getLogger(__name__)
 
 
-def _is_private_ip(addr_str: str) -> bool:
-    """Check if an IP address string is in a private/reserved range."""
-    try:
-        addr = ipaddress.ip_address(addr_str)
-        return addr.is_private or addr.is_loopback or addr.is_link_local or addr.is_reserved
-    except ValueError:
-        return False
+# Allowlisted git hosting domains — eliminates SSRF entirely.
+# Private/self-hosted repos should use the CLI (`cems index repo`), which
+# runs locally and has no SSRF concern.
+ALLOWED_GIT_HOSTS = frozenset({
+    "github.com",
+    "gitlab.com",
+    "bitbucket.org",
+    "dev.azure.com",
+    "ssh.dev.azure.com",
+    "codeberg.org",
+})
 
 
 def validate_repo_url(url: str) -> None:
-    """Validate a repo URL for SSRF safety.
+    """Validate that a repo URL points to an allowlisted public git host.
 
-    Checks scheme, hostname, and resolves DNS to reject private IPs.
-    The original URL is used for git clone (TLS needs the real hostname).
+    Using a domain allowlist instead of DNS-based checks because:
+    - DNS resolution checks are vulnerable to TOCTOU rebinding attacks
+    - IP pinning breaks TLS certificate validation
+    - Allowlisting known hosts is the only approach that is both correct and simple
+
+    For private/self-hosted repos, use the CLI: `cems index repo <url>`
 
     Raises:
         ValueError with user-safe message on failure
@@ -50,28 +56,12 @@ def validate_repo_url(url: str) -> None:
     if not hostname:
         raise ValueError("URL has no hostname")
 
-    # Reject localhost and common internal hostnames
-    if hostname in ("localhost", "0.0.0.0"):
-        raise ValueError("Internal hostnames are not allowed")
-
-    # Reject literal IP addresses in private/reserved ranges
-    if _is_private_ip(hostname):
-        raise ValueError("Private IP addresses are not allowed")
-
-    # Resolve DNS and reject if ANY resolved address is private
-    try:
-        addrinfos = socket.getaddrinfo(hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
-    except socket.gaierror:
-        raise ValueError("DNS resolution failed for hostname")
-
-    if not addrinfos:
-        raise ValueError("No DNS records found for hostname")
-
-    for family, _, _, _, sockaddr in addrinfos:
-        resolved_ip = sockaddr[0]
-        if _is_private_ip(resolved_ip):
-            logger.warning(f"SSRF blocked: {hostname} resolves to private IP {resolved_ip}")
-            raise ValueError("Hostname resolves to a private IP address")
+    if hostname not in ALLOWED_GIT_HOSTS:
+        raise ValueError(
+            f"Only public git hosts are allowed over HTTP API "
+            f"({', '.join(sorted(ALLOWED_GIT_HOSTS))}). "
+            f"For private repos, use the CLI: cems index repo <url>"
+        )
 
 
 async def api_index_repo(request: Request):
