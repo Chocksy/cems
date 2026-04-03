@@ -56,6 +56,9 @@ def mock_memory():
     )
     doc_store = AsyncMock()
     mock._ensure_document_store = AsyncMock(return_value=doc_store)
+    mock._ensure_initialized_async = AsyncMock()
+    mock._async_embedder = AsyncMock()
+    mock._async_embedder.embed_batch = AsyncMock(return_value=[[0.1] * 1536])
     return mock, doc_store
 
 

@@ -140,9 +140,19 @@ class DistillationJob:
                     content_detailed=detailed,
                 )
                 if success:
+                    # Re-chunk and re-embed the condensed content so search
+                    # embeddings match the new content (prevents stale chunks)
+                    from cems.chunking import chunk_document
+                    new_chunks = chunk_document(summary)
+                    chunk_texts = [c.content for c in new_chunks]
+                    await self.memory._ensure_initialized_async()
+                    new_embeddings = await self.memory._async_embedder.embed_batch(chunk_texts)
+                    await doc_store.refresh_chunks(doc_id, new_chunks, new_embeddings)
+
                     distilled += 1
                     logger.debug(
-                        f"Distilled {doc_id[:8]}: {len(content)} → {len(summary)} chars"
+                        f"Distilled {doc_id[:8]}: {len(content)} → {len(summary)} chars "
+                        f"({len(new_chunks)} chunks re-embedded)"
                     )
                 else:
                     errors += 1
