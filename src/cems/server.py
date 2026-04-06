@@ -63,6 +63,11 @@ from cems.api.handlers import (
     health_check,
     ping,
 )
+from cems.api.handlers.wiki import (
+    api_wiki_graph,
+    api_wiki_memory_relations as api_wiki_relations,
+    api_wiki_stats,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -101,8 +106,8 @@ def create_http_app():
             if request.url.path.startswith("/admin"):
                 return await call_next(request)
 
-            # Skip auth for dashboard/analytics static files (auth is handled client-side)
-            if request.url.path.startswith("/dashboard") or request.url.path.startswith("/analytics"):
+            # Skip auth for dashboard/analytics/wiki static files (auth is handled client-side)
+            if request.url.path.startswith("/dashboard") or request.url.path.startswith("/analytics") or request.url.path.startswith("/wiki"):
                 return await call_next(request)
 
             # Get authorization header
@@ -233,8 +238,12 @@ def create_http_app():
         Route("/api/tool/learning", api_tool_learning, methods=["POST"]),
         # REST API routes - Me (self-service)
         Route("/api/me/teams", api_me_teams, methods=["GET"]),
+        # REST API routes - Wiki (Knowledge Engine)
+        Route("/api/wiki/graph", api_wiki_graph, methods=["GET"]),
+        Route("/api/wiki/stats", api_wiki_stats, methods=["GET"]),
+        Route("/api/wiki/relations", api_wiki_relations, methods=["GET"]),
     ]
-    logger.info("REST API routes enabled (/api/memory/*, /api/index/*, /api/session/*, /api/tool/*)")
+    logger.info("REST API routes enabled (/api/memory/*, /api/index/*, /api/session/*, /api/tool/*, /api/wiki/*)")
 
     # Mount dashboard static files
     from pathlib import Path
@@ -246,6 +255,12 @@ def create_http_app():
     if dashboard_dir.exists():
         routes.append(Mount("/dashboard", app=StaticFiles(directory=str(dashboard_dir), html=True)))
         logger.info(f"Dashboard mounted at /dashboard (dir: {dashboard_dir})")
+
+    # Mount wiki dashboard (Knowledge Engine)
+    wiki_dir = Path(__file__).parent / "static" / "wiki"
+    if wiki_dir.exists():
+        routes.append(Mount("/wiki", app=StaticFiles(directory=str(wiki_dir), html=True)))
+        logger.info(f"Wiki dashboard mounted at /wiki (dir: {wiki_dir})")
 
     # Mount analytics static files (admin dashboard)
     analytics_dir = Path(__file__).parent / "static" / "analytics"

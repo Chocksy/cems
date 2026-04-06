@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CEMS Knowledge Engine</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="https://cdn.jsdelivr.net/npm/d3@7.9.0/dist/d3.min.js" crossorigin="anonymous"></script>
+</head>
+<body>
+  <div id="app">
+    <!-- Login -->
+    <div id="login-view" class="view">
+      <div class="login-card">
+        <h1>Knowledge Engine</h1>
+        <p>Enter your API key to explore the knowledge graph.</p>
+        <form id="login-form">
+          <input type="password" id="api-key-input" placeholder="Bearer API key" autocomplete="off" required>
+          <button type="submit">Connect</button>
+        </form>
+        <p id="login-error" class="error" hidden></p>
+      </div>
+    </div>
+
+    <!-- Dashboard -->
+    <div id="dashboard-view" class="view" hidden>
+      <header>
+        <div class="header-left">
+          <h1>Knowledge Engine</h1>
+          <span id="health-badge" class="badge">--</span>
+          <div class="view-toggle">
+            <button class="toggle-btn active" data-view="graph">Graph</button>
+            <button class="toggle-btn" data-view="stats">Stats</button>
+          </div>
+        </div>
+        <div class="header-right">
+          <a href="/dashboard" class="nav-link">Memories</a>
+          <button id="logout-btn" title="Logout">Logout</button>
+        </div>
+      </header>
+
+      <!-- Stats Panel -->
+      <div id="stats-panel">
+        <div class="stat-cards">
+          <div class="stat-card">
+            <div class="stat-value" id="stat-total">--</div>
+            <div class="stat-label">Memories</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-value" id="stat-relations">--</div>
+            <div class="stat-label">Relations</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-value" id="stat-connected">--</div>
+            <div class="stat-label">Connected</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-value" id="stat-orphans">--</div>
+            <div class="stat-label">Orphans</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-value" id="stat-conflicts">--</div>
+            <div class="stat-label">Conflicts</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-value" id="stat-avg-rel">--</div>
+            <div class="stat-label">Avg Relations</div>
+          </div>
+        </div>
+
+        <div class="stat-sections">
+          <div class="stat-section">
+            <h3>Heat Distribution</h3>
+            <div id="heat-bars"></div>
+          </div>
+          <div class="stat-section">
+            <h3>Categories</h3>
+            <div id="category-bars"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Graph View -->
+      <div id="graph-view">
+        <div id="graph-toolbar">
+          <span id="graph-info">Loading graph...</span>
+          <div class="toolbar-right">
+            <button id="btn-recenter" class="tool-btn" title="Recenter">Reset</button>
+          </div>
+        </div>
+        <svg id="graph-svg"></svg>
+      </div>
+
+      <!-- Detail Panel (shows when clicking a node) -->
+      <div id="detail-panel" hidden>
+        <div class="detail-header">
+          <h2 id="detail-title">Memory Details</h2>
+          <button id="detail-close">&times;</button>
+        </div>
+        <div id="detail-content"></div>
+        <div id="detail-relations"></div>
+      </div>
+    </div>
+  </div>
+  <script src="app.js"></script>
+</body>
+</html>
