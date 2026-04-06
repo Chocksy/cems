@@ -26,31 +26,37 @@ brainstorm: docs/brainstorms/2026-04-06-knowledge-engine-brainstorm.md
 **Problem**: Entity pages are created once and never updated. Duplicates accumulate.
 The system doesn't behave like Karpathy's "living wiki" yet.
 
-**What needs to happen**:
+**Key architecture fact**: Entity pages ARE regular `memory_documents` rows
+with `category='entity-page'`. Same table, same IDs, same APIs. `/recall <id>`
+and `mcp__cems__memory_get` already work for fetching full entity pages.
 
-1. **Entity page index in recall**
-   - Inject entity page titles + first 2-3 sentences into `<memory-recall>` block
-   - Add a note: "Use `/recall <entity-id>` to read the full knowledge page"
-   - Claude's existing `mcp__cems__memory_get` tool can fetch the full entity page
-   - This is the Karpathy "index.md → drill into pages" pattern
-   - **Implementation**: Modify `cems_user_prompts_submit.py` to include entity index
+**Decisions from brainstorming (2026-04-07)**:
 
-2. **Entity page staleness detection**
-   - Track when entity page was last compiled vs when its source memories were last updated
-   - If source memories changed significantly since last compile → mark stale
-   - Recompile stale entity pages in scheduled maintenance
-   - **Implementation**: Add `last_compiled_at` tracking, compare in CompilationJob
+1. **Scheduled recompilation every 10 minutes**
+   - Don't try N-memory triggers — too complex with observer bursts
+   - Simple timer in scheduler: run CompilationJob every 10 min
+   - Each run: find clusters, dedup against existing, create/update pages
+   - Also schedule RelationBuilderJob (process new memories) every 10 min
+   - LintJob: run daily (less urgent)
+   - **Implementation**: Update `scheduler.py` with 3 new jobs
 
-3. **Entity page dedup/merge**
-   - Before creating, check cosine similarity against ALL existing entity pages (not just cluster tag)
-   - If >0.85 match → update the existing entity page instead of creating new one
-   - Periodically merge entity pages that converged to similar content
-   - **Implementation**: Already partially built (dedup check in CompilationJob)
+2. **Entity page dedup/merge**
+   - Before creating: cosine similarity check against existing entity pages (>0.85 = skip)
+   - Already partially built in CompilationJob
+   - Need: merge logic when two entity pages converge to similar content
+   - **Implementation**: Enhance CompilationJob dedup + add merge step
 
-4. **Scheduled compilation**
-   - Add CompilationJob to the scheduler (weekly, after consolidation)
-   - Also add LintJob and RelationBuilderJob to scheduler
-   - **Implementation**: Update `scheduler.py`
+3. **Project-filtered entity index (MUST)**
+   - Entity pages are project-scoped via `source_ref`
+   - Index injected into hook MUST filter to current project
+   - Cross-project entities are noise — filter them out
+   - **Implementation**: Pass project to index query
+
+4. **Orphan memories (live with for now)**
+   - ~1,600 memories don't belong to any cluster
+   - In Karpathy's model they shouldn't exist — wiki should cover everything
+   - Future: generate "catch-all" entity pages per category for unclustered memories
+   - For now: orphans are still found by vector search, just not in entity pages
 
 ### Priority 2: Entity Index in Hook (the killer feature)
 
