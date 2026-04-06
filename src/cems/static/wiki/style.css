@@ -140,6 +140,22 @@ header{display:flex;justify-content:space-between;align-items:center;padding:.75
 .source-content{flex:1;line-height:1.4}
 .source-meta{font-size:.7rem;color:var(--fg2);margin-top:.2rem}
 
+/* Timeline */
+#article-timeline{margin-top:1.5rem;padding-top:1rem;border-top:1px solid var(--border)}
+#article-timeline h3{display:flex;align-items:center;gap:.5rem;font-size:.9rem;color:var(--fg2);margin-bottom:.75rem}
+.timeline-entry{display:flex;gap:.75rem;padding:.4rem 0;position:relative}
+.timeline-entry::before{content:'';position:absolute;left:11px;top:24px;bottom:-4px;width:2px;background:var(--border)}
+.timeline-entry:last-child::before{display:none}
+.timeline-dot{width:10px;height:10px;border-radius:50%;margin-top:5px;flex-shrink:0;border:2px solid var(--bg);box-shadow:0 0 0 2px var(--border)}
+.timeline-dot.hot{background:var(--hot);box-shadow:0 0 0 2px var(--hot)}
+.timeline-dot.warm{background:var(--warm);box-shadow:0 0 0 2px var(--warm)}
+.timeline-dot.cool{background:var(--cool);box-shadow:0 0 0 2px var(--cool)}
+.timeline-dot.cold{background:var(--cold);box-shadow:0 0 0 2px var(--cold)}
+.timeline-body{flex:1;min-width:0}
+.timeline-date{font-size:.7rem;color:var(--fg2);margin-bottom:.15rem}
+.timeline-text{font-size:.8rem;line-height:1.4}
+.timeline-meta{font-size:.7rem;color:var(--fg2);margin-top:.15rem}
+
 /* Legacy entity cards (keeping for fallback) */
 .entity-card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:1rem;margin-bottom:.75rem;cursor:pointer;transition:border-color .2s}
 .entity-card:hover{border-color:var(--accent)}

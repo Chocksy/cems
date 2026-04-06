@@ -71,6 +71,7 @@ from cems.api.handlers.wiki import (
     api_wiki_lint,
     api_wiki_memory_relations as api_wiki_relations,
     api_wiki_stats,
+    api_wiki_timeline,
 )
 
 logger = logging.getLogger(__name__)
@@ -250,6 +251,7 @@ def create_http_app():
         Route("/api/wiki/conflicts", api_wiki_conflicts, methods=["GET"]),
         Route("/api/wiki/entities", api_wiki_entities, methods=["GET"]),
         Route("/api/wiki/entity", api_wiki_entity_detail, methods=["GET"]),
+        Route("/api/wiki/timeline", api_wiki_timeline, methods=["GET"]),
     ]
     logger.info("REST API routes enabled (/api/memory/*, /api/index/*, /api/session/*, /api/tool/*, /api/wiki/*)")
 

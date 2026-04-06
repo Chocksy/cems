@@ -511,6 +511,46 @@
         relEl.hidden = true;
       }
 
+      // Timeline section
+      const timelineSection = document.getElementById("article-timeline");
+      const timelineList = document.getElementById("timeline-list");
+      const btnTimeline = document.getElementById("btn-toggle-timeline");
+      if (timelineSection) {
+        timelineSection.hidden = false;
+        timelineList.innerHTML = "";
+        btnTimeline.textContent = "Show";
+        btnTimeline.onclick = async () => {
+          if (timelineList.innerHTML) {
+            timelineList.innerHTML = "";
+            btnTimeline.textContent = "Show";
+            return;
+          }
+          btnTimeline.textContent = "Loading...";
+          try {
+            const tData = await apiFetch(`/api/wiki/timeline?id=${entityId}&limit=30`);
+            if (tData.success && tData.timeline.length > 0) {
+              timelineList.innerHTML = tData.timeline.map((t) => `
+                <div class="timeline-entry">
+                  <div class="timeline-dot ${escapeHtml(t.heat)}"></div>
+                  <div class="timeline-body">
+                    <div class="timeline-date">${t.created_at ? new Date(t.created_at).toLocaleDateString("en-US", {year:"numeric",month:"short",day:"numeric"}) : ""}</div>
+                    <div class="timeline-text">${escapeHtml(t.content)}</div>
+                    <div class="timeline-meta">${escapeHtml(t.category || "")} &middot; ${escapeHtml(t.source || "")} &middot; ${t.similarity ? (t.similarity * 100).toFixed(0) + "% match" : ""}</div>
+                  </div>
+                </div>
+              `).join("");
+              btnTimeline.textContent = "Hide";
+            } else {
+              timelineList.innerHTML = '<p class="empty-msg">No timeline data available</p>';
+              btnTimeline.textContent = "Show";
+            }
+          } catch (err) {
+            timelineList.innerHTML = '<p class="empty-msg">Failed to load timeline</p>';
+            btnTimeline.textContent = "Show";
+          }
+        };
+      }
+
       // Source memories
       const srcList = document.getElementById("source-memories-list");
       if (data.source_memories && data.source_memories.length > 0) {

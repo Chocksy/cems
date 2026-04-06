@@ -399,6 +399,60 @@ async def api_wiki_entity_detail(request: Request):
         return JSONResponse({"error": "Internal server error"}, status_code=500)
 
 
+async def api_wiki_timeline(request: Request):
+    """Get chronological timeline of memories for a topic or entity.
+
+    GET /api/wiki/timeline?id=<entity_id>&limit=30
+
+    Returns memories related to this entity, sorted by created_at ascending.
+    """
+    try:
+        entity_id = request.query_params.get("id")
+        if not entity_id:
+            return JSONResponse({"error": "id parameter required"}, status_code=400)
+
+        limit = _safe_int(request.query_params.get("limit"), 30, max_val=100)
+        memory = get_memory()
+        doc_store = await memory._ensure_document_store()
+        user_id = memory.config.user_id
+
+        # Get the entity page for context
+        entity = await doc_store.get_document(entity_id, user_id=user_id)
+        if not entity:
+            return JSONResponse({"error": "Entity not found"}, status_code=404)
+
+        # Get related memories sorted chronologically
+        related = await doc_store.get_related_documents(
+            entity_id, limit=limit, user_id=user_id,
+        )
+
+        timeline = []
+        for r in sorted(related, key=lambda x: str(x.get("created_at", ""))):
+            shown = r.get("shown_count", 0) or 0
+            heat = "hot" if shown >= 20 else "warm" if shown >= 5 else "cool" if shown >= 1 else "cold"
+            timeline.append({
+                "id": str(r["id"]),
+                "content": (r.get("content", "") or "")[:200],
+                "category": r.get("category"),
+                "source": r.get("source"),
+                "source_ref": r.get("source_ref"),
+                "created_at": str(r.get("created_at", "")),
+                "heat": heat,
+                "shown_count": shown,
+                "similarity": r.get("relation_similarity"),
+            })
+
+        return JSONResponse({
+            "success": True,
+            "entity_title": entity.get("title") or (entity.get("content", "")[:60]),
+            "timeline": timeline,
+            "count": len(timeline),
+        })
+    except Exception as e:
+        logger.error(f"API wiki_timeline error: {e}")
+        return JSONResponse({"error": "Internal server error"}, status_code=500)
+
+
 async def api_wiki_lint(request: Request):
     """Run lint and return the health report.
 
