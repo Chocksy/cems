@@ -434,7 +434,7 @@
       return `<div class="nav-item" data-id="${escapeHtml(e.id)}">
         <div class="nav-item-title">
           <span class="heat-dot" style="background:${heatColor}"></span>
-          ${escapeHtml((e.title || "Untitled").slice(0, 40))}
+          ${escapeHtml(e.title || "Untitled")}
         </div>
         ${project ? `<div class="nav-item-project">${escapeHtml(project)}</div>` : ""}
       </div>`;
@@ -468,6 +468,7 @@
     const content = document.getElementById("article-content");
     placeholder.hidden = true;
     content.hidden = false;
+    updateHash("wiki", entityId);
 
     try {
       const data = await apiFetch(`/api/wiki/entity?id=${entityId}`);
@@ -702,20 +703,30 @@
     }
   }
 
-  // Generate entity page for a category (gap resolution)
+  // Generate entity pages (gap resolution) — run multiple compilation batches
   window.compileCategory = async function(category) {
+    const btn = event?.target;
+    if (btn) { btn.disabled = true; btn.textContent = "Generating..."; }
     try {
+      // Run compilation with force=true to regenerate, and higher limit
+      let totalCreated = 0;
       const res = await fetch(baseUrl + "/api/memory/maintenance", {
         method: "POST",
         headers: { "Authorization": "Bearer " + apiKey, "Content-Type": "application/json" },
-        body: JSON.stringify({ job_type: "compilation", limit: 5 }),
+        body: JSON.stringify({ job_type: "compilation", limit: 50, full_sweep: true }),
       });
       const data = await res.json();
-      if (data.success) {
-        // Re-run lint to refresh
-        document.getElementById("btn-run-lint").click();
-      }
-    } catch (e) { console.error("Compile failed:", e); }
+      if (data.success) totalCreated = (data.results?.pages_created || 0) + (data.results?.pages_updated || 0);
+      if (btn) btn.textContent = totalCreated > 0 ? `Created ${totalCreated}!` : "No new pages";
+      // Re-run lint + reload entities
+      setTimeout(() => {
+        document.getElementById("btn-run-lint")?.click();
+        if (btn) { btn.textContent = "Generate"; btn.disabled = false; }
+      }, 2000);
+    } catch (e) {
+      console.error("Compile failed:", e);
+      if (btn) { btn.textContent = "Error"; setTimeout(() => { btn.textContent = "Generate"; btn.disabled = false; }, 2000); }
+    }
   };
 
   // Make resolveConflict global for onclick
@@ -832,9 +843,47 @@
     return div.innerHTML;
   }
 
+  // --- URL Hash Routing ---
+  function updateHash(view, entityId) {
+    const hash = entityId ? `#${view}/${entityId}` : `#${view}`;
+    if (window.location.hash !== hash) {
+      history.pushState(null, "", hash);
+    }
+  }
+
+  function handleHashRoute() {
+    const hash = window.location.hash.slice(1); // Remove #
+    if (!hash || !apiKey) return;
+
+    const [view, entityId] = hash.split("/");
+    if (view && ["graph", "stats", "wiki", "lint"].includes(view)) {
+      // Simulate tab click
+      const btn = document.querySelector(`.toggle-btn[data-view="${view === "wiki" ? "entities" : view}"]`);
+      if (btn) btn.click();
+
+      // If entity ID provided, load that entity
+      if (entityId && view === "wiki") {
+        setTimeout(() => loadEntityArticle(entityId), 500);
+      }
+    }
+  }
+
+  window.addEventListener("hashchange", handleHashRoute);
+
+  // Patch view toggle to update URL
+  const origToggleHandler = (view) => {
+    const urlView = view === "entities" ? "wiki" : view;
+    updateHash(urlView);
+  };
+  document.querySelectorAll(".toggle-btn").forEach((btn) => {
+    btn.addEventListener("click", () => origToggleHandler(btn.dataset.view));
+  });
+
   // --- Init ---
   if (apiKey) {
     showDashboard();
+    // Handle initial hash route after dashboard loads
+    setTimeout(handleHashRoute, 300);
   } else {
     showLogin();
   }

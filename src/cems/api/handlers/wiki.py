@@ -41,7 +41,7 @@ async def api_wiki_graph(request: Request):
         user_id = memory.config.user_id
         pool = await doc_store._get_pool()
 
-        # Get all relations for this user's documents
+        # Get all relations for this user's documents (only connected nodes)
         async with pool.acquire() as conn:
             edges_rows = await conn.fetch(
                 """
@@ -54,10 +54,10 @@ async def api_wiki_graph(request: Request):
                 LIMIT $2
                 """,
                 UUID(user_id),
-                limit * 5,  # More edges than nodes to show connectivity
+                limit * 3,
             )
 
-        # Collect unique document IDs from edges
+        # Only show connected nodes (nodes that appear in at least one edge)
         doc_ids = set()
         for row in edges_rows:
             doc_ids.add(str(row["source_id"]))
@@ -260,7 +260,7 @@ async def api_wiki_memory_relations(request: Request):
             "relations": [
                 {
                     "id": str(r["id"]),
-                    "content": (r.get("content", "") or "")[:200],
+                    "content": (r.get("content", "") or "")[:500],
                     "category": r.get("category"),
                     "relation_type": r.get("relation_type"),
                     "similarity": r.get("relation_similarity"),
@@ -364,7 +364,7 @@ async def api_wiki_entity_detail(request: Request):
             else:
                 source_memories.append({
                     "id": str(r["id"]),
-                    "content": (r.get("content", "") or "")[:200],
+                    "content": (r.get("content", "") or "")[:500],
                     "category": r.get("category"),
                     "source_ref": r.get("source_ref"),
                     "shown_count": r.get("shown_count", 0),
@@ -426,7 +426,7 @@ async def api_wiki_timeline(request: Request):
             heat = "hot" if shown >= 20 else "warm" if shown >= 5 else "cool" if shown >= 1 else "cold"
             timeline.append({
                 "id": str(r["id"]),
-                "content": (r.get("content", "") or "")[:200],
+                "content": (r.get("content", "") or "")[:500],
                 "category": r.get("category"),
                 "source": r.get("source"),
                 "source_ref": r.get("source_ref"),

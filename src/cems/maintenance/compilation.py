@@ -163,11 +163,14 @@ class CompilationJob:
 
         Returns: "created", "updated", "skipped", or None on error.
         """
-        # Generate a topic tag from the cluster for dedup
+        # Generate a stable cluster tag from sorted member IDs
         doc_ids = sorted([d["id"] for d in cluster_docs])
-        cluster_tag = f"entity-cluster:{doc_ids[0][:8]}"
+        # Use hash of all member IDs for stable identification
+        import hashlib
+        cluster_hash = hashlib.md5("".join(doc_ids).encode()).hexdigest()[:12]
+        cluster_tag = f"entity-cluster:{cluster_hash}"
 
-        # Check if entity page already exists for this cluster
+        # Check if entity page already exists for this exact cluster
         existing = await doc_store.get_documents_by_tag(
             user_id=user_id,
             tag=cluster_tag,
@@ -184,7 +187,7 @@ class CompilationJob:
         for doc in cluster_docs:
             content = doc.get("content_detailed") or doc.get("content", "")
             if content:
-                contents.append(content[:500])  # Cap each memory
+                contents.append(content[:1000])  # Cap each source memory
             cat = doc.get("category", "general")
             categories.add(cat)
             ref = doc.get("source_ref")
@@ -261,16 +264,18 @@ Categories: {cat_str}
 
 {memories_text}
 
-Write a concise knowledge page that:
+Write a comprehensive knowledge page that:
 1. Starts with a clear title on the first line (# Title)
-2. Summarizes the key knowledge from all memories
-3. Highlights important decisions, patterns, or facts
-4. Notes any contradictions or evolution of understanding
-5. Keeps it under 500 words
+2. Provides a thorough summary section explaining the topic
+3. Lists all key decisions, patterns, working solutions, and facts
+4. Notes any contradictions or evolution of understanding over time
+5. Includes specific technical details (commands, config, code patterns)
+6. Organizes with clear ## sections and bullet points
 
+Be thorough — include all relevant details from the memories.
 Output the knowledge page in markdown:"""
 
-            response = client.complete(prompt, max_tokens=800)
+            response = client.complete(prompt, max_tokens=2000)
             return response if response and len(response) > 50 else None
         except Exception as e:
             logger.warning(f"LLM synthesis failed: {e}")
