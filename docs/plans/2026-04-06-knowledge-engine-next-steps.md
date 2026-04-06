@@ -52,33 +52,30 @@ The system doesn't behave like Karpathy's "living wiki" yet.
    - Also add LintJob and RelationBuilderJob to scheduler
    - **Implementation**: Update `scheduler.py`
 
-### Priority 2: Agentic Search → Entity-Based Search
+### Priority 2: Entity Index in Hook (the killer feature)
 
-**Decision**: Agentic mode searches ONLY entity pages, not individual memories.
-Entity pages ARE the knowledge base. Like Karpathy's wiki replaces raw files.
+**Decision**: Zero LLM cost on our side. Claude/Codex decides when to drill deeper.
 
-**Current agentic flow** (src/cems/agentic/search.py):
-1. Load ALL 3,700 memories for user (740K tokens)
-2. Send to 3 LLM agents
-3. Agents rank individual memories
-4. RRF fusion → final ranked list
+**How it works**:
+1. Hook already injects `<memory-recall>` with 5 memory snippets
+2. NEW: Also fetch entity page titles + summaries (one DB query, no LLM)
+3. Inject entity index into same `<memory-recall>` block
+4. Claude sees: "Entity: Stripe Integration (15 sources) — covers webhooks, rate limiting..."
+5. IF Claude needs more → uses existing `/recall <entity-id>` or `mcp__cems__memory_get`
+6. Our server: serves a simple GET. Zero LLM calls.
 
-**New entity-based flow**:
-1. Load entity page titles + first 2-3 sentences (~100 pages × 50 tokens = 5K tokens)
-2. Send index to Gemini Flash Lite: "which entities answer this query?"
-3. Agent picks 3-5 relevant entity pages
-4. Load FULL content of those entity pages (~5K tokens each = 25K tokens)
-5. Agent extracts answer from entity pages
-6. Return entity page content as results
+**Cost to us**: One SQL query for entity index. That's it.
+**Cost to Claude**: Only pays tokens when it decides to drill deeper.
+**No agentic search changes needed** — this works with the existing hook.
 
-**Token savings**: 740K → 30K tokens. ~25x reduction.
-**Cost**: ~$0.003 per query (Gemini Flash Lite at $0.10/M input).
+**Implementation**:
+- Modify `cems_user_prompts_submit.py` to include entity summaries in `<memory-recall>`
+- Add API endpoint: `GET /api/wiki/index` returns titles + first 2-3 sentences per entity
+- Format: "Entity: [title] (sources: N) — [summary]. Use `/recall <id>` to read full page."
+- Entity pages already work with `mcp__cems__memory_get` — no tool changes needed
 
-**Key implication**: Entity pages are now the CRITICAL PATH for search quality.
-They must be comprehensive, current, and non-duplicate.
-
-**Vector search stays unchanged** — hook-based recall for simple queries.
-Agentic mode is for deep knowledge retrieval.
+**Key insight**: We don't do the extraction. Claude does — when it wants to.
+Like Karpathy's system where the LLM navigates the wiki on its own.
 
 ### Priority 3: Production Deployment
 
