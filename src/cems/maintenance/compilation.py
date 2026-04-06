@@ -232,7 +232,7 @@ class CompilationJob:
         for ref in list(source_refs)[:3]:
             tags.append(f"source:{ref}")
 
-        await self.memory.add_async(
+        result = await self.memory.add_async(
             content=entity_content,
             scope="personal",
             category="entity-page",
@@ -241,6 +241,22 @@ class CompilationJob:
             title=title,
             source_ref=list(source_refs)[0] if source_refs else None,
         )
+
+        # Link entity page to its source memories via relations
+        entity_doc_id = result.get("results", [{}])[0].get("id")
+        if entity_doc_id:
+            relations = [
+                {"target_id": d["id"], "relation_type": "compiled_from", "similarity": 1.0}
+                for d in cluster_docs if d.get("id")
+            ]
+            if relations:
+                await doc_store.add_relations(entity_doc_id, relations)
+                # Reverse: source → entity
+                for rel in relations:
+                    await doc_store.add_relations(
+                        rel["target_id"],
+                        [{"target_id": entity_doc_id, "relation_type": "compiled_from", "similarity": 1.0}],
+                    )
 
         return "created"
 
