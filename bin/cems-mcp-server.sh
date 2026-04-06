@@ -1,7 +1,7 @@
 #!/bin/bash
 # MCP server wrapper that sets up environment with 1Password secrets
 
-cd /Users/razvan/Development/llm-memory
+cd /Users/razvan/Development/cems
 
 # Load .env (filtering out comments)
 export $(grep -v "^#" .env | xargs)

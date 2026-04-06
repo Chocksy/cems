@@ -97,6 +97,7 @@
       } else if (currentView === "lint") {
         if (lintView) { lintView.classList.add("active"); lintView.hidden = false; }
         loadConflicts();
+        loadLintStats();
       }
     });
   });
@@ -712,7 +713,29 @@
     }
   };
 
-  // Lint button
+  // Auto-load lint stats when Health tab opens
+  async function loadLintStats() {
+    const reportEl = document.getElementById("lint-report");
+    const statsEl = document.getElementById("lint-stats");
+    if (!reportEl || !statsEl) return;
+
+    reportEl.hidden = false;
+    statsEl.innerHTML = '<div class="stat-card"><div class="stat-value">...</div><div class="stat-label">Loading</div></div>';
+
+    try {
+      const data = await apiFetch("/api/wiki/stats");
+      if (!data.success) return;
+      const s = data.stats;
+      statsEl.innerHTML = `
+        <div class="stat-card"><div class="stat-value">${s.health_score}</div><div class="stat-label">Health Score</div></div>
+        <div class="stat-card"><div class="stat-value">${s.open_conflicts}</div><div class="stat-label">Open Conflicts</div></div>
+        <div class="stat-card"><div class="stat-value">${s.orphan_memories}</div><div class="stat-label">Orphans</div></div>
+        <div class="stat-card"><div class="stat-value">${s.connected_memories}/${s.total_memories}</div><div class="stat-label">Connected</div></div>
+      `;
+    } catch (e) { console.error("Lint stats failed:", e); }
+  }
+
+  // Legacy lint button handler (kept for backwards compat, button removed from UI)
   const btnLint = document.getElementById("btn-run-lint");
   if (btnLint) {
     btnLint.addEventListener("click", async () => {

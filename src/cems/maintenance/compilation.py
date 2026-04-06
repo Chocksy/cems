@@ -170,7 +170,7 @@ class CompilationJob:
         cluster_hash = hashlib.md5("".join(doc_ids).encode()).hexdigest()[:12]
         cluster_tag = f"entity-cluster:{cluster_hash}"
 
-        # Check if entity page already exists for this exact cluster
+        # Check if entity page already exists for this cluster
         existing = await doc_store.get_documents_by_tag(
             user_id=user_id,
             tag=cluster_tag,
@@ -179,6 +179,29 @@ class CompilationJob:
 
         if existing and not force:
             return "skipped"
+
+        # Dedup: check if a similar entity page already exists (cosine similarity)
+        # This prevents near-duplicate entity pages about the same concept
+        await self.memory._ensure_initialized_async()
+        if self.memory._async_embedder and not force:
+            # Use the first source doc's content as a proxy for the topic
+            sample = (cluster_docs[0].get("content", "") or "")[:500]
+            if sample:
+                probe_emb = await self.memory._async_embedder.embed_batch([sample])
+                if probe_emb:
+                    existing_entities = await doc_store.search_chunks(
+                        query_embedding=probe_emb[0],
+                        user_id=user_id,
+                        category="entity-page",
+                        limit=3,
+                    )
+                    for ent in existing_entities:
+                        if ent.get("score", 0) > 0.85:
+                            logger.info(
+                                f"Skipping cluster — similar entity page exists "
+                                f"(score={ent['score']:.2f}, doc={ent['document_id'][:8]})"
+                            )
+                            return "skipped"
 
         # Synthesize the entity page content
         contents = []
