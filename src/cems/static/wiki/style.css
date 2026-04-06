@@ -162,6 +162,17 @@ header{display:flex;justify-content:space-between;align-items:center;padding:.75
 .conflict-actions button:hover{border-color:var(--accent);color:var(--accent)}
 .conflict-actions .btn-resolve{border-color:var(--success);color:var(--success)}
 
+/* Gap cards */
+.gap-card{display:flex;justify-content:space-between;align-items:center;padding:.6rem .75rem;border:1px solid var(--border);border-left:3px solid var(--accent);border-radius:var(--radius);margin-bottom:.4rem}
+.gap-info{font-size:.85rem}
+.gap-count{font-size:.75rem;color:var(--fg2)}
+.gap-action{padding:.25rem .5rem;font-size:.75rem;border:1px solid var(--accent);border-radius:4px;background:none;color:var(--accent);cursor:pointer}
+.gap-action:hover{background:var(--accent);color:#fff}
+
+/* Orphan cards */
+.orphan-card{padding:.5rem .75rem;border:1px solid var(--border);border-radius:var(--radius);margin-bottom:.4rem;font-size:.8rem}
+.orphan-meta{font-size:.7rem;color:var(--fg2);margin-top:.2rem}
+
 /* Graph View */
 #graph-view{display:block}
 #graph-view.hidden{display:none}
@@ -170,6 +181,11 @@ header{display:flex;justify-content:space-between;align-items:center;padding:.75
 #graph-info{font-size:.85rem;color:var(--fg2)}
 .tool-btn{padding:.3rem .6rem;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg2);color:var(--fg2);cursor:pointer;font-size:.75rem}
 .tool-btn:hover{background:var(--border)}
+
+.tool-select{padding:.3rem .4rem;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg2);color:var(--fg);font-size:.75rem;cursor:pointer}
+#graph-legend{display:flex;gap:1rem;padding:.25rem 0;font-size:.75rem;color:var(--fg2)}
+.legend-item{display:flex;align-items:center;gap:.3rem}
+.legend-dot{width:10px;height:10px;border-radius:50%;display:inline-block}
 
 #graph-svg{width:100%;height:calc(100vh - 200px);min-height:400px;border:1px solid var(--border);border-radius:var(--radius);background:var(--bg2)}
 

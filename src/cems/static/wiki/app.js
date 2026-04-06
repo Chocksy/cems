@@ -173,12 +173,59 @@
 
       graphData = data;
       graphInfo.textContent = `${data.node_count} nodes, ${data.edge_count} edges`;
-      renderGraph(data.nodes, data.edges);
+
+      // Populate category filter
+      const catFilter = document.getElementById("graph-filter-cat");
+      if (catFilter && catFilter.options.length <= 1) {
+        const cats = [...new Set(data.nodes.map((n) => n.category))].sort();
+        cats.forEach((c) => {
+          const opt = document.createElement("option");
+          opt.value = c;
+          opt.textContent = c;
+          catFilter.appendChild(opt);
+        });
+      }
+
+      applyGraphFilters();
     } catch (e) {
       graphInfo.textContent = "Failed to load graph";
       console.error("Graph load error:", e);
     }
   }
+
+  function applyGraphFilters() {
+    if (!graphData) return;
+    const heatFilter = document.getElementById("graph-filter-heat")?.value || "";
+    const catFilter = document.getElementById("graph-filter-cat")?.value || "";
+
+    let nodes = graphData.nodes;
+    let edges = graphData.edges;
+
+    if (heatFilter) {
+      nodes = nodes.filter((n) => {
+        const s = n.shown_count || 0;
+        if (heatFilter === "hot") return s >= 20;
+        if (heatFilter === "warm") return s >= 5 && s < 20;
+        if (heatFilter === "cool") return s >= 1 && s < 5;
+        if (heatFilter === "cold") return s === 0;
+        return true;
+      });
+    }
+    if (catFilter) {
+      nodes = nodes.filter((n) => n.category === catFilter);
+    }
+
+    const nodeIds = new Set(nodes.map((n) => n.id));
+    edges = edges.filter((e) => nodeIds.has(e.source) && nodeIds.has(e.target));
+
+    graphInfo.textContent = `${nodes.length} nodes, ${edges.length} edges` +
+      (heatFilter || catFilter ? " (filtered)" : "");
+    renderGraph(nodes, edges);
+  }
+
+  // Filter event listeners
+  document.getElementById("graph-filter-heat")?.addEventListener("change", applyGraphFilters);
+  document.getElementById("graph-filter-cat")?.addEventListener("change", applyGraphFilters);
 
   function getNodeColor(node) {
     const shown = node.shown_count || 0;
@@ -578,6 +625,22 @@
     }
   }
 
+  // Generate entity page for a category (gap resolution)
+  window.compileCategory = async function(category) {
+    try {
+      const res = await fetch(baseUrl + "/api/memory/maintenance", {
+        method: "POST",
+        headers: { "Authorization": "Bearer " + apiKey, "Content-Type": "application/json" },
+        body: JSON.stringify({ job_type: "compilation", limit: 5 }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        // Re-run lint to refresh
+        document.getElementById("btn-run-lint").click();
+      }
+    } catch (e) { console.error("Compile failed:", e); }
+  };
+
   // Make resolveConflict global for onclick
   window.resolveConflict = async function(conflictId, resolution) {
     try {
@@ -625,6 +688,43 @@
           if (r.contradictions_found > 0) {
             statsEl.innerHTML += `<div class="stat-card"><div class="stat-value" style="color:var(--warning)">${r.contradictions_found}</div><div class="stat-label">New This Run</div></div>`;
           }
+          if (r.entity_page_count !== undefined) {
+            statsEl.innerHTML += `<div class="stat-card"><div class="stat-value">${r.entity_page_count}</div><div class="stat-label">Entity Pages</div></div>`;
+          }
+
+          // Knowledge gaps
+          const gapsSection = document.getElementById("gaps-section");
+          const gapsList = document.getElementById("gaps-list");
+          if (r.knowledge_gaps && r.knowledge_gaps.length > 0) {
+            gapsSection.hidden = false;
+            gapsList.innerHTML = r.knowledge_gaps.map((g) => `
+              <div class="gap-card">
+                <div>
+                  <div class="gap-info">${escapeHtml(g.category)}</div>
+                  <div class="gap-count">${g.count} memories, no entity page</div>
+                </div>
+                <button class="gap-action" onclick="compileCategory('${escapeHtml(g.category)}')">Generate</button>
+              </div>
+            `).join("");
+          } else {
+            gapsSection.hidden = true;
+          }
+
+          // Top orphans
+          const orphansSection = document.getElementById("orphans-section");
+          const orphansList = document.getElementById("orphans-list");
+          if (r.top_orphans && r.top_orphans.length > 0) {
+            orphansSection.hidden = false;
+            orphansList.innerHTML = r.top_orphans.map((o) => `
+              <div class="orphan-card">
+                <div>${escapeHtml(o.content)}</div>
+                <div class="orphan-meta">${escapeHtml(o.category)} &middot; shown ${o.shown_count}x</div>
+              </div>
+            `).join("");
+          } else {
+            orphansSection.hidden = true;
+          }
+
           loadConflicts();
           loadStats(); // Refresh the header health badge
         }

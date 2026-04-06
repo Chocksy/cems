@@ -57,12 +57,16 @@ class LintJob:
         from uuid import UUID
         user_uuid = UUID(user_id)
 
-        report = {
+        report: dict = {
             "contradictions_found": 0,
             "contradictions_checked": 0,
             "orphan_count": 0,
             "total_memories": 0,
             "connected_memories": 0,
+            "entity_page_count": 0,
+            "stale_entity_pages": 0,
+            "knowledge_gaps": [],
+            "top_orphans": [],
             "health_score": 100,
         }
 
@@ -88,6 +92,62 @@ class LintJob:
 
             report["orphan_count"] = report["total_memories"] - report["connected_memories"]
 
+            # Entity page count
+            report["entity_page_count"] = await conn.fetchval(
+                "SELECT COUNT(*) FROM memory_documents WHERE user_id = $1 AND category = 'entity-page' AND deleted_at IS NULL",
+                user_uuid,
+            ) or 0
+
+            # Top orphan memories (most shown but no relations — might need connecting)
+            orphan_rows = await conn.fetch(
+                """
+                SELECT d.id, d.content, d.category, d.shown_count
+                FROM memory_documents d
+                WHERE d.user_id = $1 AND d.deleted_at IS NULL
+                AND NOT EXISTS (
+                    SELECT 1 FROM memory_relations r
+                    WHERE r.source_id = d.id OR r.target_id = d.id
+                )
+                ORDER BY COALESCE(d.shown_count, 0) DESC
+                LIMIT 10
+                """,
+                user_uuid,
+            )
+            report["top_orphans"] = [
+                {
+                    "id": str(r["id"]),
+                    "content": (r["content"] or "")[:150],
+                    "category": r["category"],
+                    "shown_count": r["shown_count"] or 0,
+                }
+                for r in orphan_rows
+            ]
+
+            # Knowledge gaps: most common categories without entity pages
+            gap_rows = await conn.fetch(
+                """
+                SELECT d.category, COUNT(*) as cnt
+                FROM memory_documents d
+                WHERE d.user_id = $1 AND d.deleted_at IS NULL
+                  AND d.category NOT IN ('entity-page', 'category-summary', 'gate-rules', 'guidelines')
+                  AND NOT EXISTS (
+                      SELECT 1 FROM memory_documents ep
+                      WHERE ep.user_id = $1 AND ep.category = 'entity-page'
+                        AND ep.deleted_at IS NULL
+                        AND ep.source_ref = d.source_ref
+                  )
+                GROUP BY d.category
+                HAVING COUNT(*) >= 5
+                ORDER BY cnt DESC
+                LIMIT 10
+                """,
+                user_uuid,
+            )
+            report["knowledge_gaps"] = [
+                {"category": r["category"], "count": r["cnt"]}
+                for r in gap_rows
+            ]
+
         # Detect contradictions using LLM
         if detect_contradictions:
             contradictions = await self._detect_contradictions(doc_store, user_id, limit)
@@ -98,7 +158,8 @@ class LintJob:
         health = 100
         open_conflicts = await self._count_open_conflicts(doc_store, user_id)
         health -= min(open_conflicts * 5, 25)
-        health -= min(report["orphan_count"] * 0.5, 20)
+        health -= min(report["orphan_count"] * 0.1, 15)  # Less penalty per orphan (many are normal)
+        health -= min(len(report["knowledge_gaps"]) * 2, 10)
         report["health_score"] = max(round(health), 0)
         report["open_conflicts"] = open_conflicts
 

@@ -129,6 +129,20 @@
         <div id="lint-report" hidden>
           <div id="lint-stats" class="stat-cards"></div>
         </div>
+
+        <!-- Knowledge Gaps -->
+        <div id="gaps-section" hidden>
+          <h3 class="section-title">Knowledge Gaps</h3>
+          <div id="gaps-list"></div>
+        </div>
+
+        <!-- Top Orphans -->
+        <div id="orphans-section" hidden>
+          <h3 class="section-title">Top Orphan Memories (most shown, no connections)</h3>
+          <div id="orphans-list"></div>
+        </div>
+
+        <!-- Conflicts -->
         <h3 class="section-title">Open Conflicts</h3>
         <div id="conflicts-list"></div>
         <p id="conflicts-empty" class="empty-msg" hidden>No open conflicts.</p>
@@ -139,8 +153,24 @@
         <div id="graph-toolbar">
           <span id="graph-info">Loading graph...</span>
           <div class="toolbar-right">
+            <select id="graph-filter-heat" class="tool-select" title="Filter by heat">
+              <option value="">All heat</option>
+              <option value="hot">Hot (20+)</option>
+              <option value="warm">Warm (5-19)</option>
+              <option value="cool">Cool (1-4)</option>
+              <option value="cold">Cold (0)</option>
+            </select>
+            <select id="graph-filter-cat" class="tool-select" title="Filter by category">
+              <option value="">All categories</option>
+            </select>
             <button id="btn-recenter" class="tool-btn" title="Recenter">Reset</button>
           </div>
+        </div>
+        <div id="graph-legend">
+          <span class="legend-item"><span class="legend-dot" style="background:var(--hot)"></span>Hot</span>
+          <span class="legend-item"><span class="legend-dot" style="background:var(--warm)"></span>Warm</span>
+          <span class="legend-item"><span class="legend-dot" style="background:var(--cool)"></span>Cool</span>
+          <span class="legend-item"><span class="legend-dot" style="background:var(--cold)"></span>Cold</span>
         </div>
         <svg id="graph-svg"></svg>
       </div>

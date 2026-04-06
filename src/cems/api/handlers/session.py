@@ -170,6 +170,16 @@ async def api_session_summarize(request: Request):
         )
         logger.info(f"{action.title()} session summary for {session_id[:8]}: {full_title}")
 
+        # Auto-link relations for new or updated session summaries
+        if action in ("created", "finalized", "replaced") and embeddings:
+            try:
+                from cems.memory.write import _auto_link_relations
+                await _auto_link_relations(
+                    doc_store, document_id, embeddings[0], user_id, None, "personal",
+                )
+            except Exception as link_err:
+                logger.warning(f"Auto-link failed for session summary {document_id[:8]}: {link_err}")
+
         return JSONResponse({
             "success": True,
             "document_id": document_id,
