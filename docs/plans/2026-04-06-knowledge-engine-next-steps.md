@@ -52,26 +52,33 @@ The system doesn't behave like Karpathy's "living wiki" yet.
    - Also add LintJob and RelationBuilderJob to scheduler
    - **Implementation**: Update `scheduler.py`
 
-### Priority 2: Agentic Search Integration
+### Priority 2: Agentic Search → Entity-Based Search
 
-**Problem**: Agentic search sends ALL 3,700 memories to the LLM context.
-Entity pages could reduce this to ~100 summaries.
+**Decision**: Agentic mode searches ONLY entity pages, not individual memories.
+Entity pages ARE the knowledge base. Like Karpathy's wiki replaces raw files.
 
 **Current agentic flow** (src/cems/agentic/search.py):
-1. Load ALL memories for user
-2. Format them all as text
-3. Send to 3 LLM agents (Direct Seeker, Inference Engine, Temporal Navigator)
-4. Each agent returns ranked memory IDs
-5. RRF fusion → final ranked list
+1. Load ALL 3,700 memories for user (740K tokens)
+2. Send to 3 LLM agents
+3. Agents rank individual memories
+4. RRF fusion → final ranked list
 
-**Improved flow with entity pages**:
-1. Load entity page titles + summaries (100 pages × 3 sentences = ~3000 tokens)
-2. Load individual memories that DON'T belong to any entity page (orphans)
-3. Send combined: entity summaries + orphan memories to agents
-4. Agents can request "expand entity:XYZ" to get full content
-5. Two-pass: first identify relevant entities, then search within those
+**New entity-based flow**:
+1. Load entity page titles + first 2-3 sentences (~100 pages × 50 tokens = 5K tokens)
+2. Send index to Gemini Flash Lite: "which entities answer this query?"
+3. Agent picks 3-5 relevant entity pages
+4. Load FULL content of those entity pages (~5K tokens each = 25K tokens)
+5. Agent extracts answer from entity pages
+6. Return entity page content as results
 
-**Token savings**: ~3,700 memories × ~200 tokens = 740K tokens → 100 entity summaries × 50 tokens + orphan memories = ~100K tokens. ~7x reduction.
+**Token savings**: 740K → 30K tokens. ~25x reduction.
+**Cost**: ~$0.003 per query (Gemini Flash Lite at $0.10/M input).
+
+**Key implication**: Entity pages are now the CRITICAL PATH for search quality.
+They must be comprehensive, current, and non-duplicate.
+
+**Vector search stays unchanged** — hook-based recall for simple queries.
+Agentic mode is for deep knowledge retrieval.
 
 ### Priority 3: Production Deployment
 
