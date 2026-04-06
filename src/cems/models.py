@@ -49,6 +49,7 @@ class SearchResult(BaseModel):
     relevant_count: int = Field(default=0, exclude=True)
     noise_count: int = Field(default=0, exclude=True)
     noise_snippet_count: int = Field(default=0, exclude=True)
+    shown_count: int = Field(default=0, exclude=True)
 
 
 class CategorySummary(BaseModel):

@@ -426,6 +426,48 @@ class TestRelevanceScoring:
         score = apply_score_adjustments(result)
         assert score == 0.0
 
+    # --- Heat score decay floor tests ---
+
+    def test_hot_memory_decay_floor(self):
+        """Memories shown 20+ times get min 0.95 decay even when very old."""
+        result = self._create_result(score=1.0, days_ago=365)
+        result.shown_count = 25  # Hot memory
+        score = apply_score_adjustments(result)
+        # Without heat floor: 1/(1+365/60) ≈ 0.14
+        # With heat floor: max(0.14, 0.95) = 0.95
+        assert score >= 0.95
+
+    def test_warm_memory_decay_floor(self):
+        """Memories shown 5-19 times get min 0.80 decay when old."""
+        result = self._create_result(score=1.0, days_ago=365)
+        result.shown_count = 10  # Warm memory
+        score = apply_score_adjustments(result)
+        # Without heat floor: ~0.14
+        # With heat floor: max(0.14, 0.80) = 0.80
+        assert score >= 0.80
+
+    def test_cold_memory_no_floor(self):
+        """Memories shown <5 times have no decay floor — normal decay."""
+        result = self._create_result(score=1.0, days_ago=365)
+        result.shown_count = 2  # Cold memory
+        score = apply_score_adjustments(result)
+        # Normal decay: 1/(1+365/60) ≈ 0.14
+        assert score < 0.20
+
+    def test_zero_shown_count_no_floor(self):
+        """Never-shown memories have no floor protection."""
+        result = self._create_result(score=1.0, days_ago=120)
+        result.shown_count = 0
+        score = apply_score_adjustments(result)
+        assert score < 0.40  # Normal 120-day decay
+
+    def test_heat_floor_doesnt_affect_recent_memories(self):
+        """Heat floor only matters for old memories — recent ones already have high decay."""
+        result = self._create_result(score=1.0, days_ago=0)
+        result.shown_count = 25  # Hot but recent
+        score = apply_score_adjustments(result)
+        assert score == 1.0  # Already at max, floor is irrelevant
+
 
 class TestLexicalSignal:
     """Tests for lexical score normalization and strong-signal detection."""

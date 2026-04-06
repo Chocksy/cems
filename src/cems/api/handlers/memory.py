@@ -1129,6 +1129,17 @@ async def api_memory_maintenance(request: Request):
 
         from cems.maintenance.distillation import DistillationJob
 
+        if job_type == "relations":
+            from cems.maintenance.relation_builder import RelationBuilderJob
+            result = await RelationBuilderJob(memory).run_async(
+                limit=sweep_limit or 50, offset=sweep_offset, force=full_sweep,
+            )
+            return JSONResponse({
+                "success": True,
+                "job_type": job_type,
+                "results": result,
+            })
+
         jobs = {
             "distillation": DistillationJob(memory).run_async,
             "summarization": SummarizationJob(memory).run_async,
@@ -1138,7 +1149,7 @@ async def api_memory_maintenance(request: Request):
         if job_type not in jobs:
             return JSONResponse({
                 "success": False,
-                "error": f"Unknown job type: {job_type}. Use: consolidation, distillation, summarization, reindex, reflect, all",
+                "error": f"Unknown job type: {job_type}. Use: consolidation, distillation, summarization, reindex, reflect, relations, all",
             }, status_code=400)
 
         result = await jobs[job_type]()

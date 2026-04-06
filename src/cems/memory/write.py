@@ -22,6 +22,71 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Minimum cosine similarity to create an auto-relation
+AUTO_RELATION_THRESHOLD = 0.75
+# Maximum neighbors to consider per add
+AUTO_RELATION_LIMIT = 10
+
+
+async def _auto_link_relations(
+    doc_store: "DocumentStore",
+    doc_id: str,
+    embedding: list[float],
+    user_id: str,
+    team_id: str | None,
+    scope: str,
+) -> int:
+    """Find and link related memories for a newly added document.
+
+    Reuses the already-computed first-chunk embedding to search for neighbors.
+    Creates bidirectional relations (A→B and B→A) for each match above threshold.
+
+    Returns:
+        Number of forward relations created.
+    """
+    # Search for similar chunks (same user, all scopes for personal connectivity)
+    neighbors = await doc_store.search_chunks(
+        query_embedding=embedding,
+        user_id=user_id,
+        limit=AUTO_RELATION_LIMIT,
+    )
+
+    # Build relations for neighbors above threshold
+    relations: list[dict[str, Any]] = []
+    seen_docs: set[str] = {doc_id}  # Skip self
+
+    for neighbor in neighbors:
+        neighbor_doc_id = neighbor["document_id"]
+        score = neighbor.get("score", 0)
+
+        if neighbor_doc_id in seen_docs:
+            continue
+        if score < AUTO_RELATION_THRESHOLD:
+            continue
+
+        seen_docs.add(neighbor_doc_id)
+        relations.append({
+            "target_id": neighbor_doc_id,
+            "relation_type": "similar",
+            "similarity": score,
+        })
+
+    if not relations:
+        return 0
+
+    # Insert forward relations (new → existing)
+    created = await doc_store.add_relations(doc_id, relations)
+
+    # Insert reverse relations (existing → new) for bidirectional graph
+    for rel in relations:
+        await doc_store.add_relations(
+            rel["target_id"],
+            [{"target_id": doc_id, "relation_type": rel["relation_type"], "similarity": rel["similarity"]}],
+        )
+
+    logger.info(f"[WRITE] Auto-linked {doc_id[:8]} to {created} neighbors (bidirectional)")
+    return created
+
 
 class WriteMixin:
     """Mixin class providing write operations for CEMSMemory.
@@ -177,21 +242,31 @@ class WriteMixin:
                     f"scope={scope}, category={category}, source_ref={source_ref}, tags={tags}"
                 )
                 event = "ADD"
+
+                # Step 4: Auto-link to related memories (best-effort)
+                relations_created = 0
+                try:
+                    relations_created = await _auto_link_relations(
+                        doc_store, doc_id, embeddings[0], user_id, team_id, scope,
+                    )
+                except Exception as link_err:
+                    logger.warning(f"[WRITE] Auto-link failed for {doc_id[:8]}: {link_err}")
             else:
                 logger.debug(f"[WRITE] Document {doc_id[:8]}... already exists (deduplicated)")
                 event = "DUPLICATE"
+                relations_created = 0
 
-            return {
-                "results": [
-                    {
-                        "id": doc_id,
-                        "event": event,
-                        "memory": content[:200] + "..." if len(content) > 200 else content,
-                        "chunks": len(chunks),
-                        "is_new": is_new,
-                    }
-                ]
+            result_dict: dict[str, Any] = {
+                "id": doc_id,
+                "event": event,
+                "memory": content[:200] + "..." if len(content) > 200 else content,
+                "chunks": len(chunks),
+                "is_new": is_new,
             }
+            if relations_created > 0:
+                result_dict["relations_created"] = relations_created
+
+            return {"results": [result_dict]}
 
         except Exception as e:
             logger.error(f"[WRITE] Failed to add document: {e}")

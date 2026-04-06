@@ -59,6 +59,7 @@ def _make_search_result_from_chunk(chunk: dict, user_id: str) -> SearchResult:
         relevant_count=chunk.get("relevant_count", 0),
         noise_count=chunk.get("noise_count", 0),
         noise_snippet_count=chunk.get("noise_snippet_count", 0),
+        shown_count=chunk.get("shown_count", 0),
     )
 
 

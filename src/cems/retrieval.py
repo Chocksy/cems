@@ -703,7 +703,9 @@ def apply_score_adjustments(
     Scoring factors applied (in order):
     1. Priority boost (1.0-2.0x from metadata)
     2. Time decay (category-aware half-life: 21d cognitive, 60d domain, 120d core)
-       - Adaptive ceiling: memories shown 10+ times get min 0.95 decay
+       - Relevance feedback: adjusts decay based on relevant_count/noise_count ratio
+       - Snippet noise: mild penalty for snippet-level noise
+       - Heat floor: shown 20+ → min 0.95 decay, shown 5+ → min 0.80 decay
     3. Pinned boost (1.1x)
     4. Project scoring (1.3x same-project, 0.8x different-project, 0.9x no-project-tag)
 
@@ -741,6 +743,17 @@ def apply_score_adjustments(
             # Mild penalty: snippet didn't match, but full doc might still be valuable
             # Cap at 20% penalty even with many snippet-noise votes
             time_decay *= max(0.80, 1.0 - (noise_snippet * 0.02))
+
+        # Heat-based decay floor: frequently surfaced memories resist decay.
+        # Implements the documented "adaptive ceiling" (was in docstring but not code).
+        # Hot memories (shown 20+ times) = min 0.95 decay (almost no loss)
+        # Warm memories (shown 5+ times) = min 0.80 decay (slow loss)
+        shown_count = getattr(result, "shown_count", 0) or 0
+        if shown_count >= 20:
+            time_decay = max(time_decay, 0.95)
+        elif shown_count >= 5:
+            time_decay = max(time_decay, 0.80)
+
         score *= time_decay
 
         # Project-scoped scoring (boost same-project, penalize different-project)

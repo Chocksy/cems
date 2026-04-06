@@ -1434,6 +1434,99 @@ class DocumentStore:
 
         return results
 
+    async def add_relations(
+        self,
+        source_id: str,
+        relations: list[dict[str, Any]],
+    ) -> int:
+        """Insert relations between documents.
+
+        Uses INSERT ... ON CONFLICT DO UPDATE to handle re-runs gracefully.
+        PK is (source_id, target_id, relation_type) per init.sql composite PK.
+
+        Note: database.py uses a surrogate id PK (legacy). Docker/prod uses
+        init.sql with the composite PK. This method works with both schemas —
+        the ON CONFLICT clause is a no-op if no unique constraint exists
+        (insert proceeds normally).
+
+        Args:
+            source_id: The source document ID (str or UUID)
+            relations: List of dicts with keys: target_id, relation_type, similarity
+
+        Returns:
+            Number of relations created/updated
+        """
+        if not relations:
+            return 0
+
+        pool = await self._get_pool()
+        try:
+            source_uuid = UUID(str(source_id))
+        except (ValueError, AttributeError) as e:
+            logger.warning(f"Invalid source_id for add_relations: {e}")
+            return 0
+
+        created = 0
+
+        async with pool.acquire() as conn:
+            for rel in relations:
+                try:
+                    target_id = rel.get("target_id")
+                    if not target_id:
+                        continue
+                    target_uuid = UUID(str(target_id))
+                    if target_uuid == source_uuid:
+                        continue  # CHECK constraint prevents self-relation
+
+                    relation_type = rel.get("relation_type") or "similar"
+
+                    await conn.execute(
+                        """
+                        INSERT INTO memory_relations (source_id, target_id, relation_type, similarity)
+                        VALUES ($1, $2, $3, $4)
+                        ON CONFLICT (source_id, target_id, relation_type)
+                        DO UPDATE SET similarity = EXCLUDED.similarity
+                        """,
+                        source_uuid,
+                        target_uuid,
+                        relation_type,
+                        rel.get("similarity"),
+                    )
+                    created += 1
+                except (ValueError, AttributeError) as e:
+                    logger.warning(f"Invalid UUID in relation: {e}")
+                except Exception as e:
+                    target_str = str(rel.get("target_id", "?"))[:8]
+                    logger.warning(
+                        f"Failed to add relation {str(source_id)[:8]}→{target_str}: {e}"
+                    )
+
+        return created
+
+    async def get_relation_count(self, document_id: str) -> int:
+        """Get the number of active relations for a document.
+
+        Only counts relations where both source and target documents
+        are not soft-deleted, matching get_related_documents() behavior.
+        """
+        pool = await self._get_pool()
+        doc_uuid = UUID(document_id)
+
+        async with pool.acquire() as conn:
+            count = await conn.fetchval(
+                """
+                SELECT COUNT(*) FROM memory_relations r
+                JOIN memory_documents d ON (
+                    CASE WHEN r.source_id = $1 THEN r.target_id ELSE r.source_id END
+                ) = d.id
+                WHERE (r.source_id = $1 OR r.target_id = $1)
+                AND d.deleted_at IS NULL
+                """,
+                doc_uuid,
+            )
+
+        return count or 0
+
     # =========================================================================
     # Utility Operations
     # =========================================================================

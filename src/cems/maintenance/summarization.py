@@ -110,9 +110,18 @@ class SummarizationJob:
             cat = doc.get("category", "general")
             categories.setdefault(cat, []).append(doc)
 
+        # Heat threshold: hot memories (shown 20+ times) are never compressed
+        HOT_THRESHOLD = 20
+
         updated = 0
         total_deleted = 0
         for category, docs in categories.items():
+            # Filter out hot memories — they resist compression
+            cold_docs = [d for d in docs if (d.get("shown_count", 0) or 0) < HOT_THRESHOLD]
+            if len(cold_docs) < 3:
+                continue  # Not enough cold docs to justify a summary
+            docs = cold_docs
+
             if len(docs) >= 3:
                 try:
                     await self._create_category_summary(category, docs)
