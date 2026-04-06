@@ -84,7 +84,63 @@ header{display:flex;justify-content:space-between;align-items:center;padding:.75
 .section-title{font-size:.9rem;color:var(--fg2);margin:1.5rem 0 .75rem}
 .empty-msg{color:var(--fg2);font-size:.85rem;font-style:italic;padding:2rem;text-align:center}
 
-/* Entity Cards */
+/* Wiki Layout (sidebar + article) */
+.wiki-layout{display:grid;grid-template-columns:240px 1fr;gap:1px;min-height:calc(100vh - 120px);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden}
+@media(max-width:768px){.wiki-layout{grid-template-columns:1fr;grid-template-rows:auto 1fr}}
+
+/* Sidebar */
+#wiki-sidebar{background:var(--bg2);border-right:1px solid var(--border);overflow-y:auto;max-height:calc(100vh - 120px)}
+.sidebar-header{display:flex;justify-content:space-between;align-items:center;padding:.75rem;border-bottom:1px solid var(--border)}
+.sidebar-header h3{font-size:.85rem;color:var(--fg2)}
+#sidebar-search{padding:.5rem .75rem;border-bottom:1px solid var(--border)}
+#entity-search{width:100%;padding:.35rem .5rem;border:1px solid var(--border);border-radius:4px;background:var(--bg);color:var(--fg);font-size:.8rem}
+
+/* Sidebar nav items */
+.nav-item{padding:.5rem .75rem;cursor:pointer;border-bottom:1px solid var(--border);font-size:.8rem;transition:background .15s}
+.nav-item:hover{background:var(--bg)}
+.nav-item.active{background:var(--bg);border-left:3px solid var(--accent);font-weight:600}
+.nav-item-title{display:flex;align-items:center;gap:.4rem}
+.nav-item-title .heat-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.nav-item-project{font-size:.7rem;color:var(--fg2);margin-top:.15rem}
+
+/* Article */
+#wiki-article{background:var(--bg);padding:2rem;overflow-y:auto;max-height:calc(100vh - 120px)}
+#article-placeholder{padding:4rem 2rem;text-align:center}
+#article-header{margin-bottom:1.5rem;padding-bottom:1rem;border-bottom:1px solid var(--border)}
+#article-title{font-size:1.5rem;margin-bottom:.5rem}
+#article-meta{font-size:.8rem;color:var(--fg2);margin-bottom:.5rem}
+#article-heat-bar{height:6px;border-radius:3px;background:var(--border);overflow:hidden;max-width:200px}
+.heat-fill{height:100%;border-radius:3px;transition:width .3s}
+
+/* Article body (rendered markdown) */
+#article-body{line-height:1.7;font-size:.9rem}
+#article-body h1{font-size:1.3rem;margin:1.5rem 0 .75rem;padding-bottom:.3rem;border-bottom:1px solid var(--border)}
+#article-body h2{font-size:1.1rem;margin:1.25rem 0 .5rem}
+#article-body h3{font-size:.95rem;margin:1rem 0 .4rem}
+#article-body p{margin-bottom:.75rem}
+#article-body ul,#article-body ol{margin-bottom:.75rem;padding-left:1.5rem}
+#article-body li{margin-bottom:.3rem}
+#article-body code{background:var(--bg2);padding:.1rem .3rem;border-radius:3px;font-size:.85em}
+#article-body pre{background:var(--bg2);padding:.75rem;border-radius:var(--radius);overflow-x:auto;margin-bottom:.75rem}
+#article-body pre code{background:none;padding:0}
+#article-body strong{color:var(--fg)}
+#article-body hr{border:none;border-top:1px solid var(--border);margin:1rem 0}
+
+/* Related entities */
+#article-related-entities{margin-top:1.5rem;padding-top:1rem;border-top:1px solid var(--border)}
+#article-related-entities h3{font-size:.9rem;color:var(--fg2);margin-bottom:.5rem}
+.related-entity-link{display:inline-block;padding:.25rem .6rem;margin:.2rem;border:1px solid var(--accent);border-radius:var(--radius);color:var(--accent);font-size:.8rem;cursor:pointer;text-decoration:none;transition:background .15s}
+.related-entity-link:hover{background:var(--accent);color:#fff}
+
+/* Source memories */
+#article-sources{margin-top:1.5rem;padding-top:1rem;border-top:1px solid var(--border)}
+#article-sources h3{font-size:.9rem;color:var(--fg2);margin-bottom:.75rem}
+.source-memory{padding:.5rem .75rem;border:1px solid var(--border);border-radius:var(--radius);margin-bottom:.4rem;font-size:.8rem;display:flex;align-items:flex-start;gap:.5rem}
+.source-heat{flex-shrink:0;font-size:.9rem}
+.source-content{flex:1;line-height:1.4}
+.source-meta{font-size:.7rem;color:var(--fg2);margin-top:.2rem}
+
+/* Legacy entity cards (keeping for fallback) */
 .entity-card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:1rem;margin-bottom:.75rem;cursor:pointer;transition:border-color .2s}
 .entity-card:hover{border-color:var(--accent)}
 .entity-title{font-weight:600;margin-bottom:.25rem}

@@ -311,6 +311,94 @@ async def api_wiki_entities(request: Request):
         return JSONResponse({"error": "Internal server error"}, status_code=500)
 
 
+async def api_wiki_entity_detail(request: Request):
+    """Get full entity page with source memories and related entities.
+
+    GET /api/wiki/entity?id=<entity_id>
+
+    Returns the full entity content, its source memories (from cluster tag),
+    and related entity pages.
+    """
+    try:
+        entity_id = request.query_params.get("id")
+        if not entity_id:
+            return JSONResponse({"error": "id parameter required"}, status_code=400)
+
+        memory = get_memory()
+        doc_store = await memory._ensure_document_store()
+        user_id = memory.config.user_id
+
+        # Get the entity page
+        doc = await doc_store.get_document(entity_id, user_id=user_id)
+        if not doc:
+            return JSONResponse({"error": "Entity not found"}, status_code=404)
+
+        tags = doc.get("tags", [])
+        content = doc.get("content_detailed") or doc.get("content", "")
+
+        # Find source memories via the cluster tag
+        cluster_tag = None
+        cluster_size = 0
+        for tag in tags:
+            if tag.startswith("entity-cluster:"):
+                cluster_tag = tag
+            if tag.startswith("cluster-size:"):
+                try:
+                    cluster_size = int(tag.split(":")[1])
+                except ValueError:
+                    pass
+
+        source_memories = []
+        if cluster_tag:
+            # Find memories that are related to this entity page
+            related = await doc_store.get_related_documents(
+                entity_id, limit=20, user_id=user_id,
+            )
+            for r in related:
+                if r.get("category") != "entity-page":
+                    source_memories.append({
+                        "id": str(r["id"]),
+                        "content": (r.get("content", "") or "")[:200],
+                        "category": r.get("category"),
+                        "source_ref": r.get("source_ref"),
+                        "shown_count": r.get("shown_count", 0),
+                        "created_at": str(r.get("created_at", "")),
+                        "similarity": r.get("relation_similarity"),
+                    })
+
+        # Find related entity pages
+        related_entities = []
+        all_related = await doc_store.get_related_documents(
+            entity_id, limit=10, user_id=user_id,
+        )
+        for r in all_related:
+            if r.get("category") == "entity-page":
+                related_entities.append({
+                    "id": str(r["id"]),
+                    "title": r.get("title") or (r.get("content", "")[:80]),
+                })
+
+        return JSONResponse({
+            "success": True,
+            "entity": {
+                "id": entity_id,
+                "title": doc.get("title") or content[:80],
+                "content": content,
+                "category": doc.get("category"),
+                "source_ref": doc.get("source_ref"),
+                "tags": tags,
+                "shown_count": doc.get("shown_count", 0),
+                "created_at": str(doc.get("created_at", "")),
+                "cluster_size": cluster_size,
+            },
+            "source_memories": source_memories,
+            "related_entities": related_entities,
+        })
+    except Exception as e:
+        logger.error(f"API wiki_entity_detail error: {e}")
+        return JSONResponse({"error": "Internal server error"}, status_code=500)
+
+
 async def api_wiki_lint(request: Request):
     """Run lint and return the health report.
 

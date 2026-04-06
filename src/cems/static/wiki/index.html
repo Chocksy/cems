@@ -82,14 +82,42 @@
         </div>
       </div>
 
-      <!-- Entities View -->
+      <!-- Entities View (Wikipedia layout) -->
       <div id="entities-view" class="panel-view" hidden>
-        <div class="panel-header">
-          <h2>Entity Pages</h2>
-          <button id="btn-compile" class="tool-btn">Compile New</button>
+        <div class="wiki-layout">
+          <!-- Sidebar: entity list -->
+          <aside id="wiki-sidebar">
+            <div class="sidebar-header">
+              <h3>Topics</h3>
+              <button id="btn-compile" class="tool-btn">Compile</button>
+            </div>
+            <div id="sidebar-search">
+              <input type="text" id="entity-search" placeholder="Filter topics...">
+            </div>
+            <div id="entity-nav-list"></div>
+            <p id="entities-empty" class="empty-msg" hidden>No entity pages yet.</p>
+          </aside>
+
+          <!-- Main: article content -->
+          <main id="wiki-article">
+            <div id="article-placeholder" class="empty-msg">
+              Select a topic from the sidebar to view its knowledge page.
+            </div>
+            <div id="article-content" hidden>
+              <div id="article-header">
+                <h1 id="article-title"></h1>
+                <div id="article-meta"></div>
+                <div id="article-heat-bar"></div>
+              </div>
+              <div id="article-body"></div>
+              <div id="article-related-entities"></div>
+              <div id="article-sources">
+                <h3>Source Memories</h3>
+                <div id="source-memories-list"></div>
+              </div>
+            </div>
+          </main>
         </div>
-        <div id="entities-list"></div>
-        <p id="entities-empty" class="empty-msg" hidden>No entity pages yet. Run the compilation job to generate them.</p>
       </div>
 
       <!-- Lint / Health View -->

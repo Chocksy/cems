@@ -347,44 +347,163 @@
     detailPanel.hidden = true;
   });
 
-  // --- Entities ---
+  // --- Entities (Wikipedia view) ---
+  let allEntities = [];
+
   async function loadEntities() {
     try {
-      const data = await apiFetch("/api/wiki/entities?limit=50");
+      const data = await apiFetch("/api/wiki/entities?limit=100");
       if (!data.success) return;
 
-      const listEl = document.getElementById("entities-list");
+      allEntities = data.entities || [];
+      const navList = document.getElementById("entity-nav-list");
       const emptyEl = document.getElementById("entities-empty");
 
-      if (!data.entities || data.entities.length === 0) {
-        listEl.innerHTML = "";
+      if (allEntities.length === 0) {
+        navList.innerHTML = "";
         emptyEl.hidden = false;
         return;
       }
       emptyEl.hidden = true;
+      renderEntityNav(allEntities);
 
-      listEl.innerHTML = data.entities.map((e) => `
-        <div class="entity-card" data-id="${escapeHtml(e.id)}">
-          <div class="entity-title">${escapeHtml(e.title || "Untitled")}</div>
-          <div class="entity-meta">
-            ${escapeHtml(e.source_ref || "")}
-            &middot; shown ${Number(e.shown_count) || 0}x
-            &middot; ${e.created_at ? new Date(e.created_at).toLocaleDateString() : ""}
-          </div>
-          <div class="entity-preview">${escapeHtml(e.content || "")}</div>
-          <div class="entity-tags">
-            ${(e.tags || []).slice(0, 5).map((t) => `<span class="entity-tag">${escapeHtml(t)}</span>`).join("")}
-          </div>
-        </div>
-      `).join("");
-
-      // Click handler: show full entity content in detail panel
-      listEl.querySelectorAll(".entity-card").forEach((card) => {
-        card.addEventListener("click", () => showDetail({ id: card.dataset.id, title: card.querySelector(".entity-title").textContent }));
-      });
+      // Auto-select first entity
+      if (allEntities.length > 0) {
+        loadEntityArticle(allEntities[0].id);
+      }
     } catch (e) {
       console.error("Failed to load entities:", e);
     }
+  }
+
+  function renderEntityNav(entities) {
+    const navList = document.getElementById("entity-nav-list");
+    navList.innerHTML = entities.map((e) => {
+      const shown = Number(e.shown_count) || 0;
+      const heatColor = shown >= 20 ? "var(--hot)" : shown >= 5 ? "var(--warm)" : shown >= 1 ? "var(--cool)" : "var(--cold)";
+      const project = (e.source_ref || "").replace("project:", "").split("/").pop() || "";
+      return `<div class="nav-item" data-id="${escapeHtml(e.id)}">
+        <div class="nav-item-title">
+          <span class="heat-dot" style="background:${heatColor}"></span>
+          ${escapeHtml((e.title || "Untitled").slice(0, 40))}
+        </div>
+        ${project ? `<div class="nav-item-project">${escapeHtml(project)}</div>` : ""}
+      </div>`;
+    }).join("");
+
+    // Click handlers
+    navList.querySelectorAll(".nav-item").forEach((item) => {
+      item.addEventListener("click", () => {
+        navList.querySelectorAll(".nav-item").forEach((i) => i.classList.remove("active"));
+        item.classList.add("active");
+        loadEntityArticle(item.dataset.id);
+      });
+    });
+  }
+
+  // Search/filter sidebar
+  const entitySearchInput = document.getElementById("entity-search");
+  if (entitySearchInput) {
+    entitySearchInput.addEventListener("input", () => {
+      const q = entitySearchInput.value.toLowerCase();
+      const filtered = allEntities.filter((e) =>
+        (e.title || "").toLowerCase().includes(q) ||
+        (e.source_ref || "").toLowerCase().includes(q)
+      );
+      renderEntityNav(filtered);
+    });
+  }
+
+  async function loadEntityArticle(entityId) {
+    const placeholder = document.getElementById("article-placeholder");
+    const content = document.getElementById("article-content");
+    placeholder.hidden = true;
+    content.hidden = false;
+
+    try {
+      const data = await apiFetch(`/api/wiki/entity?id=${entityId}`);
+      if (!data.success) return;
+
+      const e = data.entity;
+      const shown = Number(e.shown_count) || 0;
+      const heatPct = Math.min(shown * 5, 100);
+      const heatColor = shown >= 20 ? "var(--hot)" : shown >= 5 ? "var(--warm)" : shown >= 1 ? "var(--cool)" : "var(--cold)";
+      const heatLabel = shown >= 20 ? "HOT" : shown >= 5 ? "WARM" : shown >= 1 ? "COOL" : "COLD";
+
+      document.getElementById("article-title").textContent = e.title || "Untitled";
+      document.getElementById("article-meta").innerHTML =
+        `<span>${escapeHtml(e.source_ref || "no project")}</span>` +
+        ` &middot; ${e.cluster_size || 0} sources` +
+        ` &middot; shown ${shown}x (${heatLabel})` +
+        ` &middot; ${e.created_at ? new Date(e.created_at).toLocaleDateString() : ""}`;
+      document.getElementById("article-heat-bar").innerHTML =
+        `<div class="heat-fill" style="width:${heatPct}%;background:${heatColor}"></div>`;
+
+      // Render markdown content (simple renderer)
+      document.getElementById("article-body").innerHTML = renderMarkdown(e.content || "");
+
+      // Related entities
+      const relEl = document.getElementById("article-related-entities");
+      if (data.related_entities && data.related_entities.length > 0) {
+        relEl.innerHTML = `<h3>Related Topics</h3>` +
+          data.related_entities.map((r) =>
+            `<span class="related-entity-link" data-id="${escapeHtml(r.id)}">${escapeHtml(r.title || "?")}</span>`
+          ).join("");
+        relEl.hidden = false;
+        relEl.querySelectorAll(".related-entity-link").forEach((link) => {
+          link.addEventListener("click", () => {
+            loadEntityArticle(link.dataset.id);
+            // Update sidebar active state
+            document.querySelectorAll(".nav-item").forEach((i) => {
+              i.classList.toggle("active", i.dataset.id === link.dataset.id);
+            });
+          });
+        });
+      } else {
+        relEl.innerHTML = "";
+        relEl.hidden = true;
+      }
+
+      // Source memories
+      const srcList = document.getElementById("source-memories-list");
+      if (data.source_memories && data.source_memories.length > 0) {
+        document.getElementById("article-sources").hidden = false;
+        srcList.innerHTML = data.source_memories.map((m) => {
+          const mShown = Number(m.shown_count) || 0;
+          const icon = mShown >= 20 ? "&#128293;" : mShown >= 5 ? "&#127777;" : mShown >= 1 ? "&#10052;" : "&#9898;";
+          return `<div class="source-memory">
+            <span class="source-heat">${icon}</span>
+            <div>
+              <div class="source-content">${escapeHtml(m.content || "")}</div>
+              <div class="source-meta">${escapeHtml(m.category || "")} &middot; ${m.similarity ? (m.similarity * 100).toFixed(0) + "% match" : ""}</div>
+            </div>
+          </div>`;
+        }).join("");
+      } else {
+        document.getElementById("article-sources").hidden = true;
+      }
+    } catch (e) {
+      document.getElementById("article-body").textContent = "Failed to load entity";
+      console.error("Entity load error:", e);
+    }
+  }
+
+  function renderMarkdown(md) {
+    // Simple markdown → HTML (no external library)
+    return md
+      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+      .replace(/^### (.+)$/gm, "<h3>$1</h3>")
+      .replace(/^## (.+)$/gm, "<h2>$1</h2>")
+      .replace(/^# (.+)$/gm, "<h1>$1</h1>")
+      .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+      .replace(/`([^`]+)`/g, "<code>$1</code>")
+      .replace(/^- (.+)$/gm, "<li>$1</li>")
+      .replace(/(<li>.*<\/li>\n?)+/g, (m) => "<ul>" + m + "</ul>")
+      .replace(/^(\d+)\. (.+)$/gm, "<li>$2</li>")
+      .replace(/^---$/gm, "<hr>")
+      .replace(/\n\n/g, "</p><p>")
+      .replace(/^(?!<[hulo])/gm, "")
+      .replace(/^\s*$/gm, "");
   }
 
   // Compile button
