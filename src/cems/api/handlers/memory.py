@@ -1140,6 +1140,26 @@ async def api_memory_maintenance(request: Request):
                 "results": result,
             })
 
+        if job_type == "lint":
+            from cems.maintenance.lint import LintJob
+            result = await LintJob(memory).run_async(limit=sweep_limit or 50)
+            return JSONResponse({
+                "success": True,
+                "job_type": job_type,
+                "results": result,
+            })
+
+        if job_type == "compilation":
+            from cems.maintenance.compilation import CompilationJob
+            result = await CompilationJob(memory).run_async(
+                limit=sweep_limit or 20, force=full_sweep,
+            )
+            return JSONResponse({
+                "success": True,
+                "job_type": job_type,
+                "results": result,
+            })
+
         jobs = {
             "distillation": DistillationJob(memory).run_async,
             "summarization": SummarizationJob(memory).run_async,

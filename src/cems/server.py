@@ -64,7 +64,10 @@ from cems.api.handlers import (
     ping,
 )
 from cems.api.handlers.wiki import (
+    api_wiki_conflicts,
+    api_wiki_entities,
     api_wiki_graph,
+    api_wiki_lint,
     api_wiki_memory_relations as api_wiki_relations,
     api_wiki_stats,
 )
@@ -242,6 +245,9 @@ def create_http_app():
         Route("/api/wiki/graph", api_wiki_graph, methods=["GET"]),
         Route("/api/wiki/stats", api_wiki_stats, methods=["GET"]),
         Route("/api/wiki/relations", api_wiki_relations, methods=["GET"]),
+        Route("/api/wiki/lint", api_wiki_lint, methods=["POST"]),
+        Route("/api/wiki/conflicts", api_wiki_conflicts, methods=["GET"]),
+        Route("/api/wiki/entities", api_wiki_entities, methods=["GET"]),
     ]
     logger.info("REST API routes enabled (/api/memory/*, /api/index/*, /api/session/*, /api/tool/*, /api/wiki/*)")
 

@@ -31,6 +31,8 @@
           <div class="view-toggle">
             <button class="toggle-btn active" data-view="graph">Graph</button>
             <button class="toggle-btn" data-view="stats">Stats</button>
+            <button class="toggle-btn" data-view="entities">Entities</button>
+            <button class="toggle-btn" data-view="lint">Health</button>
           </div>
         </div>
         <div class="header-right">
@@ -78,6 +80,30 @@
             <div id="category-bars"></div>
           </div>
         </div>
+      </div>
+
+      <!-- Entities View -->
+      <div id="entities-view" class="panel-view" hidden>
+        <div class="panel-header">
+          <h2>Entity Pages</h2>
+          <button id="btn-compile" class="tool-btn">Compile New</button>
+        </div>
+        <div id="entities-list"></div>
+        <p id="entities-empty" class="empty-msg" hidden>No entity pages yet. Run the compilation job to generate them.</p>
+      </div>
+
+      <!-- Lint / Health View -->
+      <div id="lint-view" class="panel-view" hidden>
+        <div class="panel-header">
+          <h2>Knowledge Health</h2>
+          <button id="btn-run-lint" class="tool-btn">Run Lint</button>
+        </div>
+        <div id="lint-report" hidden>
+          <div id="lint-stats" class="stat-cards"></div>
+        </div>
+        <h3 class="section-title">Open Conflicts</h3>
+        <div id="conflicts-list"></div>
+        <p id="conflicts-empty" class="empty-msg" hidden>No open conflicts.</p>
       </div>
 
       <!-- Graph View -->

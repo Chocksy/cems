@@ -271,3 +271,92 @@ async def api_wiki_memory_relations(request: Request):
     except Exception as e:
         logger.error(f"API wiki_memory_relations error: {e}")
         return JSONResponse({"error": "Internal server error"}, status_code=500)
+
+
+async def api_wiki_entities(request: Request):
+    """List entity pages.
+
+    GET /api/wiki/entities?limit=50
+    """
+    try:
+        limit = _safe_int(request.query_params.get("limit"), 50, max_val=200)
+        memory = get_memory()
+        doc_store = await memory._ensure_document_store()
+        user_id = memory.config.user_id
+
+        entities = await doc_store.get_documents_by_category(
+            user_id=user_id,
+            category="entity-page",
+            limit=limit,
+        )
+
+        return JSONResponse({
+            "success": True,
+            "entities": [
+                {
+                    "id": str(e["id"]),
+                    "title": e.get("title") or (e.get("content", "")[:80]),
+                    "content": (e.get("content", "") or "")[:500],
+                    "tags": e.get("tags", []),
+                    "source_ref": e.get("source_ref"),
+                    "shown_count": e.get("shown_count", 0),
+                    "created_at": str(e.get("created_at", "")),
+                }
+                for e in entities
+            ],
+            "count": len(entities),
+        })
+    except Exception as e:
+        logger.error(f"API wiki_entities error: {e}")
+        return JSONResponse({"error": "Internal server error"}, status_code=500)
+
+
+async def api_wiki_lint(request: Request):
+    """Run lint and return the health report.
+
+    POST /api/wiki/lint
+
+    Runs the LintJob and returns the report.
+    """
+    try:
+        memory = get_memory()
+        from cems.maintenance.lint import LintJob
+        result = await LintJob(memory).run_async(limit=30)
+        return JSONResponse({"success": True, "report": result})
+    except Exception as e:
+        logger.error(f"API wiki_lint error: {e}")
+        return JSONResponse({"error": "Internal server error"}, status_code=500)
+
+
+async def api_wiki_conflicts(request: Request):
+    """Get open conflicts for the dashboard.
+
+    GET /api/wiki/conflicts?limit=20
+    """
+    try:
+        limit = _safe_int(request.query_params.get("limit"), 20, max_val=100)
+        memory = get_memory()
+        doc_store = await memory._ensure_document_store()
+        user_id = memory.config.user_id
+
+        conflicts = await doc_store.get_open_conflicts(user_id, limit=limit)
+
+        return JSONResponse({
+            "success": True,
+            "conflicts": [
+                {
+                    "id": str(c["id"]),
+                    "doc_a_id": str(c["doc_a_id"]),
+                    "doc_b_id": str(c["doc_b_id"]),
+                    "explanation": c.get("explanation", ""),
+                    "doc_a_content": (c.get("doc_a_content", "") or "")[:300],
+                    "doc_b_content": (c.get("doc_b_content", "") or "")[:300],
+                    "created_at": str(c.get("created_at", "")),
+                }
+                for c in conflicts
+            ],
+            "count": len(conflicts),
+        })
+    except Exception as e:
+        logger.error(f"API wiki_conflicts error: {e}")
+        return JSONResponse({"error": "Internal server error"}, status_code=500)

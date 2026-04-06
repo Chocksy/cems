@@ -76,6 +76,36 @@ header{display:flex;justify-content:space-between;align-items:center;padding:.75
 .bar-cool{background:var(--cool)}
 .bar-cold{background:var(--cold)}
 
+/* Panel Views */
+.panel-view{display:none}
+.panel-view.active{display:block}
+.panel-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem}
+.panel-header h2{font-size:1.1rem}
+.section-title{font-size:.9rem;color:var(--fg2);margin:1.5rem 0 .75rem}
+.empty-msg{color:var(--fg2);font-size:.85rem;font-style:italic;padding:2rem;text-align:center}
+
+/* Entity Cards */
+.entity-card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--radius);padding:1rem;margin-bottom:.75rem;cursor:pointer;transition:border-color .2s}
+.entity-card:hover{border-color:var(--accent)}
+.entity-title{font-weight:600;margin-bottom:.25rem}
+.entity-meta{font-size:.75rem;color:var(--fg2);margin-bottom:.5rem}
+.entity-preview{font-size:.85rem;color:var(--fg);line-height:1.5;max-height:80px;overflow:hidden}
+.entity-tags{display:flex;gap:.3rem;flex-wrap:wrap;margin-top:.5rem}
+.entity-tag{font-size:.65rem;padding:.1rem .4rem;border-radius:3px;background:var(--bg);border:1px solid var(--border);color:var(--fg2)}
+
+/* Conflict Cards */
+.conflict-card{background:var(--bg2);border:1px solid var(--border);border-left:3px solid var(--warning);border-radius:var(--radius);padding:1rem;margin-bottom:.75rem}
+.conflict-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:.5rem}
+.conflict-label{font-size:.8rem;font-weight:600;color:var(--warning)}
+.conflict-date{font-size:.7rem;color:var(--fg2)}
+.conflict-pair{display:grid;grid-template-columns:1fr 1fr;gap:.75rem;margin-top:.5rem}
+.conflict-doc{font-size:.8rem;line-height:1.5;background:var(--bg);padding:.5rem;border-radius:4px;max-height:120px;overflow:hidden}
+.conflict-doc-label{font-size:.7rem;font-weight:600;color:var(--fg2);margin-bottom:.25rem}
+.conflict-actions{display:flex;gap:.4rem;margin-top:.75rem}
+.conflict-actions button{padding:.25rem .5rem;font-size:.75rem;border:1px solid var(--border);border-radius:4px;background:var(--bg2);color:var(--fg2);cursor:pointer}
+.conflict-actions button:hover{border-color:var(--accent);color:var(--accent)}
+.conflict-actions .btn-resolve{border-color:var(--success);color:var(--success)}
+
 /* Graph View */
 #graph-view{display:block}
 #graph-view.hidden{display:none}

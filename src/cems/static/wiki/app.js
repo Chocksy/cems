@@ -71,17 +71,32 @@
   });
 
   // --- View Toggle ---
+  const entitiesView = document.getElementById("entities-view");
+  const lintView = document.getElementById("lint-view");
+
   document.querySelectorAll(".toggle-btn").forEach((btn) => {
     btn.addEventListener("click", () => {
       document.querySelectorAll(".toggle-btn").forEach((b) => b.classList.remove("active"));
       btn.classList.add("active");
       currentView = btn.dataset.view;
+
+      // Hide all views
+      statsPanel.classList.remove("active");
+      graphView.classList.add("hidden");
+      if (entitiesView) entitiesView.classList.remove("active");
+      if (lintView) lintView.classList.remove("active");
+
+      // Show selected view
       if (currentView === "stats") {
         statsPanel.classList.add("active");
-        graphView.classList.add("hidden");
-      } else {
-        statsPanel.classList.remove("active");
+      } else if (currentView === "graph") {
         graphView.classList.remove("hidden");
+      } else if (currentView === "entities") {
+        if (entitiesView) { entitiesView.classList.add("active"); entitiesView.hidden = false; }
+        loadEntities();
+      } else if (currentView === "lint") {
+        if (lintView) { lintView.classList.add("active"); lintView.hidden = false; }
+        loadConflicts();
       }
     });
   });
@@ -323,6 +338,167 @@
   document.getElementById("detail-close").addEventListener("click", () => {
     detailPanel.hidden = true;
   });
+
+  // --- Entities ---
+  async function loadEntities() {
+    try {
+      const data = await apiFetch("/api/wiki/entities?limit=50");
+      if (!data.success) return;
+
+      const listEl = document.getElementById("entities-list");
+      const emptyEl = document.getElementById("entities-empty");
+
+      if (!data.entities || data.entities.length === 0) {
+        listEl.innerHTML = "";
+        emptyEl.hidden = false;
+        return;
+      }
+      emptyEl.hidden = true;
+
+      listEl.innerHTML = data.entities.map((e) => `
+        <div class="entity-card" onclick="window.open('/dashboard#${escapeHtml(e.id)}','_blank')">
+          <div class="entity-title">${escapeHtml(e.title || "Untitled")}</div>
+          <div class="entity-meta">
+            ${escapeHtml(e.source_ref || "")}
+            &middot; shown ${Number(e.shown_count) || 0}x
+            &middot; ${e.created_at ? new Date(e.created_at).toLocaleDateString() : ""}
+          </div>
+          <div class="entity-preview">${escapeHtml(e.content || "")}</div>
+          <div class="entity-tags">
+            ${(e.tags || []).slice(0, 5).map((t) => `<span class="entity-tag">${escapeHtml(t)}</span>`).join("")}
+          </div>
+        </div>
+      `).join("");
+    } catch (e) {
+      console.error("Failed to load entities:", e);
+    }
+  }
+
+  // Compile button
+  const btnCompile = document.getElementById("btn-compile");
+  if (btnCompile) {
+    btnCompile.addEventListener("click", async () => {
+      btnCompile.disabled = true;
+      btnCompile.textContent = "Compiling...";
+      try {
+        const res = await fetch(baseUrl + "/api/memory/maintenance", {
+          method: "POST",
+          headers: {
+            "Authorization": "Bearer " + apiKey,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ job_type: "compilation", limit: 10 }),
+        });
+        const data = await res.json();
+        if (data.success) {
+          btnCompile.textContent = `Done! ${data.results.pages_created || 0} created`;
+          setTimeout(() => { loadEntities(); btnCompile.textContent = "Compile New"; btnCompile.disabled = false; }, 2000);
+        }
+      } catch (e) {
+        btnCompile.textContent = "Error";
+        setTimeout(() => { btnCompile.textContent = "Compile New"; btnCompile.disabled = false; }, 2000);
+      }
+    });
+  }
+
+  // --- Lint / Health ---
+  async function loadConflicts() {
+    try {
+      const data = await apiFetch("/api/wiki/conflicts?limit=20");
+      if (!data.success) return;
+
+      const listEl = document.getElementById("conflicts-list");
+      const emptyEl = document.getElementById("conflicts-empty");
+
+      if (!data.conflicts || data.conflicts.length === 0) {
+        listEl.innerHTML = "";
+        emptyEl.hidden = false;
+        return;
+      }
+      emptyEl.hidden = true;
+
+      listEl.innerHTML = data.conflicts.map((c) => `
+        <div class="conflict-card">
+          <div class="conflict-header">
+            <span class="conflict-label">Contradiction</span>
+            <span class="conflict-date">${c.created_at ? new Date(c.created_at).toLocaleDateString() : ""}</span>
+          </div>
+          <div style="font-size:.8rem;color:var(--fg2);margin-bottom:.5rem">${escapeHtml(c.explanation || "")}</div>
+          <div class="conflict-pair">
+            <div>
+              <div class="conflict-doc-label">Memory A</div>
+              <div class="conflict-doc">${escapeHtml(c.doc_a_content || "")}</div>
+            </div>
+            <div>
+              <div class="conflict-doc-label">Memory B</div>
+              <div class="conflict-doc">${escapeHtml(c.doc_b_content || "")}</div>
+            </div>
+          </div>
+          <div class="conflict-actions">
+            <button onclick="resolveConflict('${escapeHtml(c.id)}','keep_a')">Keep A</button>
+            <button onclick="resolveConflict('${escapeHtml(c.id)}','keep_b')">Keep B</button>
+            <button onclick="resolveConflict('${escapeHtml(c.id)}','dismiss')" class="btn-resolve">Dismiss</button>
+          </div>
+        </div>
+      `).join("");
+    } catch (e) {
+      console.error("Failed to load conflicts:", e);
+    }
+  }
+
+  // Make resolveConflict global for onclick
+  window.resolveConflict = async function(conflictId, resolution) {
+    try {
+      const res = await fetch(baseUrl + "/api/memory/conflict/resolve", {
+        method: "POST",
+        headers: {
+          "Authorization": "Bearer " + apiKey,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ conflict_id: conflictId, resolution }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        loadConflicts();
+        loadStats();
+      }
+    } catch (e) {
+      console.error("Resolve failed:", e);
+    }
+  };
+
+  // Lint button
+  const btnLint = document.getElementById("btn-run-lint");
+  if (btnLint) {
+    btnLint.addEventListener("click", async () => {
+      btnLint.disabled = true;
+      btnLint.textContent = "Running...";
+      try {
+        const res = await fetch(baseUrl + "/api/wiki/lint", {
+          method: "POST",
+          headers: { "Authorization": "Bearer " + apiKey },
+        });
+        const data = await res.json();
+        if (data.success && data.report) {
+          const r = data.report;
+          const reportEl = document.getElementById("lint-report");
+          const statsEl = document.getElementById("lint-stats");
+          reportEl.hidden = false;
+          statsEl.innerHTML = `
+            <div class="stat-card"><div class="stat-value">${r.health_score || 0}</div><div class="stat-label">Health</div></div>
+            <div class="stat-card"><div class="stat-value">${r.contradictions_found || 0}</div><div class="stat-label">New Conflicts</div></div>
+            <div class="stat-card"><div class="stat-value">${r.orphan_count || 0}</div><div class="stat-label">Orphans</div></div>
+            <div class="stat-card"><div class="stat-value">${r.connected_memories || 0}</div><div class="stat-label">Connected</div></div>
+          `;
+          loadConflicts();
+        }
+      } catch (e) {
+        console.error("Lint failed:", e);
+      }
+      btnLint.textContent = "Run Lint";
+      btnLint.disabled = false;
+    });
+  }
 
   // --- Logout ---
   document.getElementById("logout-btn").addEventListener("click", () => {

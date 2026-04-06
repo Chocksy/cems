@@ -987,6 +987,30 @@ class DocumentStore:
 
         return [self._doc_row_to_dict(row) for row in rows]
 
+    async def get_documents_by_tag(
+        self,
+        user_id: str,
+        tag: str,
+        limit: int = 10,
+    ) -> list[dict[str, Any]]:
+        """Get documents that contain a specific tag.
+
+        Args:
+            user_id: User ID
+            tag: Tag to search for (exact match in tags array)
+            limit: Maximum results
+        """
+        pool = await self._get_pool()
+        query = f"""
+            SELECT {DOCUMENT_COLUMNS} FROM memory_documents
+            WHERE user_id = $1 AND $2 = ANY(tags) AND deleted_at IS NULL
+            ORDER BY created_at DESC
+            LIMIT $3
+        """
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(query, UUID(user_id), tag, limit)
+        return [self._doc_row_to_dict(row) for row in rows]
+
     async def get_recent_documents(
         self,
         user_id: str,
