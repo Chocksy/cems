@@ -129,9 +129,9 @@
       const pct = Math.max((val / max) * 100, 2);
       const cls = classMap[key] || "bar-cool";
       return `<div class="bar-row">
-        <span class="bar-label">${key}</span>
+        <span class="bar-label">${escapeHtml(key)}</span>
         <div class="bar-fill ${cls}" style="width:${pct}%"></div>
-        <span class="bar-count">${val}</span>
+        <span class="bar-count">${Number(val)}</span>
       </div>`;
     }).join("");
   }
@@ -143,9 +143,9 @@
     el.innerHTML = entries.map(([key, val]) => {
       const pct = Math.max((val / max) * 100, 2);
       return `<div class="bar-row">
-        <span class="bar-label">${key}</span>
+        <span class="bar-label">${escapeHtml(key)}</span>
         <div class="bar-fill bar-cool" style="width:${pct}%"></div>
-        <span class="bar-count">${val}</span>
+        <span class="bar-count">${Number(val)}</span>
       </div>`;
     }).join("");
   }
@@ -182,6 +182,7 @@
   }
 
   function renderGraph(nodes, edges) {
+    if (simulation) simulation.stop();
     const svg = d3.select("#graph-svg");
     svg.selectAll("*").remove();
 
@@ -295,9 +296,9 @@
       const m = data.memory;
       document.getElementById("detail-content").innerHTML = `
         <div class="detail-meta">
-          <strong>${m.category || "general"}</strong>
-          &middot; shown ${m.shown_count || 0}x
-          &middot; ${m.source_ref || "no project"}
+          <strong>${escapeHtml(m.category || "general")}</strong>
+          &middot; shown ${Number(m.shown_count) || 0}x
+          &middot; ${escapeHtml(m.source_ref || "no project")}
           &middot; ${m.created_at ? new Date(m.created_at).toLocaleDateString() : ""}
         </div>
         <div class="detail-text">${escapeHtml(m.content)}</div>
@@ -310,7 +311,7 @@
             <div class="detail-relation" onclick="document.getElementById('detail-panel').hidden=true">
               <span class="relation-score">${r.similarity ? (r.similarity * 100).toFixed(0) + "%" : ""}</span>
               <div>${escapeHtml((r.content || "").slice(0, 150))}</div>
-              <div class="relation-cat">${r.category || ""} &middot; ${r.relation_type || "similar"}</div>
+              <div class="relation-cat">${escapeHtml(r.category || "")} &middot; ${escapeHtml(r.relation_type || "similar")}</div>
             </div>
           `).join("")
         : `<p style="color:var(--fg2);font-size:.85rem;margin-top:1rem">No relations found</p>`;

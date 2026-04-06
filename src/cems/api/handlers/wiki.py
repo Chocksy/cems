@@ -49,7 +49,7 @@ async def api_wiki_graph(request: Request):
                 FROM memory_relations r
                 JOIN memory_documents s ON r.source_id = s.id
                 JOIN memory_documents t ON r.target_id = t.id
-                WHERE s.user_id = $1 AND s.deleted_at IS NULL AND t.deleted_at IS NULL
+                WHERE s.user_id = $1 AND t.user_id = $1 AND s.deleted_at IS NULL AND t.deleted_at IS NULL
                 ORDER BY r.similarity DESC NULLS LAST
                 LIMIT $2
                 """,
@@ -69,7 +69,7 @@ async def api_wiki_graph(request: Request):
             docs_list = list(doc_ids)[:limit]
             for doc_id in docs_list:
                 try:
-                    doc = await doc_store.get_document(doc_id)
+                    doc = await doc_store.get_document(doc_id, user_id=user_id)
                     if doc:
                         content = doc.get("content", "")
                         nodes.append({
@@ -237,8 +237,8 @@ async def api_wiki_memory_relations(request: Request):
         memory = get_memory()
         doc_store = await memory._ensure_document_store()
 
-        # Get the document
-        doc = await doc_store.get_document(memory_id)
+        # Get the document (with ownership check)
+        doc = await doc_store.get_document(memory_id, user_id=memory.config.user_id)
         if not doc:
             return JSONResponse({"error": "Memory not found"}, status_code=404)
 
