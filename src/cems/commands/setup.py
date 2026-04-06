@@ -472,7 +472,42 @@ def _append_cems_instructions(config_file: Path, marker: str = "## CEMS") -> Non
     console.print(f"  CEMS instructions added to {config_file}")
 
 
-def _install_claude_hooks(data_path: Path, api_url: str, team_id: str | None = None) -> None:
+def _discover_mcp_url(api_url: str) -> str:
+    """Discover the MCP HTTP endpoint URL.
+
+    Priority:
+    1. CEMS_MCP_URL from ~/.cems/credentials (user override)
+    2. Server discovery endpoint (/api/config/setup)
+    3. Fallback: derive from api_url (localhost → :8766, remote → mcp- prefix)
+    """
+    import urllib.error
+    import urllib.request
+
+    creds = _read_credentials()
+    creds_mcp = creds.get("CEMS_MCP_URL", "")
+    if creds_mcp:
+        return creds_mcp
+
+    discovery_url = api_url.rstrip("/") + "/api/config/setup"
+    try:
+        req = urllib.request.Request(discovery_url, method="GET")
+        req.add_header("User-Agent", "CEMS-CLI/1.0")
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = json.loads(resp.read().decode())
+            mcp_url = data.get("mcp_url")
+            if mcp_url:
+                return mcp_url
+    except (urllib.error.URLError, json.JSONDecodeError, OSError):
+        pass
+
+    from urllib.parse import urlparse
+    parsed = urlparse(api_url.rstrip("/"))
+    if parsed.hostname in ("localhost", "127.0.0.1"):
+        return f"{parsed.scheme}://{parsed.hostname}:8766/mcp"
+    return f"{parsed.scheme}://mcp-{parsed.hostname}/mcp"
+
+
+def _install_claude_hooks(data_path: Path, api_url: str, team_id: str | None = None, transport: str = "stdio", api_key: str | None = None) -> None:
     """Install Claude Code hooks, skills, settings, and MCP config."""
     claude_dir = Path.home() / ".claude"
     hooks_dir = claude_dir / "hooks"
@@ -537,18 +572,18 @@ def _install_claude_hooks(data_path: Path, api_url: str, team_id: str | None = N
     _merge_settings(claude_dir, data_path / "claude" / "settings.json")
 
     # Register MCP server
-    _register_claude_mcp_server(api_url, team_id=team_id)
+    _register_claude_mcp_server(api_url, team_id=team_id, transport=transport, api_key=api_key)
 
     # Add CEMS instructions to CLAUDE.md
     _append_cems_instructions(claude_dir / "CLAUDE.md")
 
 
-def _register_claude_mcp_server(api_url: str, team_id: str | None = None) -> None:
+def _register_claude_mcp_server(api_url: str, team_id: str | None = None, transport: str = "stdio", api_key: str | None = None) -> None:
     """Register CEMS MCP server in Claude Code config (~/.claude.json).
 
-    Uses stdio transport — Claude Code spawns `cems-mcp` locally.
-    The server resolves credentials from CWD, so per-project
-    .cems/credentials files are picked up automatically.
+    Supports two transports:
+    - stdio (default): Claude Code spawns `cems-mcp` locally. Credentials resolved from CWD.
+    - http: Connects to remote MCP wrapper. API key embedded in config. No install needed.
     """
     claude_json = Path.home() / ".claude.json"
 
@@ -561,44 +596,48 @@ def _register_claude_mcp_server(api_url: str, team_id: str | None = None) -> Non
 
     mcp_servers = existing.setdefault("mcpServers", {})
 
-    # Show what was there before (helps debug why config didn't change)
+    # Show what was there before
     old_config = mcp_servers.get("cems")
     if old_config:
         old_cmd = old_config.get("command", old_config.get("url", "unknown"))
         old_type = old_config.get("type", "stdio")
-        if old_cmd == "cems-mcp" and old_type == "stdio":
-            console.print("  MCP server already configured: cems-mcp (stdio) — no change needed")
-        else:
-            console.print(f"  Replacing old MCP config: {old_type} ({old_cmd}) → stdio (cems-mcp)")
+        console.print(f"  Replacing MCP config: {old_type} ({old_cmd}) → {transport}")
 
-    # Remove any old env overrides that would bypass credential resolution
-    if "env" in (old_config or {}):
-        console.print("  [yellow]Removing old env overrides from MCP config (credentials now resolved from files)[/yellow]")
+    if transport == "http":
+        # HTTP mode — connect to remote MCP wrapper (no local install needed)
+        mcp_url = _discover_mcp_url(api_url)
+        resolved_key = api_key or _read_credentials().get("CEMS_API_KEY", "")
+        headers: dict[str, str] = {"Authorization": f"Bearer {resolved_key}"}
+        if team_id:
+            headers["X-Team-Id"] = team_id
+        mcp_servers["cems"] = {
+            "type": "http",
+            "url": mcp_url,
+            "headers": headers,
+        }
+        claude_json.write_text(json.dumps(existing, indent=2) + "\n")
+        console.print(f"  MCP server registered: {mcp_url} (http) ✓")
+    else:
+        # stdio mode (default) — resolve full path to cems-mcp binary
+        cems_mcp_cmd = shutil.which("cems-mcp")
+        if not cems_mcp_cmd:
+            for candidate in [
+                Path(sys.prefix) / "bin" / "cems-mcp",
+                Path.home() / ".local" / "bin" / "cems-mcp",
+            ]:
+                if candidate.exists():
+                    cems_mcp_cmd = str(candidate)
+                    break
+        if not cems_mcp_cmd:
+            cems_mcp_cmd = "cems-mcp"
+            console.print("  [yellow]⚠ cems-mcp not found — run: uv tool install cems[/yellow]")
 
-    # Resolve full path to cems-mcp binary — don't assume it's on PATH
-    # This ensures the MCP server works even without `eval "$(cems env)"` in shell profile
-    cems_mcp_cmd = shutil.which("cems-mcp")
-    if not cems_mcp_cmd:
-        # Try common locations
-        for candidate in [
-            Path(sys.prefix) / "bin" / "cems-mcp",  # Current venv
-            Path.home() / ".local" / "bin" / "cems-mcp",  # uv tool / pipx
-        ]:
-            if candidate.exists():
-                cems_mcp_cmd = str(candidate)
-                break
-    if not cems_mcp_cmd:
-        cems_mcp_cmd = "cems-mcp"  # Fall back to bare name
-        console.print("  [yellow]⚠ cems-mcp not found — run: uv tool install cems[/yellow]")
-
-    # Set the stdio config (overwrites any old HTTP/SSE/env config)
-    mcp_servers["cems"] = {
-        "command": cems_mcp_cmd,
-        "args": [],
-    }
-
-    claude_json.write_text(json.dumps(existing, indent=2) + "\n")
-    console.print(f"  MCP server registered: {cems_mcp_cmd} (stdio) ✓")
+        mcp_servers["cems"] = {
+            "command": cems_mcp_cmd,
+            "args": [],
+        }
+        claude_json.write_text(json.dumps(existing, indent=2) + "\n")
+        console.print(f"  MCP server registered: {cems_mcp_cmd} (stdio) ✓")
 
 
 def _migrate_old_hook_names(hooks: dict) -> None:
@@ -800,7 +839,7 @@ bearer_token_env_var = "CEMS_API_KEY"
     console.print(f"  MCP server registered: {mcp_url}")
 
 
-def _install_cursor_hooks(data_path: Path, api_url: str, team_id: str | None = None) -> None:
+def _install_cursor_hooks(data_path: Path, api_url: str, team_id: str | None = None, transport: str = "stdio", api_key: str | None = None) -> None:
     """Install Cursor hooks, skills, and MCP config."""
     cursor_dir = Path.home() / ".cursor"
     hooks_dir = cursor_dir / "hooks"
@@ -841,7 +880,7 @@ def _install_cursor_hooks(data_path: Path, api_url: str, team_id: str | None = N
         console.print(f"  Skills installed to {skills_dir}")
 
     # Register MCP server in mcp.json
-    _register_cursor_mcp(cursor_dir, api_url, team_id=team_id)
+    _register_cursor_mcp(cursor_dir, api_url, team_id=team_id, transport=transport, api_key=api_key)
 
     # Add CEMS instructions to Cursor rules
     rules_dir = cursor_dir / "rules"
@@ -849,10 +888,9 @@ def _install_cursor_hooks(data_path: Path, api_url: str, team_id: str | None = N
     _append_cems_instructions(rules_dir / "cems.md")
 
 
-def _register_cursor_mcp(cursor_dir: Path, api_url: str, team_id: str | None = None) -> None:
+def _register_cursor_mcp(cursor_dir: Path, api_url: str, team_id: str | None = None, transport: str = "stdio", api_key: str | None = None) -> None:
     """Register CEMS MCP server in Cursor mcp.json."""
     mcp_file = cursor_dir / "mcp.json"
-    mcp_url = _discover_mcp_url(api_url)
 
     existing: dict = {}
     if mcp_file.exists():
@@ -863,17 +901,37 @@ def _register_cursor_mcp(cursor_dir: Path, api_url: str, team_id: str | None = N
 
     mcp_servers = existing.setdefault("mcpServers", {})
 
-    headers = {"Authorization": "Bearer ${CEMS_API_KEY}"}
-    if team_id:
-        headers["X-Team-Id"] = team_id
-
-    mcp_servers["cems"] = {
-        "url": mcp_url,
-        "headers": headers,
-    }
-
-    mcp_file.write_text(json.dumps(existing, indent=2) + "\n")
-    console.print(f"  MCP server registered: {mcp_url}")
+    if transport == "http":
+        mcp_url = _discover_mcp_url(api_url)
+        resolved_key = api_key or _read_credentials().get("CEMS_API_KEY", "")
+        headers: dict[str, str] = {"Authorization": f"Bearer {resolved_key}"}
+        if team_id:
+            headers["X-Team-Id"] = team_id
+        mcp_servers["cems"] = {
+            "type": "http",
+            "url": mcp_url,
+            "headers": headers,
+        }
+        mcp_file.write_text(json.dumps(existing, indent=2) + "\n")
+        console.print(f"  MCP server registered: {mcp_url} (http) ✓")
+    else:
+        cems_mcp_cmd = shutil.which("cems-mcp")
+        if not cems_mcp_cmd:
+            for candidate in [
+                Path(sys.prefix) / "bin" / "cems-mcp",
+                Path.home() / ".local" / "bin" / "cems-mcp",
+            ]:
+                if candidate.exists():
+                    cems_mcp_cmd = str(candidate)
+                    break
+        if not cems_mcp_cmd:
+            cems_mcp_cmd = "cems-mcp"
+        mcp_servers["cems"] = {
+            "command": cems_mcp_cmd,
+            "args": [],
+        }
+        mcp_file.write_text(json.dumps(existing, indent=2) + "\n")
+        console.print(f"  MCP server registered: {cems_mcp_cmd} (stdio) ✓")
 
 
 def _setup_project_credentials(api_url: str | None, api_key: str | None) -> None:
@@ -988,7 +1046,8 @@ def _check_server_version(api_url: str, api_key: str) -> None:
 @click.option("--project", "install_project", is_flag=True, help="Create per-project .cems/credentials in CWD")
 @click.option("--api-url", help="CEMS server URL (non-interactive)")
 @click.option("--api-key", help="CEMS API key (non-interactive)")
-def setup(install_claude: bool, install_cursor: bool, install_codex: bool, install_goose: bool, install_project: bool, api_url: str | None, api_key: str | None) -> None:
+@click.option("--transport", type=click.Choice(["stdio", "http"]), default=None, help="MCP transport: stdio (local, default) or http (remote, no install needed)")
+def setup(install_claude: bool, install_cursor: bool, install_codex: bool, install_goose: bool, install_project: bool, api_url: str | None, api_key: str | None, transport: str | None) -> None:
     """Set up CEMS hooks and credentials for your IDE.
 
     Installs hooks, skills, and settings for Claude Code, Cursor, Codex, and/or Goose.
@@ -1064,6 +1123,19 @@ def setup(install_claude: bool, install_cursor: bool, install_codex: bool, insta
         elif existing_mode:
             _remove_credential("CEMS_SEARCH_MODE")
 
+    # Transport selection (interactive or from flag)
+    resolved_transport = transport or "stdio"
+    if not transport and _is_interactive():
+        console.print()
+        resolved_transport = _single_select(
+            "MCP transport",
+            [
+                ("stdio", "stdio — local cems-mcp process (recommended, requires cems installed)"),
+                ("http", "HTTP — remote server, no install needed (simpler for non-devs)"),
+            ],
+            default=0,
+        )
+
     # Discover user's team membership
     team_id = creds.get("CEMS_TEAM_ID")  # Preserve existing if set
     if not team_id and resolved_key:
@@ -1072,12 +1144,12 @@ def setup(install_claude: bool, install_cursor: bool, install_codex: bool, insta
     # Install
     if install_claude:
         console.print("[bold blue]Claude Code[/bold blue]")
-        _install_claude_hooks(data_path, resolved_url, team_id=team_id)
+        _install_claude_hooks(data_path, resolved_url, team_id=team_id, transport=resolved_transport, api_key=resolved_key)
         console.print()
 
     if install_cursor:
         console.print("[bold blue]Cursor[/bold blue]")
-        _install_cursor_hooks(data_path, resolved_url, team_id=team_id)
+        _install_cursor_hooks(data_path, resolved_url, team_id=team_id, transport=resolved_transport, api_key=resolved_key)
         console.print()
 
     if install_codex:

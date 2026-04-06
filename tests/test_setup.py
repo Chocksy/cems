@@ -92,6 +92,70 @@ class TestRegisterClaudeMcpServer:
         assert "type" not in cems, "Old type should be gone"
 
 
+    def test_registers_http_transport(self, tmp_path):
+        """HTTP transport should use type:http with URL and auth headers."""
+        from cems.commands.setup import _register_claude_mcp_server
+
+        claude_json = tmp_path / ".claude.json"
+        claude_json.write_text("{}")
+
+        with patch("cems.commands.setup.Path.home", return_value=tmp_path), \
+             patch("cems.commands.setup._discover_mcp_url", return_value="https://mcp-cems.example.com/mcp"), \
+             patch("cems.commands.setup._read_credentials", return_value={"CEMS_API_KEY": "test-key"}):
+            _register_claude_mcp_server("https://cems.example.com", transport="http", api_key="test-key", team_id="team-123")
+
+        config = json.loads(claude_json.read_text())
+        cems = config["mcpServers"]["cems"]
+        assert cems["type"] == "http"
+        assert cems["url"] == "https://mcp-cems.example.com/mcp"
+        assert cems["headers"]["Authorization"] == "Bearer test-key"
+        assert cems["headers"]["X-Team-Id"] == "team-123"
+        assert "command" not in cems, "HTTP mode should not have command"
+
+    def test_http_without_team_id(self, tmp_path):
+        """HTTP transport without team_id should not include X-Team-Id header."""
+        from cems.commands.setup import _register_claude_mcp_server
+
+        claude_json = tmp_path / ".claude.json"
+        claude_json.write_text("{}")
+
+        with patch("cems.commands.setup.Path.home", return_value=tmp_path), \
+             patch("cems.commands.setup._discover_mcp_url", return_value="https://mcp.test/mcp"), \
+             patch("cems.commands.setup._read_credentials", return_value={}):
+            _register_claude_mcp_server("https://test.com", transport="http", api_key="key123")
+
+        config = json.loads(claude_json.read_text())
+        cems = config["mcpServers"]["cems"]
+        assert "X-Team-Id" not in cems["headers"]
+
+
+class TestDiscoverMcpUrl:
+    """Tests for _discover_mcp_url."""
+
+    def test_credentials_override(self):
+        """CEMS_MCP_URL in credentials takes priority."""
+        from cems.commands.setup import _discover_mcp_url
+
+        with patch("cems.commands.setup._read_credentials", return_value={"CEMS_MCP_URL": "https://custom.com/mcp"}):
+            assert _discover_mcp_url("https://cems.example.com") == "https://custom.com/mcp"
+
+    def test_localhost_fallback(self):
+        """Localhost API URL should derive port 8766 MCP URL."""
+        from cems.commands.setup import _discover_mcp_url
+
+        with patch("cems.commands.setup._read_credentials", return_value={}):
+            result = _discover_mcp_url("http://localhost:8765")
+            assert result == "http://localhost:8766/mcp"
+
+    def test_remote_fallback(self):
+        """Remote API URL should derive mcp- prefixed URL."""
+        from cems.commands.setup import _discover_mcp_url
+
+        with patch("cems.commands.setup._read_credentials", return_value={}):
+            result = _discover_mcp_url("https://cems.chocksy.com")
+            assert result == "https://mcp-cems.chocksy.com/mcp"
+
+
 class TestAppendCemsInstructions:
     """Tests for _append_cems_instructions."""
 
