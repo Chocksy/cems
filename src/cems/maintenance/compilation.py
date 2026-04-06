@@ -187,7 +187,7 @@ class CompilationJob:
         for doc in cluster_docs:
             content = doc.get("content_detailed") or doc.get("content", "")
             if content:
-                contents.append(content[:1000])  # Cap each source memory
+                contents.append(content)  # Full content — no truncation
             cat = doc.get("category", "general")
             categories.add(cat)
             ref = doc.get("source_ref")
@@ -259,23 +259,45 @@ class CompilationJob:
                 f"Memory {i+1}:\n{c}" for i, c in enumerate(contents)
             )
 
-            prompt = f"""Synthesize these {len(contents)} related memories into a single knowledge page.
+            prompt = f"""You are compiling a knowledge wiki page from {len(contents)} related memories.
 Categories: {cat_str}
 
 {memories_text}
 
-Write a comprehensive knowledge page that:
-1. Starts with a clear title on the first line (# Title)
-2. Provides a thorough summary section explaining the topic
-3. Lists all key decisions, patterns, working solutions, and facts
-4. Notes any contradictions or evolution of understanding over time
-5. Includes specific technical details (commands, config, code patterns)
-6. Organizes with clear ## sections and bullet points
+Write a COMPLETE, DETAILED knowledge page. This is a permanent reference document — be thorough, not brief.
 
-Be thorough — include all relevant details from the memories.
-Output the knowledge page in markdown:"""
+## Required structure:
 
-            response = client.complete(prompt, max_tokens=2000)
+# [Clear descriptive title]
+
+## Overview
+A comprehensive 2-3 paragraph summary of the topic. What is this about? Why does it matter?
+
+## Key Decisions & Patterns
+Every decision, pattern, convention, and working solution from the memories. Use bullet points.
+Include specific commands, file paths, config values, and code patterns verbatim.
+
+## Technical Details
+Implementation specifics, architecture notes, API details. Be precise — include exact values.
+
+## Contradictions & Evolution
+How understanding evolved over time. Note any conflicting information between memories.
+
+## Important Notes
+Warnings, gotchas, things to remember. Include any "never do X" or "always do Y" patterns.
+
+---
+
+RULES:
+- Include ALL information from the memories. Do NOT summarize away details.
+- Use exact values: file paths, commands, config keys, error messages.
+- Every bullet point should be actionable or informative — no filler.
+- Minimum 500 words. This is a reference document, not a summary.
+- Use markdown formatting: headers, bullet points, code blocks, bold for emphasis.
+
+Output:"""
+
+            response = client.complete(prompt, max_tokens=4000)
             return response if response and len(response) > 50 else None
         except Exception as e:
             logger.warning(f"LLM synthesis failed: {e}")

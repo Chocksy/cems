@@ -260,7 +260,7 @@ async def api_wiki_memory_relations(request: Request):
             "relations": [
                 {
                     "id": str(r["id"]),
-                    "content": (r.get("content", "") or "")[:500],
+                    "content": r.get("content", "") or "",
                     "category": r.get("category"),
                     "relation_type": r.get("relation_type"),
                     "similarity": r.get("relation_similarity"),
@@ -364,7 +364,7 @@ async def api_wiki_entity_detail(request: Request):
             else:
                 source_memories.append({
                     "id": str(r["id"]),
-                    "content": (r.get("content", "") or "")[:500],
+                    "content": r.get("content", "") or "",
                     "category": r.get("category"),
                     "source_ref": r.get("source_ref"),
                     "shown_count": r.get("shown_count", 0),
@@ -426,7 +426,7 @@ async def api_wiki_timeline(request: Request):
             heat = "hot" if shown >= 20 else "warm" if shown >= 5 else "cool" if shown >= 1 else "cold"
             timeline.append({
                 "id": str(r["id"]),
-                "content": (r.get("content", "") or "")[:500],
+                "content": r.get("content", "") or "",
                 "category": r.get("category"),
                 "source": r.get("source"),
                 "source_ref": r.get("source_ref"),
@@ -485,8 +485,8 @@ async def api_wiki_conflicts(request: Request):
                     "doc_a_id": str(c["doc_a_id"]),
                     "doc_b_id": str(c["doc_b_id"]),
                     "explanation": c.get("explanation", ""),
-                    "doc_a_content": (c.get("doc_a_content", "") or "")[:300],
-                    "doc_b_content": (c.get("doc_b_content", "") or "")[:300],
+                    "doc_a_content": c.get("doc_a_content", "") or "",
+                    "doc_b_content": c.get("doc_b_content", "") or "",
                     "created_at": str(c.get("created_at", "")),
                 }
                 for c in conflicts
