@@ -168,7 +168,7 @@
   // --- Graph ---
   async function loadGraph() {
     try {
-      const data = await apiFetch("/api/wiki/graph?limit=300");
+      const data = await apiFetch("/api/wiki/graph?limit=500");
       if (!data.success) return;
 
       graphData = data;
@@ -323,13 +323,21 @@
       document.getElementById("detail-relations").innerHTML = rels.length
         ? `<h3 style="margin:1rem 0 .5rem;font-size:.9rem;color:var(--fg2)">Related (${rels.length})</h3>` +
           rels.map((r) => `
-            <div class="detail-relation" onclick="document.getElementById('detail-panel').hidden=true">
+            <div class="detail-relation" data-id="${escapeHtml(r.id)}">
               <span class="relation-score">${r.similarity ? (r.similarity * 100).toFixed(0) + "%" : ""}</span>
               <div>${escapeHtml((r.content || "").slice(0, 150))}</div>
               <div class="relation-cat">${escapeHtml(r.category || "")} &middot; ${escapeHtml(r.relation_type || "similar")}</div>
             </div>
           `).join("")
         : `<p style="color:var(--fg2);font-size:.85rem;margin-top:1rem">No relations found</p>`;
+
+      // Click handler: navigate to related memory
+      document.querySelectorAll("#detail-relations .detail-relation").forEach((card) => {
+        card.addEventListener("click", () => {
+          const relId = card.dataset.id;
+          if (relId) showDetail({ id: relId, title: card.querySelector(".relation-cat")?.textContent || "" });
+        });
+      });
     } catch (e) {
       document.getElementById("detail-content").textContent = "Failed to load details";
     }
@@ -356,7 +364,7 @@
       emptyEl.hidden = true;
 
       listEl.innerHTML = data.entities.map((e) => `
-        <div class="entity-card" onclick="window.open('/dashboard#${escapeHtml(e.id)}','_blank')">
+        <div class="entity-card" data-id="${escapeHtml(e.id)}">
           <div class="entity-title">${escapeHtml(e.title || "Untitled")}</div>
           <div class="entity-meta">
             ${escapeHtml(e.source_ref || "")}
@@ -369,6 +377,11 @@
           </div>
         </div>
       `).join("");
+
+      // Click handler: show full entity content in detail panel
+      listEl.querySelectorAll(".entity-card").forEach((card) => {
+        card.addEventListener("click", () => showDetail({ id: card.dataset.id, title: card.querySelector(".entity-title").textContent }));
+      });
     } catch (e) {
       console.error("Failed to load entities:", e);
     }
@@ -485,12 +498,16 @@
           const statsEl = document.getElementById("lint-stats");
           reportEl.hidden = false;
           statsEl.innerHTML = `
-            <div class="stat-card"><div class="stat-value">${r.health_score || 0}</div><div class="stat-label">Health</div></div>
-            <div class="stat-card"><div class="stat-value">${r.contradictions_found || 0}</div><div class="stat-label">New Conflicts</div></div>
+            <div class="stat-card"><div class="stat-value">${r.health_score || 0}</div><div class="stat-label">Health Score</div></div>
+            <div class="stat-card"><div class="stat-value">${r.open_conflicts || 0}</div><div class="stat-label">Open Conflicts</div></div>
             <div class="stat-card"><div class="stat-value">${r.orphan_count || 0}</div><div class="stat-label">Orphans</div></div>
-            <div class="stat-card"><div class="stat-value">${r.connected_memories || 0}</div><div class="stat-label">Connected</div></div>
+            <div class="stat-card"><div class="stat-value">${r.connected_memories || 0}/${r.total_memories || 0}</div><div class="stat-label">Connected</div></div>
           `;
+          if (r.contradictions_found > 0) {
+            statsEl.innerHTML += `<div class="stat-card"><div class="stat-value" style="color:var(--warning)">${r.contradictions_found}</div><div class="stat-label">New This Run</div></div>`;
+          }
           loadConflicts();
+          loadStats(); // Refresh the header health badge
         }
       } catch (e) {
         console.error("Lint failed:", e);
