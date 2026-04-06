@@ -19,6 +19,13 @@
 
 body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--fg);line-height:1.5;min-height:100vh}
 
+/* Custom scrollbars */
+::-webkit-scrollbar{width:6px;height:6px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
+::-webkit-scrollbar-thumb:hover{background:var(--fg2)}
+*{scrollbar-width:thin;scrollbar-color:var(--border) transparent}
+
 .view{max-width:1200px;margin:0 auto;padding:1rem}
 
 /* Login */
@@ -120,9 +127,9 @@ header{display:flex;justify-content:space-between;align-items:center;padding:.75
 #article-body p{margin-bottom:.75rem}
 #article-body ul,#article-body ol{margin-bottom:.75rem;padding-left:1.5rem}
 #article-body li{margin-bottom:.3rem}
-#article-body code{background:var(--bg2);padding:.1rem .3rem;border-radius:3px;font-size:.85em}
-#article-body pre{background:var(--bg2);padding:.75rem;border-radius:var(--radius);overflow-x:auto;margin-bottom:.75rem}
-#article-body pre code{background:none;padding:0}
+#article-body code{background:var(--bg2);padding:.15rem .4rem;border-radius:4px;font-size:.85em;font-family:"SF Mono",Monaco,Menlo,Consolas,monospace;border:1px solid var(--border)}
+#article-body pre{background:var(--bg2);padding:1rem;border-radius:var(--radius);overflow-x:auto;margin-bottom:1rem;border:1px solid var(--border);line-height:1.5}
+#article-body pre code{background:none;padding:0;border:none;font-size:.8em;color:var(--fg)}
 #article-body strong{color:var(--fg)}
 #article-body hr{border:none;border-top:1px solid var(--border);margin:1rem 0}
 

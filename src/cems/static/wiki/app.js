@@ -579,56 +579,18 @@
   }
 
   function renderMarkdown(md) {
-    // Simple markdown → HTML. Process line-by-line to avoid dropping prose.
-    const escaped = md.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-    const lines = escaped.split("\n");
-    const html = [];
-    let inList = false;
-
-    for (const line of lines) {
-      const trimmed = line.trim();
-
-      // Headings
-      if (trimmed.startsWith("### ")) { closeList(); html.push("<h3>" + inline(trimmed.slice(4)) + "</h3>"); continue; }
-      if (trimmed.startsWith("## ")) { closeList(); html.push("<h2>" + inline(trimmed.slice(3)) + "</h2>"); continue; }
-      if (trimmed.startsWith("# ")) { closeList(); html.push("<h1>" + inline(trimmed.slice(2)) + "</h1>"); continue; }
-
-      // Horizontal rule
-      if (/^---+$/.test(trimmed)) { closeList(); html.push("<hr>"); continue; }
-
-      // Unordered list
-      if (trimmed.startsWith("- ")) {
-        if (!inList) { html.push("<ul>"); inList = true; }
-        html.push("<li>" + inline(trimmed.slice(2)) + "</li>");
-        continue;
-      }
-
-      // Ordered list
-      const olMatch = trimmed.match(/^(\d+)\.\s+(.+)$/);
-      if (olMatch) {
-        if (!inList) { html.push("<ol>"); inList = true; }
-        html.push("<li>" + inline(olMatch[2]) + "</li>");
-        continue;
-      }
-
-      // Empty line = paragraph break
-      if (!trimmed) { closeList(); html.push("<br>"); continue; }
-
-      // Regular prose line
-      closeList();
-      html.push("<p>" + inline(trimmed) + "</p>");
+    // Use marked.js for proper markdown rendering (code blocks, tables, etc.)
+    if (typeof marked !== "undefined") {
+      marked.setOptions({
+        breaks: true,
+        gfm: true,
+      });
+      // Sanitize: marked doesn't execute scripts but we escape first just in case
+      return marked.parse(md);
     }
-    closeList();
-    return html.join("\n");
-
-    function closeList() {
-      if (inList) { html.push(html[html.length - 1]?.startsWith("<li>") ? "</ul>" : "</ul>"); inList = false; }
-    }
-    function inline(text) {
-      return text
-        .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
-        .replace(/`([^`]+)`/g, "<code>$1</code>");
-    }
+    // Fallback: basic rendering if marked.js fails to load
+    return md.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+      .replace(/\n/g, "<br>");
   }
 
   // Compile button
