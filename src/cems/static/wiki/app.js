@@ -414,8 +414,10 @@
       emptyEl.hidden = true;
       renderEntityNav(allEntities);
 
-      // Auto-select first entity
+      // Auto-select first entity and mark it active
       if (allEntities.length > 0) {
+        const firstNav = document.querySelector(".nav-item");
+        if (firstNav) firstNav.classList.add("active");
         loadEntityArticle(allEntities[0].id);
       }
     } catch (e) {
@@ -576,21 +578,56 @@
   }
 
   function renderMarkdown(md) {
-    // Simple markdown → HTML (no external library)
-    return md
-      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
-      .replace(/^### (.+)$/gm, "<h3>$1</h3>")
-      .replace(/^## (.+)$/gm, "<h2>$1</h2>")
-      .replace(/^# (.+)$/gm, "<h1>$1</h1>")
-      .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
-      .replace(/`([^`]+)`/g, "<code>$1</code>")
-      .replace(/^- (.+)$/gm, "<li>$1</li>")
-      .replace(/(<li>.*<\/li>\n?)+/g, (m) => "<ul>" + m + "</ul>")
-      .replace(/^(\d+)\. (.+)$/gm, "<li>$2</li>")
-      .replace(/^---$/gm, "<hr>")
-      .replace(/\n\n/g, "</p><p>")
-      .replace(/^(?!<[hulo])/gm, "")
-      .replace(/^\s*$/gm, "");
+    // Simple markdown → HTML. Process line-by-line to avoid dropping prose.
+    const escaped = md.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    const lines = escaped.split("\n");
+    const html = [];
+    let inList = false;
+
+    for (const line of lines) {
+      const trimmed = line.trim();
+
+      // Headings
+      if (trimmed.startsWith("### ")) { closeList(); html.push("<h3>" + inline(trimmed.slice(4)) + "</h3>"); continue; }
+      if (trimmed.startsWith("## ")) { closeList(); html.push("<h2>" + inline(trimmed.slice(3)) + "</h2>"); continue; }
+      if (trimmed.startsWith("# ")) { closeList(); html.push("<h1>" + inline(trimmed.slice(2)) + "</h1>"); continue; }
+
+      // Horizontal rule
+      if (/^---+$/.test(trimmed)) { closeList(); html.push("<hr>"); continue; }
+
+      // Unordered list
+      if (trimmed.startsWith("- ")) {
+        if (!inList) { html.push("<ul>"); inList = true; }
+        html.push("<li>" + inline(trimmed.slice(2)) + "</li>");
+        continue;
+      }
+
+      // Ordered list
+      const olMatch = trimmed.match(/^(\d+)\.\s+(.+)$/);
+      if (olMatch) {
+        if (!inList) { html.push("<ol>"); inList = true; }
+        html.push("<li>" + inline(olMatch[2]) + "</li>");
+        continue;
+      }
+
+      // Empty line = paragraph break
+      if (!trimmed) { closeList(); html.push("<br>"); continue; }
+
+      // Regular prose line
+      closeList();
+      html.push("<p>" + inline(trimmed) + "</p>");
+    }
+    closeList();
+    return html.join("\n");
+
+    function closeList() {
+      if (inList) { html.push(html[html.length - 1]?.startsWith("<li>") ? "</ul>" : "</ul>"); inList = false; }
+    }
+    function inline(text) {
+      return text
+        .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+        .replace(/`([^`]+)`/g, "<code>$1</code>");
+    }
   }
 
   // Compile button
@@ -741,11 +778,15 @@
               <div class="gap-card">
                 <div>
                   <div class="gap-info">${escapeHtml(g.category)}</div>
-                  <div class="gap-count">${g.count} memories, no entity page</div>
+                  <div class="gap-count">${Number(g.count)} memories, no entity page</div>
                 </div>
-                <button class="gap-action" onclick="compileCategory('${escapeHtml(g.category)}')">Generate</button>
+                <button class="gap-action" data-category="${escapeHtml(g.category)}">Generate</button>
               </div>
             `).join("");
+            // Bind click handlers via data attributes (no inline JS)
+            gapsList.querySelectorAll(".gap-action").forEach((btn) => {
+              btn.addEventListener("click", () => compileCategory(btn.dataset.category));
+            });
           } else {
             gapsSection.hidden = true;
           }

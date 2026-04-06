@@ -173,6 +173,15 @@ async def api_session_summarize(request: Request):
         # Auto-link relations for new or updated session summaries
         if action in ("created", "finalized", "replaced") and embeddings:
             try:
+                # Clear stale relations before re-linking (content may have changed)
+                if action in ("finalized", "replaced"):
+                    from uuid import UUID
+                    pool = await doc_store._get_pool()
+                    async with pool.acquire() as conn:
+                        await conn.execute(
+                            "DELETE FROM memory_relations WHERE source_id = $1 OR target_id = $1",
+                            UUID(document_id),
+                        )
                 from cems.memory.write import _auto_link_relations
                 await _auto_link_relations(
                     doc_store, document_id, embeddings[0], user_id, None, "personal",

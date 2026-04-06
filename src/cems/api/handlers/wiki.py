@@ -348,34 +348,28 @@ async def api_wiki_entity_detail(request: Request):
                 except ValueError:
                     pass
 
-        source_memories = []
-        if cluster_tag:
-            # Find memories that are related to this entity page
-            related = await doc_store.get_related_documents(
-                entity_id, limit=20, user_id=user_id,
-            )
-            for r in related:
-                if r.get("category") != "entity-page":
-                    source_memories.append({
-                        "id": str(r["id"]),
-                        "content": (r.get("content", "") or "")[:200],
-                        "category": r.get("category"),
-                        "source_ref": r.get("source_ref"),
-                        "shown_count": r.get("shown_count", 0),
-                        "created_at": str(r.get("created_at", "")),
-                        "similarity": r.get("relation_similarity"),
-                    })
-
-        # Find related entity pages
-        related_entities = []
+        # Single fetch for all related documents, then split by type
         all_related = await doc_store.get_related_documents(
-            entity_id, limit=10, user_id=user_id,
+            entity_id, limit=30, user_id=user_id,
         )
+
+        source_memories = []
+        related_entities = []
         for r in all_related:
             if r.get("category") == "entity-page":
                 related_entities.append({
                     "id": str(r["id"]),
                     "title": r.get("title") or (r.get("content", "")[:80]),
+                })
+            else:
+                source_memories.append({
+                    "id": str(r["id"]),
+                    "content": (r.get("content", "") or "")[:200],
+                    "category": r.get("category"),
+                    "source_ref": r.get("source_ref"),
+                    "shown_count": r.get("shown_count", 0),
+                    "created_at": str(r.get("created_at", "")),
+                    "similarity": r.get("relation_similarity"),
                 })
 
         return JSONResponse({
