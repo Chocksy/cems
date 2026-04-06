@@ -156,6 +156,6 @@ class RelationBuilderJob:
                 UUID(document_id),
             )
 
-        if row and row["embedding"]:
+        if row is not None and row["embedding"] is not None:
             return list(row["embedding"])
         return None
