@@ -59,7 +59,7 @@ class TestSchedulerInit:
         assert not hasattr(s, "memory")
 
     def test_scheduler_registers_all_jobs(self, scheduler):
-        """Scheduler should register consolidation, distillation, reflection, summarization, reindex."""
+        """Scheduler should register all maintenance + knowledge engine jobs."""
         jobs = scheduler.get_jobs()
         job_ids = {j["id"] for j in jobs}
 
@@ -68,7 +68,11 @@ class TestSchedulerInit:
         assert "nightly_reflection" in job_ids
         assert "weekly_summarization" in job_ids
         assert "monthly_reindex" in job_ids
-        assert len(jobs) == 5
+        # Knowledge Engine jobs
+        assert "relation_builder" in job_ids
+        assert "entity_compilation" in job_ids
+        assert "daily_lint" in job_ids
+        assert len(jobs) == 8
 
     def test_scheduler_start_stop(self, scheduler):
         """Scheduler should start and stop without errors."""

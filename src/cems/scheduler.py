@@ -7,10 +7,13 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 
 from cems.lib.async_utils import run_async_in_thread as _run_async
+from cems.maintenance.compilation import CompilationJob
 from cems.maintenance.consolidation import ConsolidationJob
 from cems.maintenance.distillation import DistillationJob
+from cems.maintenance.lint import LintJob
 from cems.maintenance.observation_reflector import ObservationReflector
 from cems.maintenance.reindex import ReindexJob
+from cems.maintenance.relation_builder import RelationBuilderJob
 from cems.maintenance.summarization import SummarizationJob
 
 if TYPE_CHECKING:
@@ -101,6 +104,32 @@ class CEMSScheduler:
             replace_existing=True,
         )
 
+        # Knowledge Engine jobs (every 10 min)
+        self._scheduler.add_job(
+            self._run_relations,
+            CronTrigger(minute="*/10"),
+            id="relation_builder",
+            name="Relation Builder (10min)",
+            replace_existing=True,
+        )
+
+        self._scheduler.add_job(
+            self._run_compilation,
+            CronTrigger(minute="*/10"),
+            id="entity_compilation",
+            name="Entity Compilation (10min)",
+            replace_existing=True,
+        )
+
+        # Lint: daily at 4:30 AM
+        self._scheduler.add_job(
+            self._run_lint,
+            CronTrigger(hour=self.config.nightly_hour, minute=45),
+            id="daily_lint",
+            name="Daily Knowledge Lint",
+            replace_existing=True,
+        )
+
         logger.info("Maintenance jobs scheduled")
 
     def _run_for_all_users(self, job_type: str) -> None:
@@ -112,12 +141,20 @@ class CEMSScheduler:
             return
 
         for user_id in user_ids:
+            memory = None
             try:
                 memory = self._create_user_memory(user_id)
                 result = self._run_job_for_memory(job_type, memory)
                 logger.info(f"{job_type} for user {user_id[:8]}: {result}")
             except Exception as e:
                 logger.error(f"{job_type} failed for user {user_id[:8]}: {e}")
+            finally:
+                # Close the document store pool to prevent connection leak
+                if memory and hasattr(memory, '_document_store') and memory._document_store:
+                    try:
+                        _run_async(memory._document_store.close())
+                    except Exception:
+                        pass
 
     def _run_consolidation(self) -> None:
         self._run_for_all_users("consolidation")
@@ -133,6 +170,15 @@ class CEMSScheduler:
 
     def _run_reindex(self) -> None:
         self._run_for_all_users("reindex")
+
+    def _run_relations(self) -> None:
+        self._run_for_all_users("relations")
+
+    def _run_compilation(self) -> None:
+        self._run_for_all_users("compilation")
+
+    def _run_lint(self) -> None:
+        self._run_for_all_users("lint")
 
     def start(self) -> None:
         """Start the scheduler."""
@@ -160,7 +206,7 @@ class CEMSScheduler:
         Returns:
             Job result dict (single user) or dict of user_id -> result (all users)
         """
-        valid_jobs = {"consolidation", "distillation", "summarization", "reindex", "reflect"}
+        valid_jobs = {"consolidation", "distillation", "summarization", "reindex", "reflect", "relations", "compilation", "lint"}
         if job_type not in valid_jobs:
             raise ValueError(f"Unknown job type: {job_type}. Use: {sorted(valid_jobs)}")
 
@@ -190,6 +236,9 @@ class CEMSScheduler:
             "summarization": lambda: SummarizationJob(memory).run_async(),
             "reindex": lambda: ReindexJob(memory).run_async(),
             "reflect": lambda: ObservationReflector(memory).run_async(),
+            "relations": lambda: RelationBuilderJob(memory).run_async(limit=100),
+            "compilation": lambda: CompilationJob(memory).run_async(limit=20),
+            "lint": lambda: LintJob(memory).run_async(detect_contradictions=False),
         }
         return _run_async(jobs[job_type]())
 

@@ -68,6 +68,7 @@ from cems.api.handlers.wiki import (
     api_wiki_entities,
     api_wiki_entity_detail,
     api_wiki_graph,
+    api_wiki_index,
     api_wiki_lint,
     api_wiki_memory_relations as api_wiki_relations,
     api_wiki_stats,
@@ -244,6 +245,7 @@ def create_http_app():
         # REST API routes - Me (self-service)
         Route("/api/me/teams", api_me_teams, methods=["GET"]),
         # REST API routes - Wiki (Knowledge Engine)
+        Route("/api/wiki/index", api_wiki_index, methods=["GET"]),
         Route("/api/wiki/graph", api_wiki_graph, methods=["GET"]),
         Route("/api/wiki/stats", api_wiki_stats, methods=["GET"]),
         Route("/api/wiki/relations", api_wiki_relations, methods=["GET"]),

@@ -26,6 +26,90 @@ def get_memory():
     return _get_memory()
 
 
+async def api_wiki_index(request: Request):
+    """Return entity page index — titles + summaries for injection into Claude context.
+
+    GET /api/wiki/index?project=org/repo&limit=50
+
+    Returns compact index: one line per entity page with title, source count, and summary.
+    Designed to be injected into <memory-recall> for Claude to navigate.
+    """
+    try:
+        project = request.query_params.get("project")
+        limit = _safe_int(request.query_params.get("limit"), 50, max_val=200)
+
+        memory = get_memory()
+        doc_store = await memory._ensure_document_store()
+        user_id = memory.config.user_id
+        pool = await doc_store._get_pool()
+
+        from uuid import UUID
+        user_uuid = UUID(user_id)
+
+        # Fetch entity pages, optionally filtered by project
+        async with pool.acquire() as conn:
+            if project:
+                rows = await conn.fetch(
+                    f"""
+                    SELECT id, title, content, source_ref, tags
+                    FROM memory_documents
+                    WHERE user_id = $1 AND category = 'entity-page'
+                      AND deleted_at IS NULL AND source_ref LIKE $2
+                    ORDER BY COALESCE(shown_count, 0) DESC
+                    LIMIT $3
+                    """,
+                    user_uuid,
+                    f"project:{project}%",
+                    limit,
+                )
+            else:
+                rows = await conn.fetch(
+                    f"""
+                    SELECT id, title, content, source_ref, tags
+                    FROM memory_documents
+                    WHERE user_id = $1 AND category = 'entity-page' AND deleted_at IS NULL
+                    ORDER BY COALESCE(shown_count, 0) DESC
+                    LIMIT $2
+                    """,
+                    user_uuid,
+                    limit,
+                )
+
+        # Build compact index: title + first 2 sentences
+        entries = []
+        for row in rows:
+            title = row["title"] or ""
+            content = row["content"] or ""
+            # Extract first 2-3 sentences as summary
+            sentences = content.replace("\n", " ").split(". ")
+            summary = ". ".join(sentences[1:4]).strip()  # Skip title line
+            if len(summary) > 200:
+                summary = summary[:200] + "..."
+
+            # Get cluster size from tags
+            cluster_size = ""
+            for tag in (row["tags"] or []):
+                if tag.startswith("cluster-size:"):
+                    cluster_size = tag.split(":")[1]
+
+            entries.append({
+                "id": str(row["id"]),
+                "title": title,
+                "summary": summary,
+                "source_ref": row["source_ref"],
+                "sources": cluster_size,
+            })
+
+        return JSONResponse({
+            "success": True,
+            "index": entries,
+            "count": len(entries),
+        })
+    except Exception as e:
+        logger.error(f"API wiki_index error: {e}")
+        return JSONResponse({"error": "Internal server error"}, status_code=500)
+
+
 async def api_wiki_graph(request: Request):
     """Return nodes and edges for the relation graph visualization.
 

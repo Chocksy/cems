@@ -566,6 +566,31 @@ After responding, note which memories (by number) were relevant vs noise.
                 # Write mapping file for Stop hook relevance feedback
                 write_relevance_mapping(session_id, memory_ids, truncation_flags)
 
+            # 1b. Entity page index — inject knowledge wiki index for deep recall
+            try:
+                index_params = {"limit": "30"}
+                if project:
+                    index_params["project"] = project
+                index_resp = client.get("/api/wiki/index", params=index_params)
+                if index_resp.status_code == 200:
+                    index_data = index_resp.json()
+                    entries = index_data.get("index", [])
+                    if entries:
+                        lines = []
+                        for e in entries[:20]:  # Cap at 20 to keep context small
+                            title = e.get("title", "")
+                            summary = e.get("summary", "")
+                            eid = e.get("id", "")[:8]
+                            sources = e.get("sources", "")
+                            lines.append(f"- {title} ({sources} sources) — {summary} [/recall {eid}]")
+                        entity_index = "\n".join(lines)
+                        output_parts.append(
+                            f"Knowledge wiki pages available for deep recall:\n{entity_index}\n"
+                            f"Use `/recall <id>` to read a full knowledge page when you need more context."
+                        )
+            except Exception:
+                pass  # Entity index is best-effort
+
         # 2. Ultrathink flag
         if user_text.endswith('-u'):
             output_parts.append("Use the maximum amount of ultrathink. Take all the time you need. It's much better if you do too much research and thinking than not enough.")

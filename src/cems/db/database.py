@@ -412,6 +412,55 @@ def run_migrations() -> None:
             ALTER TABLE memory_relations ADD COLUMN IF NOT EXISTS similarity FLOAT;
             """,
         ),
+        # Fix memory_relations FK to point to memory_documents (not legacy memories table)
+        # and ensure composite PK for ON CONFLICT upsert in relation builder
+        (
+            "memory_relations_fk_fix_v2",
+            """
+            DO $$
+            DECLARE
+                ref_table TEXT;
+                pk_cols TEXT;
+            BEGIN
+                -- Check if source FK points to wrong table
+                SELECT ccu.table_name INTO ref_table
+                FROM information_schema.table_constraints tc
+                JOIN information_schema.constraint_column_usage ccu ON tc.constraint_name = ccu.constraint_name
+                WHERE tc.table_name = 'memory_relations'
+                  AND tc.constraint_type = 'FOREIGN KEY'
+                  AND tc.constraint_name = 'memory_relations_source_id_fkey'
+                LIMIT 1;
+
+                IF ref_table IS NOT NULL AND ref_table != 'memory_documents' THEN
+                    -- Clear orphaned rows, fix FKs
+                    DELETE FROM memory_relations
+                    WHERE source_id NOT IN (SELECT id FROM memory_documents)
+                       OR target_id NOT IN (SELECT id FROM memory_documents);
+                    ALTER TABLE memory_relations DROP CONSTRAINT IF EXISTS memory_relations_source_id_fkey;
+                    ALTER TABLE memory_relations DROP CONSTRAINT IF EXISTS memory_relations_target_id_fkey;
+                    ALTER TABLE memory_relations ADD CONSTRAINT memory_relations_source_id_fkey
+                        FOREIGN KEY (source_id) REFERENCES memory_documents(id) ON DELETE CASCADE;
+                    ALTER TABLE memory_relations ADD CONSTRAINT memory_relations_target_id_fkey
+                        FOREIGN KEY (target_id) REFERENCES memory_documents(id) ON DELETE CASCADE;
+                    RAISE NOTICE 'Fixed memory_relations FKs: % -> memory_documents', ref_table;
+                END IF;
+
+                -- Ensure composite PK (not surrogate id)
+                SELECT string_agg(a.attname, ',' ORDER BY array_position(i.indkey, a.attnum))
+                INTO pk_cols
+                FROM pg_index i
+                JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
+                WHERE i.indrelid = 'memory_relations'::regclass AND i.indisprimary;
+
+                IF pk_cols IS DISTINCT FROM 'source_id,target_id,relation_type' THEN
+                    ALTER TABLE memory_relations DROP CONSTRAINT IF EXISTS memory_relations_pkey;
+                    ALTER TABLE memory_relations DROP COLUMN IF EXISTS id;
+                    ALTER TABLE memory_relations ADD PRIMARY KEY (source_id, target_id, relation_type);
+                    RAISE NOTICE 'Fixed memory_relations PK: % -> composite', COALESCE(pk_cols, 'none');
+                END IF;
+            END $$;
+            """,
+        ),
     ]
 
     for migration_id, sql in migrations:
