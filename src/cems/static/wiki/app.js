@@ -482,8 +482,8 @@
       const heatColor = shown >= 20 ? "#ef4444" : shown >= 5 ? "#f59e0b" : shown >= 1 ? "#3b82f6" : "#6b7280";
       const project = (e.source_ref || "").replace("project:", "").split("/").pop() || "";
       return `<a class="wiki-topic group block px-3 py-2 rounded-lg cursor-pointer transition-colors hover:bg-gray-800/70" data-id="${escapeHtml(e.id)}">
-          <div class="text-[13px] text-gray-300 group-hover:text-gray-100 leading-snug">${escapeHtml(e.title || "Untitled")}</div>
-          ${project ? `<div class="text-[11px] text-gray-600 mt-0.5">${escapeHtml(project)} &middot; ${shown}x shown</div>` : `<div class="text-[11px] text-gray-600 mt-0.5">${shown}x shown</div>`}
+          <div class="text-[13px] text-gray-300 group-hover:text-gray-100 leading-snug break-words">${escapeHtml(e.title || "Untitled")}</div>
+          ${project ? `<div class="text-[11px] text-gray-600 mt-0.5">${escapeHtml(project)}</div>` : ""}
       </a>`;
     }).join("");
 
@@ -616,17 +616,12 @@
       if (data.source_memories && data.source_memories.length > 0) {
         document.getElementById("article-sources").hidden = false;
         srcList.innerHTML = data.source_memories.map((m) => {
-          const mShown = Number(m.shown_count) || 0;
-          const heatColor = mShown >= 20 ? "bg-red-500" : mShown >= 5 ? "bg-amber-500" : mShown >= 1 ? "bg-blue-500" : "bg-gray-600";
           const matchPct = m.similarity ? (m.similarity * 100).toFixed(0) + "%" : "";
-          return `<div class="flex items-start gap-3 p-3 bg-gray-800/50 border border-gray-800 rounded-lg">
-            <div class="flex-shrink-0 mt-1.5 w-2 h-2 rounded-full ${heatColor}"></div>
-            <div class="min-w-0 flex-1">
-              <div class="text-sm text-gray-300 leading-relaxed">${escapeHtml(m.content || "")}</div>
-              <div class="flex items-center gap-2 text-xs text-gray-500 mt-1.5">
-                <span>${escapeHtml(m.category || "")}</span>
-                ${matchPct ? `<span class="text-blue-400 font-medium">${matchPct} match</span>` : ""}
-              </div>
+          return `<div class="p-3 bg-gray-800/40 border border-gray-800 rounded-lg">
+            <div class="text-sm text-gray-300 leading-relaxed">${escapeHtml(m.content || "")}</div>
+            <div class="flex items-center gap-2 text-xs mt-2">
+              <span class="text-gray-500">${escapeHtml(m.category || "")}</span>
+              ${matchPct ? `<span class="text-blue-400 font-medium">${matchPct} match</span>` : ""}
             </div>
           </div>`;
         }).join("");
