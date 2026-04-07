@@ -40,7 +40,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;b
 .error{color:var(--danger);font-size:.85rem;margin-top:.5rem}
 
 /* Main Layout */
-#main-layout{display:grid;grid-template-columns:var(--sidebar-w) 1fr;min-height:100vh}
+#main-layout{display:none;grid-template-columns:var(--sidebar-w) 1fr;min-height:100vh}
+#main-layout.open{display:grid}
 
 /* Sidebar */
 #sidebar{background:var(--sidebar-bg);border-right:1px solid var(--border);display:flex;flex-direction:column;position:sticky;top:0;height:100vh}
@@ -61,7 +62,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;b
 
 /* Content Area */
 #content{overflow-y:auto;max-height:100vh;position:relative}
-.content-view{padding:1.5rem 2rem}
+.content-view{padding:1.5rem 2rem;display:none}
+.content-view.active{display:block}
 .content-view h2{font-size:1.25rem;margin-bottom:1rem}
 
 /* Wiki Layout */

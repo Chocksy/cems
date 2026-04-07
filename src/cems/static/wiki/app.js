@@ -45,16 +45,19 @@
 
   // --- Views ---
   function showLogin() {
-    loginView.hidden = false;
-    mainLayout.hidden = true;
+    loginView.style.display = "";
+    mainLayout.classList.remove("open");
     loginError.hidden = true;
   }
 
   function showDashboard() {
-    loginView.hidden = true;
-    mainLayout.hidden = false;
+    loginView.style.display = "none";
+    mainLayout.classList.add("open");
     loadStats();
-    switchView("wiki");
+    // Respect hash route if present, otherwise default to wiki
+    const hash = window.location.hash.slice(1).split("/")[0];
+    const validViews = ["wiki", "memories", "graph", "stats", "health"];
+    switchView(validViews.includes(hash) ? hash : "wiki");
   }
 
   // --- Login ---
@@ -85,9 +88,9 @@
       n.classList.toggle("active", n.dataset.view === viewName);
     });
     // Hide all content views, show selected
-    document.querySelectorAll(".content-view").forEach((v) => { v.hidden = true; });
+    document.querySelectorAll(".content-view").forEach((v) => { v.classList.remove("active"); });
     const target = document.getElementById("view-" + viewName);
-    if (target) target.hidden = false;
+    if (target) target.classList.add("active");
     // Update URL hash
     history.replaceState(null, "", "#" + viewName);
     // Load data for the view
