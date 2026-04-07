@@ -43,6 +43,11 @@
     return res.json();
   }
 
+  // --- Lucide icons helper ---
+  function refreshIcons() {
+    if (typeof lucide !== "undefined") lucide.createIcons();
+  }
+
   // --- Views ---
   function showLogin() {
     loginView.style.display = "";
@@ -53,6 +58,7 @@
   function showDashboard() {
     loginView.style.display = "none";
     mainLayout.classList.add("open");
+    refreshIcons();
     loadStats();
     // Respect hash route if present, otherwise default to wiki
     const hash = window.location.hash.slice(1).split("/")[0];
@@ -83,9 +89,14 @@
   // --- Sidebar Navigation ---
   function switchView(viewName) {
     currentView = viewName;
-    // Update sidebar active state (Bulma uses is-active)
+    // Update sidebar active state
     document.querySelectorAll(".nav-link[data-view]").forEach((n) => {
-      n.classList.toggle("is-active", n.dataset.view === viewName);
+      const isActive = n.dataset.view === viewName;
+      n.classList.toggle("active", isActive);
+      n.classList.toggle("bg-blue-600", isActive);
+      n.classList.toggle("text-white", isActive);
+      n.classList.toggle("text-gray-400", !isActive);
+      n.classList.toggle("hover:bg-gray-800", !isActive);
     });
     // Hide all content views, show selected
     document.querySelectorAll(".content-view").forEach((v) => { v.classList.remove("active"); });
@@ -121,10 +132,12 @@
 
       // Health badge
       healthBadge.textContent = s.health_score + "/100";
-      healthBadge.className = "badge " + (
-        s.health_score >= 80 ? "badge-good" :
-        s.health_score >= 50 ? "badge-warn" : "badge-bad"
-      );
+      const badgeColor = s.health_score >= 80
+        ? "bg-green-900/50 text-green-400"
+        : s.health_score >= 50
+        ? "bg-amber-900/50 text-amber-400"
+        : "bg-red-900/50 text-red-400";
+      healthBadge.className = "text-xs px-2 py-0.5 rounded-full font-medium " + badgeColor;
 
       // Heat distribution bars
       renderBars("heat-bars", s.heat_tiers, {
@@ -141,16 +154,18 @@
     }
   }
 
+  const heatColorMap = { hot: "#ef4444", warm: "#f59e0b", cool: "#3b82f6", cold: "#6b7280" };
+
   function renderBars(containerId, data, classMap) {
     const el = document.getElementById(containerId);
     const max = Math.max(...Object.values(data), 1);
     el.innerHTML = Object.entries(data).map(([key, val]) => {
       const pct = Math.max((val / max) * 100, 2);
-      const cls = classMap[key] || "bar-cool";
-      return `<div class="bar-row">
-        <span class="bar-label">${escapeHtml(key)}</span>
-        <div class="bar-fill ${cls}" style="width:${pct}%"></div>
-        <span class="bar-count">${Number(val)}</span>
+      const color = heatColorMap[key] || "#3b82f6";
+      return `<div class="flex items-center gap-3 text-sm">
+        <span class="w-20 text-gray-400 text-xs">${escapeHtml(key)}</span>
+        <div class="bar-fill" style="width:${pct}%;background:${color}"></div>
+        <span class="w-8 text-right font-semibold text-xs">${Number(val)}</span>
       </div>`;
     }).join("");
   }
@@ -161,10 +176,10 @@
     const max = Math.max(...entries.map(([, v]) => v), 1);
     el.innerHTML = entries.map(([key, val]) => {
       const pct = Math.max((val / max) * 100, 2);
-      return `<div class="bar-row">
-        <span class="bar-label">${escapeHtml(key)}</span>
-        <div class="bar-fill bar-cool" style="width:${pct}%"></div>
-        <span class="bar-count">${Number(val)}</span>
+      return `<div class="flex items-center gap-3 text-sm">
+        <span class="w-20 text-gray-400 text-xs truncate" title="${escapeHtml(key)}">${escapeHtml(key)}</span>
+        <div class="bar-fill" style="width:${pct}%;background:#3b82f6"></div>
+        <span class="w-8 text-right font-semibold text-xs">${Number(val)}</span>
       </div>`;
     }).join("");
   }
@@ -233,10 +248,10 @@
 
   function getNodeColor(node) {
     const shown = node.shown_count || 0;
-    if (shown >= 20) return "var(--hot)";
-    if (shown >= 5) return "var(--warm)";
-    if (shown >= 1) return "var(--cool)";
-    return "var(--cold)";
+    if (shown >= 20) return "#ef4444";
+    if (shown >= 5) return "#f59e0b";
+    if (shown >= 1) return "#3b82f6";
+    return "#6b7280";
   }
 
   function getNodeRadius(node) {
@@ -361,26 +376,26 @@
 
       const m = data.memory;
       document.getElementById("detail-content").innerHTML = `
-        <div class="detail-meta">
-          <strong>${escapeHtml(m.category || "general")}</strong>
-          &middot; shown ${Number(m.shown_count) || 0}x
-          &middot; ${escapeHtml(m.source_ref || "no project")}
-          &middot; ${m.created_at ? new Date(m.created_at).toLocaleDateString() : ""}
+        <div class="flex flex-wrap gap-2 text-xs text-gray-400 mb-3">
+          <span class="font-semibold text-blue-400">${escapeHtml(m.category || "general")}</span>
+          <span>&middot; shown ${Number(m.shown_count) || 0}x</span>
+          <span>&middot; ${escapeHtml(m.source_ref || "no project")}</span>
+          <span>&middot; ${m.created_at ? new Date(m.created_at).toLocaleDateString() : ""}</span>
         </div>
-        <div class="detail-text">${escapeHtml(m.content)}</div>
+        <div class="text-sm text-gray-300 leading-relaxed whitespace-pre-wrap">${escapeHtml(m.content)}</div>
       `;
 
       const rels = data.relations || [];
       document.getElementById("detail-relations").innerHTML = rels.length
-        ? `<h3 style="margin:1rem 0 .5rem;font-size:.9rem;color:var(--fg2)">Related (${rels.length})</h3>` +
+        ? `<h3 class="text-sm font-semibold text-gray-400 mt-4 mb-2">Related (${rels.length})</h3>` +
           rels.map((r) => `
-            <div class="detail-relation" data-id="${escapeHtml(r.id)}">
-              <span class="relation-score">${r.similarity ? (r.similarity * 100).toFixed(0) + "%" : ""}</span>
-              <div>${escapeHtml((r.content || "").slice(0, 150))}</div>
-              <div class="relation-cat">${escapeHtml(r.category || "")} &middot; ${escapeHtml(r.relation_type || "similar")}</div>
+            <div class="detail-relation bg-gray-800/50 border border-gray-700 rounded-lg p-3 mb-2 cursor-pointer hover:border-gray-600 transition-colors" data-id="${escapeHtml(r.id)}">
+              <span class="text-xs text-blue-400 font-medium">${r.similarity ? (r.similarity * 100).toFixed(0) + "%" : ""}</span>
+              <div class="text-sm text-gray-300 mt-1">${escapeHtml((r.content || "").slice(0, 150))}</div>
+              <div class="text-xs text-gray-500 mt-1">${escapeHtml(r.category || "")} &middot; ${escapeHtml(r.relation_type || "similar")}</div>
             </div>
           `).join("")
-        : `<p style="color:var(--fg2);font-size:.85rem;margin-top:1rem">No relations found</p>`;
+        : `<p class="text-sm text-gray-500 mt-4">No relations found</p>`;
 
       // Click handler: navigate to related memory
       document.querySelectorAll("#detail-relations .detail-relation").forEach((card) => {
@@ -421,7 +436,10 @@
       // Auto-select first entity and mark it active
       if (allEntities.length > 0) {
         const firstNav = document.querySelector(".wiki-topic");
-        if (firstNav) firstNav.classList.add("is-active");
+        if (firstNav) {
+          firstNav.classList.add("bg-blue-600", "text-white");
+          firstNav.classList.remove("text-gray-300", "hover:bg-gray-800");
+        }
         loadEntityArticle(allEntities[0].id);
       }
     } catch (e) {
@@ -433,21 +451,27 @@
     const navList = document.getElementById("entity-nav-list");
     navList.innerHTML = entities.map((e) => {
       const shown = Number(e.shown_count) || 0;
-      const heatColor = shown >= 20 ? "var(--hot)" : shown >= 5 ? "var(--warm)" : shown >= 1 ? "var(--cool)" : "var(--cold)";
+      const heatColor = shown >= 20 ? "#ef4444" : shown >= 5 ? "#f59e0b" : shown >= 1 ? "#3b82f6" : "#6b7280";
       const project = (e.source_ref || "").replace("project:", "").split("/").pop() || "";
-      return `<li><a class="wiki-topic" data-id="${escapeHtml(e.id)}">
-          <span class="tag is-rounded mr-1" style="background:${heatColor};width:8px;height:8px;padding:0"></span>
-          ${escapeHtml(e.title || "Untitled")}
-          ${project ? `<br><small class="has-text-grey">${escapeHtml(project)}</small>` : ""}
-      </a></li>`;
+      return `<a class="wiki-topic flex items-center gap-2 px-2 py-1.5 rounded text-sm text-gray-300 hover:bg-gray-800 cursor-pointer transition-colors" data-id="${escapeHtml(e.id)}">
+          <span class="flex-shrink-0 w-2 h-2 rounded-full" style="background:${heatColor}"></span>
+          <span class="truncate">
+            ${escapeHtml(e.title || "Untitled")}
+            ${project ? `<span class="text-gray-500 text-xs block">${escapeHtml(project)}</span>` : ""}
+          </span>
+      </a>`;
     }).join("");
 
     // Click handlers
     navList.querySelectorAll(".wiki-topic").forEach((item) => {
       item.addEventListener("click", (e) => {
         e.preventDefault();
-        navList.querySelectorAll(".wiki-topic").forEach((i) => i.classList.remove("is-active"));
-        item.classList.add("is-active");
+        navList.querySelectorAll(".wiki-topic").forEach((i) => {
+          i.classList.remove("bg-blue-600", "text-white");
+          i.classList.add("text-gray-300", "hover:bg-gray-800");
+        });
+        item.classList.add("bg-blue-600", "text-white");
+        item.classList.remove("text-gray-300", "hover:bg-gray-800");
         loadEntityArticle(item.dataset.id);
       });
     });
@@ -480,7 +504,7 @@
       const e = data.entity;
       const shown = Number(e.shown_count) || 0;
       const heatPct = Math.min(shown * 5, 100);
-      const heatColor = shown >= 20 ? "var(--hot)" : shown >= 5 ? "var(--warm)" : shown >= 1 ? "var(--cool)" : "var(--cold)";
+      const heatColor = shown >= 20 ? "#ef4444" : shown >= 5 ? "#f59e0b" : shown >= 1 ? "#3b82f6" : "#6b7280";
       const heatLabel = shown >= 20 ? "HOT" : shown >= 5 ? "WARM" : shown >= 1 ? "COOL" : "COLD";
 
       document.getElementById("article-title").textContent = e.title || "Untitled";
@@ -490,7 +514,7 @@
         ` &middot; shown ${shown}x (${heatLabel})` +
         ` &middot; ${e.created_at ? new Date(e.created_at).toLocaleDateString() : ""}`;
       document.getElementById("article-heat-bar").innerHTML =
-        `<div class="heat-fill" style="width:${heatPct}%;background:${heatColor}"></div>`;
+        `<div class="h-full rounded-full transition-all" style="width:${heatPct}%;background:${heatColor}"></div>`;
 
       // Render markdown content (simple renderer)
       document.getElementById("article-body").innerHTML = renderMarkdown(e.content || "");
@@ -498,17 +522,21 @@
       // Related entities
       const relEl = document.getElementById("article-related-entities");
       if (data.related_entities && data.related_entities.length > 0) {
-        relEl.innerHTML = `<h3>Related Topics</h3>` +
+        relEl.innerHTML = `<h3 class="text-lg font-semibold mb-3">Related Topics</h3>` +
           data.related_entities.map((r) =>
-            `<span class="related-entity-link" data-id="${escapeHtml(r.id)}">${escapeHtml(r.title || "?")}</span>`
+            `<span class="inline-block bg-gray-800 hover:bg-gray-700 text-blue-400 text-sm px-3 py-1 rounded-full cursor-pointer m-1 transition-colors" data-id="${escapeHtml(r.id)}">${escapeHtml(r.title || "?")}</span>`
           ).join("");
         relEl.hidden = false;
-        relEl.querySelectorAll(".related-entity-link").forEach((link) => {
+        relEl.querySelectorAll("[data-id]").forEach((link) => {
           link.addEventListener("click", () => {
             loadEntityArticle(link.dataset.id);
             // Update sidebar active state
             document.querySelectorAll(".wiki-topic").forEach((i) => {
-              i.classList.toggle("is-active", i.dataset.id === link.dataset.id);
+              const match = i.dataset.id === link.dataset.id;
+              i.classList.toggle("bg-blue-600", match);
+              i.classList.toggle("text-white", match);
+              i.classList.toggle("text-gray-300", !match);
+              i.classList.toggle("hover:bg-gray-800", !match);
             });
           });
         });
@@ -535,23 +563,24 @@
           try {
             const tData = await apiFetch(`/api/wiki/timeline?id=${entityId}&limit=30`);
             if (tData.success && tData.timeline.length > 0) {
+              const dotColors = { hot: "#ef4444", warm: "#f59e0b", cool: "#3b82f6", cold: "#6b7280" };
               timelineList.innerHTML = tData.timeline.map((t) => `
-                <div class="timeline-entry">
-                  <div class="timeline-dot ${escapeHtml(t.heat)}"></div>
-                  <div class="timeline-body">
-                    <div class="timeline-date">${t.created_at ? new Date(t.created_at).toLocaleDateString("en-US", {year:"numeric",month:"short",day:"numeric"}) : ""}</div>
-                    <div class="timeline-text">${escapeHtml(t.content)}</div>
-                    <div class="timeline-meta">${escapeHtml(t.category || "")} &middot; ${escapeHtml(t.source || "")} &middot; ${t.similarity ? (t.similarity * 100).toFixed(0) + "% match" : ""}</div>
+                <div class="timeline-entry flex gap-3 py-2">
+                  <div class="w-3 h-3 rounded-full mt-1 flex-shrink-0" style="background:${dotColors[t.heat] || "#6b7280"}"></div>
+                  <div>
+                    <div class="text-xs text-gray-500">${t.created_at ? new Date(t.created_at).toLocaleDateString("en-US", {year:"numeric",month:"short",day:"numeric"}) : ""}</div>
+                    <div class="text-sm text-gray-300 mt-0.5">${escapeHtml(t.content)}</div>
+                    <div class="text-xs text-gray-500 mt-0.5">${escapeHtml(t.category || "")} &middot; ${escapeHtml(t.source || "")} &middot; ${t.similarity ? (t.similarity * 100).toFixed(0) + "% match" : ""}</div>
                   </div>
                 </div>
               `).join("");
               btnTimeline.textContent = "Hide";
             } else {
-              timelineList.innerHTML = '<p class="empty-msg">No timeline data available</p>';
+              timelineList.innerHTML = '<p class="text-sm text-gray-500">No timeline data available</p>';
               btnTimeline.textContent = "Show";
             }
           } catch (err) {
-            timelineList.innerHTML = '<p class="empty-msg">Failed to load timeline</p>';
+            timelineList.innerHTML = '<p class="text-sm text-gray-500">Failed to load timeline</p>';
             btnTimeline.textContent = "Show";
           }
         };
@@ -561,17 +590,20 @@
       const srcList = document.getElementById("source-memories-list");
       if (data.source_memories && data.source_memories.length > 0) {
         document.getElementById("article-sources").hidden = false;
+        const heatIcons = { 20: "flame", 5: "thermometer", 1: "snowflake", 0: "circle" };
         srcList.innerHTML = data.source_memories.map((m) => {
           const mShown = Number(m.shown_count) || 0;
-          const icon = mShown >= 20 ? "&#128293;" : mShown >= 5 ? "&#127777;" : mShown >= 1 ? "&#10052;" : "&#9898;";
-          return `<div class="source-memory">
-            <span class="source-heat">${icon}</span>
-            <div>
-              <div class="source-content">${escapeHtml(m.content || "")}</div>
-              <div class="source-meta">${escapeHtml(m.category || "")} &middot; ${m.similarity ? (m.similarity * 100).toFixed(0) + "% match" : ""}</div>
+          const iconName = mShown >= 20 ? "flame" : mShown >= 5 ? "thermometer" : mShown >= 1 ? "snowflake" : "circle";
+          const iconColor = mShown >= 20 ? "text-red-400" : mShown >= 5 ? "text-amber-400" : mShown >= 1 ? "text-blue-400" : "text-gray-500";
+          return `<div class="flex items-start gap-3 p-3 bg-gray-900 border border-gray-800 rounded-lg">
+            <i data-lucide="${iconName}" class="w-4 h-4 flex-shrink-0 mt-0.5 ${iconColor}"></i>
+            <div class="min-w-0">
+              <div class="text-sm text-gray-300 leading-relaxed">${escapeHtml(m.content || "")}</div>
+              <div class="text-xs text-gray-500 mt-1">${escapeHtml(m.category || "")} &middot; ${m.similarity ? (m.similarity * 100).toFixed(0) + "% match" : ""}</div>
             </div>
           </div>`;
         }).join("");
+        refreshIcons();
       } else {
         document.getElementById("article-sources").hidden = true;
       }
@@ -596,32 +628,7 @@
       .replace(/\n/g, "<br>");
   }
 
-  // Compile button
-  const btnCompile = document.getElementById("btn-compile");
-  if (btnCompile) {
-    btnCompile.addEventListener("click", async () => {
-      btnCompile.disabled = true;
-      btnCompile.textContent = "Compiling...";
-      try {
-        const res = await fetch(baseUrl + "/api/memory/maintenance", {
-          method: "POST",
-          headers: {
-            "Authorization": "Bearer " + apiKey,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({ job_type: "compilation", limit: 10 }),
-        });
-        const data = await res.json();
-        if (data.success) {
-          btnCompile.textContent = `Done! ${data.results.pages_created || 0} created`;
-          setTimeout(() => { loadEntities(); btnCompile.textContent = "Compile New"; btnCompile.disabled = false; }, 2000);
-        }
-      } catch (e) {
-        btnCompile.textContent = "Error";
-        setTimeout(() => { btnCompile.textContent = "Compile New"; btnCompile.disabled = false; }, 2000);
-      }
-    });
-  }
+  // (btn-compile removed — dead code, element doesn't exist in HTML)
 
   // --- Lint / Health ---
   async function loadConflicts() {
@@ -640,29 +647,36 @@
       emptyEl.hidden = true;
 
       listEl.innerHTML = data.conflicts.map((c) => `
-        <div class="conflict-card">
-          <div class="conflict-header">
-            <span class="conflict-label">Contradiction</span>
-            <span class="conflict-date">${c.created_at ? new Date(c.created_at).toLocaleDateString() : ""}</span>
+        <div class="bg-gray-900 border border-gray-800 rounded-lg p-4 border-l-4 border-l-amber-500">
+          <div class="flex items-center justify-between mb-2">
+            <span class="text-xs font-semibold text-amber-400 uppercase tracking-wider flex items-center gap-1.5">
+              <i data-lucide="shield-alert" class="w-3.5 h-3.5"></i> Contradiction
+            </span>
+            <span class="text-xs text-gray-500">${c.created_at ? new Date(c.created_at).toLocaleDateString() : ""}</span>
           </div>
-          <div style="font-size:.8rem;color:var(--fg2);margin-bottom:.5rem">${escapeHtml(c.explanation || "")}</div>
-          <div class="conflict-pair">
+          <div class="text-sm text-gray-400 mb-3">${escapeHtml(c.explanation || "")}</div>
+          <div class="grid grid-cols-2 gap-4 mb-3">
             <div>
-              <div class="conflict-doc-label">Memory A</div>
-              <div class="conflict-doc">${escapeHtml(c.doc_a_content || "")}</div>
+              <div class="text-xs font-medium text-gray-500 mb-1">Memory A</div>
+              <div class="conflict-doc text-sm text-gray-300 leading-relaxed">${escapeHtml(c.doc_a_content || "")}</div>
             </div>
             <div>
-              <div class="conflict-doc-label">Memory B</div>
-              <div class="conflict-doc">${escapeHtml(c.doc_b_content || "")}</div>
+              <div class="text-xs font-medium text-gray-500 mb-1">Memory B</div>
+              <div class="conflict-doc text-sm text-gray-300 leading-relaxed">${escapeHtml(c.doc_b_content || "")}</div>
             </div>
           </div>
-          <div class="conflict-actions">
-            <button onclick="resolveConflict('${escapeHtml(c.id)}','keep_a')">Keep A</button>
-            <button onclick="resolveConflict('${escapeHtml(c.id)}','keep_b')">Keep B</button>
-            <button onclick="resolveConflict('${escapeHtml(c.id)}','dismiss')" class="btn-resolve">Dismiss</button>
+          <div class="flex gap-2">
+            <button class="resolve-btn text-xs bg-gray-800 hover:bg-gray-700 text-gray-300 px-3 py-1.5 rounded transition-colors" data-conflict-id="${escapeHtml(c.id)}" data-resolution="keep_a">Keep A</button>
+            <button class="resolve-btn text-xs bg-gray-800 hover:bg-gray-700 text-gray-300 px-3 py-1.5 rounded transition-colors" data-conflict-id="${escapeHtml(c.id)}" data-resolution="keep_b">Keep B</button>
+            <button class="resolve-btn text-xs bg-gray-800 hover:bg-gray-700 text-gray-400 px-3 py-1.5 rounded transition-colors" data-conflict-id="${escapeHtml(c.id)}" data-resolution="dismiss">Dismiss</button>
           </div>
         </div>
       `).join("");
+      // Bind resolve handlers via addEventListener (fix XSS from inline onclick)
+      listEl.querySelectorAll(".resolve-btn").forEach((btn) => {
+        btn.addEventListener("click", () => resolveConflict(btn.dataset.conflictId, btn.dataset.resolution));
+      });
+      refreshIcons();
     } catch (e) {
       console.error("Failed to load conflicts:", e);
     }
@@ -722,18 +736,17 @@
     if (!reportEl || !statsEl) return;
 
     reportEl.hidden = false;
-    statsEl.innerHTML = '<div class="stat-card"><div class="stat-value">...</div><div class="stat-label">Loading</div></div>';
+    statsEl.innerHTML = '<div class="bg-gray-900 border border-gray-800 rounded-lg p-4 text-center"><p class="text-xl font-bold text-gray-500">...</p><p class="text-xs text-gray-500 mt-1">Loading</p></div>';
 
     try {
       const data = await apiFetch("/api/wiki/stats");
       if (!data.success) return;
       const s = data.stats;
-      statsEl.innerHTML = `
-        <div class="stat-card"><div class="stat-value">${s.health_score}</div><div class="stat-label">Health Score</div></div>
-        <div class="stat-card"><div class="stat-value">${s.open_conflicts}</div><div class="stat-label">Open Conflicts</div></div>
-        <div class="stat-card"><div class="stat-value">${s.orphan_memories}</div><div class="stat-label">Orphans</div></div>
-        <div class="stat-card"><div class="stat-value">${s.connected_memories}/${s.total_memories}</div><div class="stat-label">Connected</div></div>
-      `;
+      const statCard = (val, label) => `<div class="bg-gray-900 border border-gray-800 rounded-lg p-4 text-center"><p class="text-xl font-bold text-blue-400">${val}</p><p class="text-xs text-gray-500 uppercase tracking-wider mt-1">${label}</p></div>`;
+      statsEl.innerHTML = statCard(s.health_score, "Health Score") +
+        statCard(s.open_conflicts, "Open Conflicts") +
+        statCard(s.orphan_memories, "Orphans") +
+        statCard(`${s.connected_memories}/${s.total_memories}`, "Connected");
     } catch (e) { console.error("Lint stats failed:", e); }
   }
 
@@ -754,17 +767,16 @@
           const reportEl = document.getElementById("lint-report");
           const statsEl = document.getElementById("lint-stats");
           reportEl.hidden = false;
-          statsEl.innerHTML = `
-            <div class="stat-card"><div class="stat-value">${r.health_score || 0}</div><div class="stat-label">Health Score</div></div>
-            <div class="stat-card"><div class="stat-value">${r.open_conflicts || 0}</div><div class="stat-label">Open Conflicts</div></div>
-            <div class="stat-card"><div class="stat-value">${r.orphan_count || 0}</div><div class="stat-label">Orphans</div></div>
-            <div class="stat-card"><div class="stat-value">${r.connected_memories || 0}/${r.total_memories || 0}</div><div class="stat-label">Connected</div></div>
-          `;
+          const sc = (val, label) => `<div class="bg-gray-900 border border-gray-800 rounded-lg p-4 text-center"><p class="text-xl font-bold text-blue-400">${val}</p><p class="text-xs text-gray-500 uppercase tracking-wider mt-1">${label}</p></div>`;
+          statsEl.innerHTML = sc(r.health_score || 0, "Health Score") +
+            sc(r.open_conflicts || 0, "Open Conflicts") +
+            sc(r.orphan_count || 0, "Orphans") +
+            sc(`${r.connected_memories || 0}/${r.total_memories || 0}`, "Connected");
           if (r.contradictions_found > 0) {
-            statsEl.innerHTML += `<div class="stat-card"><div class="stat-value" style="color:var(--warning)">${r.contradictions_found}</div><div class="stat-label">New This Run</div></div>`;
+            statsEl.innerHTML += `<div class="bg-gray-900 border border-gray-800 rounded-lg p-4 text-center"><p class="text-xl font-bold text-amber-400">${r.contradictions_found}</p><p class="text-xs text-gray-500 uppercase tracking-wider mt-1">New This Run</p></div>`;
           }
           if (r.entity_page_count !== undefined) {
-            statsEl.innerHTML += `<div class="stat-card"><div class="stat-value">${r.entity_page_count}</div><div class="stat-label">Entity Pages</div></div>`;
+            statsEl.innerHTML += `<div class="bg-gray-900 border border-gray-800 rounded-lg p-4 text-center"><p class="text-xl font-bold text-blue-400">${r.entity_page_count}</p><p class="text-xs text-gray-500 uppercase tracking-wider mt-1">Entity Pages</p></div>`;
           }
 
           // Knowledge gaps
@@ -773,12 +785,12 @@
           if (r.knowledge_gaps && r.knowledge_gaps.length > 0) {
             gapsSection.hidden = false;
             gapsList.innerHTML = r.knowledge_gaps.map((g) => `
-              <div class="gap-card">
+              <div class="flex items-center justify-between bg-gray-900 border border-gray-800 border-l-4 border-l-blue-500 rounded-lg p-3">
                 <div>
-                  <div class="gap-info">${escapeHtml(g.category)}</div>
-                  <div class="gap-count">${Number(g.count)} memories, no entity page</div>
+                  <div class="text-sm font-medium text-gray-200">${escapeHtml(g.category)}</div>
+                  <div class="text-xs text-gray-500">${Number(g.count)} memories, no entity page</div>
                 </div>
-                <button class="gap-action" data-category="${escapeHtml(g.category)}">Generate</button>
+                <button class="gap-action text-xs bg-blue-600 hover:bg-blue-500 text-white px-3 py-1.5 rounded transition-colors" data-category="${escapeHtml(g.category)}">Generate</button>
               </div>
             `).join("");
             // Bind click handlers via data attributes (no inline JS)
@@ -795,9 +807,9 @@
           if (r.top_orphans && r.top_orphans.length > 0) {
             orphansSection.hidden = false;
             orphansList.innerHTML = r.top_orphans.map((o) => `
-              <div class="orphan-card">
-                <div>${escapeHtml(o.content)}</div>
-                <div class="orphan-meta">${escapeHtml(o.category)} &middot; shown ${o.shown_count}x</div>
+              <div class="bg-gray-900 border border-gray-800 rounded-lg p-3">
+                <div class="text-sm text-gray-300">${escapeHtml(o.content)}</div>
+                <div class="text-xs text-gray-500 mt-1">${escapeHtml(o.category)} &middot; shown ${o.shown_count}x</div>
               </div>
             `).join("");
           } else {
@@ -832,12 +844,14 @@
     const el = document.getElementById("memory-filters");
     if (!el) return;
     const allTotal = Object.values(memCategories).reduce((s, n) => s + n, 0);
-    let html = `<span class="tag is-medium ${memCategory === "" ? "is-active is-link" : "is-light"}" data-category="" style="cursor:pointer">All (${allTotal})</span>`;
+    const activeClass = "bg-blue-600 text-white";
+    const inactiveClass = "bg-gray-800 text-gray-300 hover:bg-gray-700";
+    let html = `<span class="cat-pill px-3 py-1 rounded-full text-sm cursor-pointer transition-colors ${memCategory === "" ? activeClass : inactiveClass}" data-category="">All (${allTotal})</span>`;
     for (const [cat, count] of Object.entries(memCategories).sort((a, b) => b[1] - a[1])) {
-      html += `<span class="tag is-medium ${memCategory === cat ? "is-active is-link" : "is-light"}" data-category="${escapeHtml(cat)}" style="cursor:pointer">${escapeHtml(cat)} (${count})</span>`;
+      html += `<span class="cat-pill px-3 py-1 rounded-full text-sm cursor-pointer transition-colors ${memCategory === cat ? activeClass : inactiveClass}" data-category="${escapeHtml(cat)}">${escapeHtml(cat)} (${count})</span>`;
     }
     el.innerHTML = html;
-    el.querySelectorAll(".tag").forEach((btn) => {
+    el.querySelectorAll(".cat-pill").forEach((btn) => {
       btn.addEventListener("click", () => { memCategory = btn.dataset.category; memOffset = 0; loadMemories(); renderMemFilters(); });
     });
   }
@@ -845,43 +859,43 @@
   async function loadMemories() {
     const listEl = document.getElementById("memory-list");
     if (!listEl) return;
-    listEl.innerHTML = '<div class="loading">Loading...</div>';
+    listEl.innerHTML = '<div class="text-sm text-gray-500 text-center py-8">Loading...</div>';
     try {
       let params = `limit=${memLimit}&offset=${memOffset}`;
       if (memScope) params += `&scope=${encodeURIComponent(memScope)}`;
       if (memCategory) params += `&category=${encodeURIComponent(memCategory)}`;
       if (memSearch) params += `&q=${encodeURIComponent(memSearch)}`;
       const data = await apiFetch(`/api/memory/list?${params}`);
-      if (!data.success) { listEl.innerHTML = '<div class="empty">Error loading memories.</div>'; return; }
+      if (!data.success) { listEl.innerHTML = '<div class="text-sm text-gray-500 text-center py-8">Error loading memories.</div>'; return; }
       memTotal = data.total || 0;
       renderMemList(data.results || []);
       renderMemPagination(data.mode === "search");
-    } catch (e) { listEl.innerHTML = '<div class="empty">Failed to load.</div>'; }
+    } catch (e) { listEl.innerHTML = '<div class="text-sm text-gray-500 text-center py-8">Failed to load.</div>'; }
   }
 
   function renderMemList(memories) {
     const listEl = document.getElementById("memory-list");
-    if (!memories.length) { listEl.innerHTML = '<div class="empty">No memories found.</div>'; return; }
+    if (!memories.length) { listEl.innerHTML = '<div class="text-sm text-gray-500 text-center py-8">No memories found.</div>'; return; }
     listEl.innerHTML = memories.map((m) => {
-      const tags = (m.tags || []).map((t) => `<span class="tag">#${escapeHtml(t)}</span>`).join(" ");
+      const tags = (m.tags || []).map((t) => `<span class="bg-gray-800 text-gray-400 px-2 py-0.5 rounded text-xs">#${escapeHtml(t)}</span>`).join(" ");
       const content = escapeHtml(m.content || "");
       const isShort = content.length < 300;
       const date = m.created_at ? new Date(m.created_at).toLocaleDateString() : "";
       const shown = m.shown_count ? `shown: ${m.shown_count}` : "";
-      return `<div class="memory-card" data-id="${escapeHtml(m.id)}">
-        <div class="memory-meta">
-          <span class="cat">${escapeHtml(m.category || "general")}</span>
+      return `<div class="memory-card bg-gray-900 border border-gray-800 rounded-lg p-4 hover:border-gray-700 transition-colors" data-id="${escapeHtml(m.id)}">
+        <div class="flex flex-wrap items-center gap-2 text-xs text-gray-400 mb-2">
+          <span class="font-semibold text-blue-400">${escapeHtml(m.category || "general")}</span>
           ${tags}
-          ${m.scope ? `<span class="scope-badge scope-${escapeHtml(m.scope)}">${escapeHtml(m.scope)}</span>` : ""}
-          ${m.source_ref ? `<span class="source-ref">${escapeHtml(m.source_ref)}</span>` : ""}
+          ${m.scope ? `<span class="bg-gray-800 px-2 py-0.5 rounded">${escapeHtml(m.scope)}</span>` : ""}
+          ${m.source_ref ? `<span class="text-gray-500">${escapeHtml(m.source_ref)}</span>` : ""}
           ${date ? `<span>${date}</span>` : ""}
           ${shown ? `<span>${shown}</span>` : ""}
         </div>
-        <div class="memory-content ${isShort ? "short" : ""}">${content}</div>
-        <div class="memory-actions">
-          <button class="btn-expand" data-id="${escapeHtml(m.id)}">Expand</button>
-          <button class="btn-edit" data-id="${escapeHtml(m.id)}">Edit</button>
-          <button class="btn-delete" data-id="${escapeHtml(m.id)}">Delete</button>
+        <div class="memory-content text-sm text-gray-300 leading-relaxed whitespace-pre-wrap break-words ${isShort ? "short" : ""}">${content}</div>
+        <div class="flex gap-3 mt-3">
+          <button class="btn-expand text-xs text-gray-500 hover:text-gray-300 transition-colors" data-id="${escapeHtml(m.id)}">Expand</button>
+          <button class="btn-edit text-xs text-gray-500 hover:text-blue-400 transition-colors" data-id="${escapeHtml(m.id)}">Edit</button>
+          <button class="btn-delete text-xs text-gray-500 hover:text-red-400 transition-colors" data-id="${escapeHtml(m.id)}">Delete</button>
         </div>
       </div>`;
     }).join("");
@@ -925,11 +939,15 @@
     memSearchTimeout = setTimeout(() => { memSearch = e.target.value.trim(); memOffset = 0; loadMemories(); }, 400);
   });
 
-  // Scope toggle
+  // Scope toggle (fix: consistent class names for active state)
   document.querySelectorAll(".scope-btn").forEach((btn) => {
     btn.addEventListener("click", () => {
-      document.querySelectorAll(".scope-btn").forEach((b) => b.classList.remove("active"));
-      btn.classList.add("active");
+      document.querySelectorAll(".scope-btn").forEach((b) => {
+        b.classList.remove("active", "bg-blue-600", "text-white");
+        b.classList.add("text-gray-400", "hover:bg-gray-800");
+      });
+      btn.classList.add("active", "bg-blue-600", "text-white");
+      btn.classList.remove("text-gray-400", "hover:bg-gray-800");
       memScope = btn.dataset.scope;
       memOffset = 0;
       loadMemories();
@@ -947,15 +965,24 @@
       document.getElementById("edit-category").value = doc.category || "";
       document.getElementById("edit-tags").value = (doc.tags || []).join(", ");
       document.getElementById("edit-source-ref").value = doc.source_ref || "";
-      document.getElementById("edit-modal").classList.add("is-active");
+      document.getElementById("edit-modal").classList.remove("hidden");
+      refreshIcons();
     } catch (e) { console.error("Edit failed", e); }
   }
 
-  function closeMemEdit() { document.getElementById("edit-modal").classList.remove("is-active"); editingId = null; }
+  function closeMemEdit() { document.getElementById("edit-modal").classList.add("hidden"); editingId = null; }
 
   document.getElementById("edit-cancel")?.addEventListener("click", closeMemEdit);
   document.querySelector(".modal-close-btn")?.addEventListener("click", closeMemEdit);
-  document.querySelector(".modal-background")?.addEventListener("click", closeMemEdit);
+  document.getElementById("modal-backdrop")?.addEventListener("click", closeMemEdit);
+
+  // Escape key closes modal and detail panel
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") {
+      if (!document.getElementById("edit-modal").classList.contains("hidden")) closeMemEdit();
+      if (!detailPanel.hidden) detailPanel.hidden = true;
+    }
+  });
 
   document.getElementById("edit-save")?.addEventListener("click", async () => {
     if (!editingId) return;
@@ -994,11 +1021,11 @@
     const container = document.getElementById("toast-container");
     container.innerHTML = "";
     const toast = document.createElement("div");
-    toast.className = "toast";
+    toast.className = "flex items-center gap-3 bg-gray-800 border border-gray-700 text-gray-200 text-sm px-4 py-3 rounded-lg shadow-xl";
     toast.innerHTML = `<span>${escapeHtml(message)}</span>`;
     if (undoCallback) {
       const btn = document.createElement("button");
-      btn.className = "undo-btn";
+      btn.className = "text-blue-400 hover:text-blue-300 font-medium ml-2 transition-colors";
       btn.textContent = "Undo";
       btn.addEventListener("click", async () => { toast.remove(); try { await undoCallback(); } catch (e) {} });
       toast.appendChild(btn);
@@ -1046,4 +1073,7 @@
   } else {
     showLogin();
   }
+
+  // Initialize Lucide icons
+  refreshIcons();
 })();

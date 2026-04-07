@@ -1,245 +1,276 @@
 <!DOCTYPE html>
-<html lang="en" data-theme="dark">
+<html lang="en" class="dark">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>CEMS Knowledge Engine</title>
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bulma@1.0.4/css/bulma.min.css">
   <link rel="stylesheet" href="style.css">
   <script src="https://cdn.jsdelivr.net/npm/d3@7.9.0/dist/d3.min.js" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/marked@15.0.4/marked.min.js" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
 </head>
-<body>
+<body class="bg-gray-950 text-gray-100 antialiased">
   <div id="app">
+
     <!-- Login -->
     <div id="login-view">
-      <section class="hero is-fullheight">
-        <div class="hero-body">
-          <div class="container">
-            <div class="columns is-centered">
-              <div class="column is-4">
-                <div class="box has-text-centered">
-                  <h1 class="title is-3">CEMS</h1>
-                  <p class="subtitle is-6 has-text-grey">Knowledge Engine</p>
-                  <form id="login-form">
-                    <div class="field">
-                      <div class="control">
-                        <input class="input" type="password" id="api-key-input" placeholder="API key" autocomplete="off" required>
-                      </div>
-                    </div>
-                    <div class="field">
-                      <div class="control">
-                        <button class="button is-link is-fullwidth" type="submit">Connect</button>
-                      </div>
-                    </div>
-                  </form>
-                  <p id="login-error" class="help is-danger" hidden></p>
-                </div>
-              </div>
-            </div>
+      <div class="min-h-screen flex items-center justify-center">
+        <div class="w-full max-w-sm bg-gray-900 rounded-xl border border-gray-800 p-8 shadow-2xl">
+          <div class="text-center mb-8">
+            <h1 class="text-3xl font-bold tracking-tight">CEMS</h1>
+            <p class="text-sm text-gray-500 mt-1">Knowledge Engine</p>
           </div>
+          <form id="login-form">
+            <div class="mb-4">
+              <input class="w-full bg-gray-800 border border-gray-700 text-gray-100 rounded-lg px-4 py-3 placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition" type="password" id="api-key-input" placeholder="API key" autocomplete="off" required>
+            </div>
+            <button class="w-full bg-blue-600 hover:bg-blue-500 text-white font-medium py-3 rounded-lg transition-colors" type="submit">Connect</button>
+          </form>
+          <p id="login-error" class="text-sm text-red-400 text-center mt-3" hidden></p>
         </div>
-      </section>
-    </div>
-
-    <!-- Main Layout -->
-    <div id="main-layout">
-      <div class="columns is-gapless" style="min-height:100vh">
-        <!-- Sidebar -->
-        <aside id="sidebar" class="column is-2 sidebar-col">
-          <div class="p-4">
-            <div class="is-flex is-align-items-center is-justify-content-space-between mb-4">
-              <h2 class="title is-5 mb-0">CEMS</h2>
-              <span id="health-badge" class="tag is-success is-light">--</span>
-            </div>
-            <aside class="menu">
-              <ul class="menu-list">
-                <li><a class="nav-link is-active" data-view="wiki"><span class="icon-text"><span>📖</span><span>Wiki</span></span></a></li>
-                <li><a class="nav-link" data-view="memories"><span class="icon-text"><span>🗒️</span><span>Memories</span></span></a></li>
-                <li><a class="nav-link" data-view="graph"><span class="icon-text"><span>🌐</span><span>Graph</span></span></a></li>
-                <li><a class="nav-link" data-view="stats"><span class="icon-text"><span>📊</span><span>Stats</span></span></a></li>
-                <li><a class="nav-link" data-view="health"><span class="icon-text"><span>🩹</span><span>Health</span></span></a></li>
-              </ul>
-            </aside>
-          </div>
-          <div class="p-4" style="margin-top:auto">
-            <button id="logout-btn" class="button is-small is-fullwidth is-light">Logout</button>
-          </div>
-        </aside>
-
-        <!-- Content -->
-        <main id="content" class="column">
-
-          <!-- Wiki View -->
-          <section id="view-wiki" class="content-view p-4">
-            <div class="columns is-gapless" style="min-height:calc(100vh - 2rem)">
-              <aside class="column is-3 wiki-sidebar-col">
-                <div class="p-3">
-                  <p class="menu-label">Topics</p>
-                  <div class="field mb-3">
-                    <div class="control">
-                      <input class="input is-small" type="text" id="entity-search" placeholder="Filter topics...">
-                    </div>
-                  </div>
-                  <div id="entity-nav-list" class="menu-list"></div>
-                  <p id="entities-empty" class="has-text-grey is-size-7 has-text-centered mt-4" hidden>No entity pages yet.</p>
-                </div>
-              </aside>
-              <div id="wiki-article" class="column p-5">
-                <div id="article-placeholder" class="has-text-grey has-text-centered" style="padding-top:4rem">Select a topic from the sidebar.</div>
-                <div id="article-content" hidden>
-                  <div id="article-header" class="mb-5 pb-4" style="border-bottom:1px solid var(--bulma-border-weak)">
-                    <h1 id="article-title" class="title is-3"></h1>
-                    <p id="article-meta" class="subtitle is-6 has-text-grey"></p>
-                    <progress id="article-heat-bar" class="progress is-small is-info" value="0" max="100"></progress>
-                  </div>
-                  <div id="article-body" class="content"></div>
-                  <div id="article-related-entities" class="mt-5 pt-4" style="border-top:1px solid var(--bulma-border-weak)" hidden></div>
-                  <div id="article-sources" class="mt-5 pt-4" style="border-top:1px solid var(--bulma-border-weak)">
-                    <h3 class="title is-5">Source Memories</h3>
-                    <div id="source-memories-list"></div>
-                  </div>
-                  <div id="article-timeline" class="mt-5 pt-4" style="border-top:1px solid var(--bulma-border-weak)" hidden>
-                    <h3 class="title is-5">Timeline <button id="btn-toggle-timeline" class="button is-small is-light ml-2">Show</button></h3>
-                    <div id="timeline-list"></div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </section>
-
-          <!-- Memories View -->
-          <section id="view-memories" class="content-view p-5">
-            <div class="level mb-4">
-              <div class="level-left">
-                <div class="level-item"><h2 class="title is-4 mb-0">All Memories</h2></div>
-              </div>
-              <div class="level-right">
-                <div class="level-item">
-                  <div class="field"><div class="control"><input class="input is-small" type="search" id="memory-search" placeholder="Search memories..."></div></div>
-                </div>
-                <div class="level-item">
-                  <div class="buttons has-addons">
-                    <button class="button is-small scope-btn is-active" data-scope="">All</button>
-                    <button class="button is-small scope-btn" data-scope="personal">Personal</button>
-                    <button class="button is-small scope-btn" data-scope="shared">Team</button>
-                  </div>
-                </div>
-              </div>
-            </div>
-            <div id="memory-filters" class="tags mb-4"></div>
-            <div id="memory-list"></div>
-            <nav id="memory-pagination" class="pagination is-small is-centered mt-4" hidden>
-              <button id="prev-btn" class="pagination-previous" disabled>Previous</button>
-              <button id="next-btn" class="pagination-next" disabled>Next</button>
-              <ul class="pagination-list"><li><span id="page-info" class="pagination-link"></span></li></ul>
-            </nav>
-          </section>
-
-          <!-- Graph View -->
-          <section id="view-graph" class="content-view p-4">
-            <div class="level mb-2">
-              <div class="level-left"><div class="level-item"><span id="graph-info" class="has-text-grey is-size-7">Loading...</span></div></div>
-              <div class="level-right">
-                <div class="level-item"><div class="select is-small"><select id="graph-filter-heat"><option value="">All heat</option><option value="hot">Hot</option><option value="warm">Warm</option><option value="cool">Cool</option><option value="cold">Cold</option></select></div></div>
-                <div class="level-item"><div class="select is-small"><select id="graph-filter-cat"><option value="">All categories</option></select></div></div>
-                <div class="level-item"><button id="btn-recenter" class="button is-small is-light">Reset</button></div>
-              </div>
-            </div>
-            <div id="graph-legend" class="tags mb-2">
-              <span class="tag is-danger is-light">Hot</span>
-              <span class="tag is-warning is-light">Warm</span>
-              <span class="tag is-info is-light">Cool</span>
-              <span class="tag is-light">Cold</span>
-            </div>
-            <svg id="graph-svg"></svg>
-          </section>
-
-          <!-- Stats View -->
-          <section id="view-stats" class="content-view p-5">
-            <h2 class="title is-4">Statistics</h2>
-            <div class="columns is-multiline mb-5">
-              <div class="column is-2"><div class="box has-text-centered"><p class="title is-3 has-text-link" id="stat-total">--</p><p class="heading">Memories</p></div></div>
-              <div class="column is-2"><div class="box has-text-centered"><p class="title is-3 has-text-link" id="stat-relations">--</p><p class="heading">Relations</p></div></div>
-              <div class="column is-2"><div class="box has-text-centered"><p class="title is-3 has-text-link" id="stat-connected">--</p><p class="heading">Connected</p></div></div>
-              <div class="column is-2"><div class="box has-text-centered"><p class="title is-3 has-text-link" id="stat-orphans">--</p><p class="heading">Orphans</p></div></div>
-              <div class="column is-2"><div class="box has-text-centered"><p class="title is-3 has-text-link" id="stat-conflicts">--</p><p class="heading">Conflicts</p></div></div>
-              <div class="column is-2"><div class="box has-text-centered"><p class="title is-3 has-text-link" id="stat-avg-rel">--</p><p class="heading">Avg Rels</p></div></div>
-            </div>
-            <div class="columns">
-              <div class="column"><div class="box"><h3 class="title is-6">Heat Distribution</h3><div id="heat-bars"></div></div></div>
-              <div class="column"><div class="box"><h3 class="title is-6">Categories</h3><div id="category-bars"></div></div></div>
-            </div>
-          </section>
-
-          <!-- Health View -->
-          <section id="view-health" class="content-view p-5">
-            <h2 class="title is-4">Knowledge Health</h2>
-            <div id="lint-report" hidden><div id="lint-stats" class="columns is-multiline mb-4"></div></div>
-            <div id="gaps-section" hidden>
-              <h3 class="title is-5 mt-5">Knowledge Gaps</h3>
-              <div id="gaps-list"></div>
-            </div>
-            <div id="orphans-section" hidden>
-              <h3 class="title is-5 mt-5">Top Orphan Memories</h3>
-              <div id="orphans-list"></div>
-            </div>
-            <h3 class="title is-5 mt-5">Open Conflicts</h3>
-            <div id="conflicts-list"></div>
-            <p id="conflicts-empty" class="has-text-grey is-size-7" hidden>No open conflicts.</p>
-          </section>
-
-          <!-- Detail Panel -->
-          <div id="detail-panel" class="detail-panel-overlay" hidden>
-            <div class="box">
-              <div class="is-flex is-justify-content-space-between is-align-items-center mb-3">
-                <h2 id="detail-title" class="title is-5 mb-0"></h2>
-                <button id="detail-close" class="delete is-medium"></button>
-              </div>
-              <div id="detail-content"></div>
-              <div id="detail-relations" class="mt-4"></div>
-            </div>
-          </div>
-        </main>
       </div>
     </div>
 
-    <!-- Edit Modal -->
-    <div id="edit-modal" class="modal">
-      <div class="modal-background"></div>
-      <div class="modal-card">
-        <header class="modal-card-head">
-          <p class="modal-card-title">Edit Memory</p>
-          <button class="delete modal-close-btn" aria-label="close"></button>
-        </header>
-        <section class="modal-card-body">
-          <div class="field">
-            <label class="label">Content</label>
-            <div class="control"><textarea id="edit-textarea" class="textarea" rows="8"></textarea></div>
+    <!-- Main Layout -->
+    <div id="main-layout" class="min-h-screen">
+      <!-- Sidebar -->
+      <aside id="sidebar" class="w-56 flex-shrink-0 bg-gray-900 border-r border-gray-800 flex flex-col sticky top-0 h-screen overflow-y-auto">
+        <div class="p-4">
+          <div class="flex items-center justify-between mb-6">
+            <h2 class="text-lg font-bold tracking-tight">CEMS</h2>
+            <span id="health-badge" class="text-xs px-2 py-0.5 rounded-full bg-green-900/50 text-green-400 font-medium">--</span>
           </div>
-          <div class="columns">
-            <div class="column">
-              <div class="field"><label class="label is-small">Category</label><div class="control"><input class="input is-small" type="text" id="edit-category" placeholder="e.g. testing"></div></div>
-            </div>
-            <div class="column">
-              <div class="field"><label class="label is-small">Tags</label><div class="control"><input class="input is-small" type="text" id="edit-tags" placeholder="comma-separated"></div></div>
-            </div>
-            <div class="column">
-              <div class="field"><label class="label is-small">Source Ref</label><div class="control"><input class="input is-small" type="text" id="edit-source-ref" placeholder="project:org/repo"></div></div>
+          <nav class="space-y-1">
+            <a class="nav-link active flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors cursor-pointer" data-view="wiki">
+              <i data-lucide="book-open" class="w-4 h-4 opacity-70"></i><span>Wiki</span>
+            </a>
+            <a class="nav-link flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors cursor-pointer" data-view="memories">
+              <i data-lucide="brain" class="w-4 h-4 opacity-70"></i><span>Memories</span>
+            </a>
+            <a class="nav-link flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors cursor-pointer" data-view="graph">
+              <i data-lucide="network" class="w-4 h-4 opacity-70"></i><span>Graph</span>
+            </a>
+            <a class="nav-link flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors cursor-pointer" data-view="stats">
+              <i data-lucide="bar-chart-3" class="w-4 h-4 opacity-70"></i><span>Stats</span>
+            </a>
+            <a class="nav-link flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors cursor-pointer" data-view="health">
+              <i data-lucide="heart-pulse" class="w-4 h-4 opacity-70"></i><span>Health</span>
+            </a>
+          </nav>
+        </div>
+        <div class="p-4 mt-auto border-t border-gray-800">
+          <button id="logout-btn" class="w-full flex items-center justify-center gap-2 text-sm text-gray-500 hover:text-gray-300 py-2 transition-colors">
+            <i data-lucide="log-out" class="w-3.5 h-3.5"></i><span>Logout</span>
+          </button>
+        </div>
+      </aside>
+
+      <!-- Content -->
+      <main id="content" class="flex-1 overflow-y-auto max-h-screen">
+
+        <!-- Wiki View -->
+        <section id="view-wiki" class="content-view p-4">
+          <div class="flex min-h-[calc(100vh-2rem)]">
+            <!-- Wiki Sidebar -->
+            <aside class="w-64 flex-shrink-0 bg-gray-900/50 border-r border-gray-800 overflow-y-auto max-h-[calc(100vh-2rem)]">
+              <div class="p-3">
+                <p class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Topics</p>
+                <input class="w-full bg-gray-800 border border-gray-700 text-gray-100 text-sm rounded-lg px-3 py-2 placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent mb-3" type="text" id="entity-search" placeholder="Filter topics...">
+                <div id="entity-nav-list" class="space-y-0.5"></div>
+                <p id="entities-empty" class="text-gray-500 text-xs text-center mt-6" hidden>No entity pages yet.</p>
+              </div>
+            </aside>
+            <!-- Wiki Article -->
+            <div id="wiki-article" class="flex-1 px-8 py-6 max-w-4xl">
+              <div id="article-placeholder" class="text-gray-500 text-center pt-16">Select a topic from the sidebar.</div>
+              <div id="article-content" hidden>
+                <div id="article-header" class="mb-6 pb-4 border-b border-gray-800">
+                  <h1 id="article-title" class="text-2xl font-bold mb-2"></h1>
+                  <p id="article-meta" class="text-sm text-gray-400"></p>
+                  <div id="article-heat-bar" class="mt-3 h-1.5 bg-gray-800 rounded-full overflow-hidden"></div>
+                </div>
+                <div id="article-body" class="text-sm text-gray-300 leading-relaxed max-w-none"></div>
+                <div id="article-related-entities" class="mt-8 pt-4 border-t border-gray-800" hidden></div>
+                <div id="article-sources" class="mt-8 pt-4 border-t border-gray-800">
+                  <h3 class="text-lg font-semibold mb-3">Source Memories</h3>
+                  <div id="source-memories-list" class="space-y-2"></div>
+                </div>
+                <div id="article-timeline" class="mt-8 pt-4 border-t border-gray-800" hidden>
+                  <h3 class="text-lg font-semibold mb-3">
+                    Timeline
+                    <button id="btn-toggle-timeline" class="text-sm bg-gray-800 hover:bg-gray-700 text-gray-300 px-3 py-1 rounded ml-2 transition-colors">Show</button>
+                  </h3>
+                  <div id="timeline-list" class="space-y-1"></div>
+                </div>
+              </div>
             </div>
           </div>
         </section>
-        <footer class="modal-card-foot">
-          <div class="buttons">
-            <button id="edit-save" class="button is-link">Save</button>
-            <button id="edit-cancel" class="button">Cancel</button>
+
+        <!-- Memories View -->
+        <section id="view-memories" class="content-view p-6">
+          <div class="flex items-center justify-between mb-5">
+            <h2 class="text-xl font-bold">All Memories</h2>
+            <div class="flex items-center gap-4">
+              <input class="bg-gray-800 border border-gray-700 text-gray-100 text-sm rounded-lg px-3 py-2 placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent w-56" type="search" id="memory-search" placeholder="Search memories...">
+              <div class="flex rounded-lg overflow-hidden border border-gray-700">
+                <button class="scope-btn active bg-blue-600 text-white text-sm px-3 py-1.5 transition-colors" data-scope="">All</button>
+                <button class="scope-btn text-gray-400 hover:bg-gray-800 text-sm px-3 py-1.5 transition-colors" data-scope="personal">Personal</button>
+                <button class="scope-btn text-gray-400 hover:bg-gray-800 text-sm px-3 py-1.5 transition-colors" data-scope="shared">Team</button>
+              </div>
+            </div>
           </div>
-        </footer>
+          <div id="memory-filters" class="flex flex-wrap gap-2 mb-4"></div>
+          <div id="memory-list" class="space-y-3"></div>
+          <nav id="memory-pagination" class="flex items-center justify-center gap-4 mt-6" hidden>
+            <button id="prev-btn" class="text-sm bg-gray-800 hover:bg-gray-700 text-gray-300 px-4 py-2 rounded-lg disabled:opacity-40 disabled:cursor-not-allowed transition-colors" disabled>Previous</button>
+            <span id="page-info" class="text-sm text-gray-400"></span>
+            <button id="next-btn" class="text-sm bg-gray-800 hover:bg-gray-700 text-gray-300 px-4 py-2 rounded-lg disabled:opacity-40 disabled:cursor-not-allowed transition-colors" disabled>Next</button>
+          </nav>
+        </section>
+
+        <!-- Graph View -->
+        <section id="view-graph" class="content-view p-4">
+          <div class="flex items-center justify-between mb-3">
+            <span id="graph-info" class="text-xs text-gray-500">Loading...</span>
+            <div class="flex items-center gap-3">
+              <select id="graph-filter-heat" class="text-sm bg-gray-800 border border-gray-700 text-gray-300 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                <option value="">All heat</option>
+                <option value="hot">Hot</option>
+                <option value="warm">Warm</option>
+                <option value="cool">Cool</option>
+                <option value="cold">Cold</option>
+              </select>
+              <select id="graph-filter-cat" class="text-sm bg-gray-800 border border-gray-700 text-gray-300 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                <option value="">All categories</option>
+              </select>
+              <button id="btn-recenter" class="text-sm bg-gray-800 hover:bg-gray-700 text-gray-300 px-3 py-1.5 rounded-lg transition-colors">Reset</button>
+            </div>
+          </div>
+          <div id="graph-legend" class="flex gap-2 mb-3">
+            <span class="text-xs px-2.5 py-1 rounded-full bg-red-900/30 text-red-400">Hot</span>
+            <span class="text-xs px-2.5 py-1 rounded-full bg-amber-900/30 text-amber-400">Warm</span>
+            <span class="text-xs px-2.5 py-1 rounded-full bg-blue-900/30 text-blue-400">Cool</span>
+            <span class="text-xs px-2.5 py-1 rounded-full bg-gray-800 text-gray-400">Cold</span>
+          </div>
+          <svg id="graph-svg" class="border border-gray-800 rounded-lg bg-gray-900/50"></svg>
+        </section>
+
+        <!-- Stats View -->
+        <section id="view-stats" class="content-view p-6">
+          <h2 class="text-xl font-bold mb-5">Statistics</h2>
+          <div class="grid grid-cols-6 gap-4 mb-6">
+            <div class="bg-gray-900 border border-gray-800 rounded-lg p-4 text-center">
+              <p class="text-2xl font-bold text-blue-400" id="stat-total">--</p>
+              <p class="text-xs text-gray-500 uppercase tracking-wider mt-1">Memories</p>
+            </div>
+            <div class="bg-gray-900 border border-gray-800 rounded-lg p-4 text-center">
+              <p class="text-2xl font-bold text-blue-400" id="stat-relations">--</p>
+              <p class="text-xs text-gray-500 uppercase tracking-wider mt-1">Relations</p>
+            </div>
+            <div class="bg-gray-900 border border-gray-800 rounded-lg p-4 text-center">
+              <p class="text-2xl font-bold text-blue-400" id="stat-connected">--</p>
+              <p class="text-xs text-gray-500 uppercase tracking-wider mt-1">Connected</p>
+            </div>
+            <div class="bg-gray-900 border border-gray-800 rounded-lg p-4 text-center">
+              <p class="text-2xl font-bold text-blue-400" id="stat-orphans">--</p>
+              <p class="text-xs text-gray-500 uppercase tracking-wider mt-1">Orphans</p>
+            </div>
+            <div class="bg-gray-900 border border-gray-800 rounded-lg p-4 text-center">
+              <p class="text-2xl font-bold text-blue-400" id="stat-conflicts">--</p>
+              <p class="text-xs text-gray-500 uppercase tracking-wider mt-1">Conflicts</p>
+            </div>
+            <div class="bg-gray-900 border border-gray-800 rounded-lg p-4 text-center">
+              <p class="text-2xl font-bold text-blue-400" id="stat-avg-rel">--</p>
+              <p class="text-xs text-gray-500 uppercase tracking-wider mt-1">Avg Rels</p>
+            </div>
+          </div>
+          <div class="grid grid-cols-2 gap-6">
+            <div class="bg-gray-900 border border-gray-800 rounded-lg p-5">
+              <h3 class="text-sm font-semibold text-gray-300 mb-3">Heat Distribution</h3>
+              <div id="heat-bars" class="space-y-2"></div>
+            </div>
+            <div class="bg-gray-900 border border-gray-800 rounded-lg p-5">
+              <h3 class="text-sm font-semibold text-gray-300 mb-3">Categories</h3>
+              <div id="category-bars" class="space-y-2"></div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Health View -->
+        <section id="view-health" class="content-view p-6">
+          <h2 class="text-xl font-bold mb-5">Knowledge Health</h2>
+          <div id="lint-report" hidden>
+            <div id="lint-stats" class="grid grid-cols-4 gap-4 mb-6"></div>
+          </div>
+          <div id="gaps-section" hidden>
+            <h3 class="text-lg font-semibold mt-6 mb-3">Knowledge Gaps</h3>
+            <div id="gaps-list" class="space-y-2"></div>
+          </div>
+          <div id="orphans-section" hidden>
+            <h3 class="text-lg font-semibold mt-6 mb-3">Top Orphan Memories</h3>
+            <div id="orphans-list" class="space-y-2"></div>
+          </div>
+          <h3 class="text-lg font-semibold mt-6 mb-3">Open Conflicts</h3>
+          <div id="conflicts-list" class="space-y-3"></div>
+          <p id="conflicts-empty" class="text-gray-500 text-sm" hidden>No open conflicts.</p>
+        </section>
+
+        <!-- Detail Panel -->
+        <div id="detail-panel" class="fixed right-0 top-0 w-[400px] h-screen bg-gray-900 border-l border-gray-800 shadow-2xl overflow-y-auto z-40 p-5" hidden>
+          <div class="flex items-center justify-between mb-4">
+            <h2 id="detail-title" class="text-lg font-semibold"></h2>
+            <button id="detail-close" class="text-gray-500 hover:text-gray-300 transition-colors">
+              <i data-lucide="x" class="w-5 h-5"></i>
+            </button>
+          </div>
+          <div id="detail-content"></div>
+          <div id="detail-relations" class="mt-4"></div>
+        </div>
+      </main>
+    </div>
+
+    <!-- Edit Modal -->
+    <div id="edit-modal" class="hidden fixed inset-0 z-50">
+      <div class="fixed inset-0 bg-black/60" id="modal-backdrop"></div>
+      <div class="fixed inset-0 flex items-center justify-center p-4">
+        <div class="bg-gray-900 rounded-xl border border-gray-800 shadow-2xl w-full max-w-2xl relative">
+          <div class="flex items-center justify-between px-5 py-4 border-b border-gray-800">
+            <h3 class="text-lg font-semibold">Edit Memory</h3>
+            <button class="modal-close-btn text-gray-500 hover:text-gray-300 transition-colors">
+              <i data-lucide="x" class="w-5 h-5"></i>
+            </button>
+          </div>
+          <div class="p-5 space-y-4">
+            <div>
+              <label class="block text-sm font-medium text-gray-400 mb-1.5">Content</label>
+              <textarea id="edit-textarea" class="w-full bg-gray-800 border border-gray-700 text-gray-100 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent" rows="8"></textarea>
+            </div>
+            <div class="grid grid-cols-3 gap-4">
+              <div>
+                <label class="block text-xs font-medium text-gray-400 mb-1">Category</label>
+                <input class="w-full bg-gray-800 border border-gray-700 text-gray-100 text-sm rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent" type="text" id="edit-category" placeholder="e.g. testing">
+              </div>
+              <div>
+                <label class="block text-xs font-medium text-gray-400 mb-1">Tags</label>
+                <input class="w-full bg-gray-800 border border-gray-700 text-gray-100 text-sm rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent" type="text" id="edit-tags" placeholder="comma-separated">
+              </div>
+              <div>
+                <label class="block text-xs font-medium text-gray-400 mb-1">Source Ref</label>
+                <input class="w-full bg-gray-800 border border-gray-700 text-gray-100 text-sm rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent" type="text" id="edit-source-ref" placeholder="project:org/repo">
+              </div>
+            </div>
+          </div>
+          <div class="flex justify-end gap-3 px-5 py-4 border-t border-gray-800">
+            <button id="edit-cancel" class="px-4 py-2 text-sm text-gray-400 hover:text-gray-200 transition-colors">Cancel</button>
+            <button id="edit-save" class="px-4 py-2 text-sm bg-blue-600 hover:bg-blue-500 text-white rounded-lg transition-colors">Save</button>
+          </div>
+        </div>
       </div>
     </div>
 
     <!-- Toast -->
-    <div id="toast-container"></div>
+    <div id="toast-container" class="fixed bottom-4 right-4 z-[100]"></div>
   </div>
   <script src="app.js"></script>
 </body>
