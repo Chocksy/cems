@@ -83,9 +83,9 @@
   // --- Sidebar Navigation ---
   function switchView(viewName) {
     currentView = viewName;
-    // Update sidebar active state
-    document.querySelectorAll("#sidebar .nav-item").forEach((n) => {
-      n.classList.toggle("active", n.dataset.view === viewName);
+    // Update sidebar active state (Bulma uses is-active)
+    document.querySelectorAll(".nav-link[data-view]").forEach((n) => {
+      n.classList.toggle("is-active", n.dataset.view === viewName);
     });
     // Hide all content views, show selected
     document.querySelectorAll(".content-view").forEach((v) => { v.classList.remove("active"); });
@@ -101,8 +101,8 @@
     if (viewName === "memories") { loadMemCategories(); loadMemories(); }
   }
 
-  document.querySelectorAll("#sidebar .nav-item[data-view]").forEach((btn) => {
-    btn.addEventListener("click", () => switchView(btn.dataset.view));
+  document.querySelectorAll(".nav-link[data-view]").forEach((btn) => {
+    btn.addEventListener("click", (e) => { e.preventDefault(); switchView(btn.dataset.view); });
   });
 
   // --- Stats ---
@@ -420,8 +420,8 @@
 
       // Auto-select first entity and mark it active
       if (allEntities.length > 0) {
-        const firstNav = document.querySelector(".nav-item");
-        if (firstNav) firstNav.classList.add("active");
+        const firstNav = document.querySelector(".wiki-topic");
+        if (firstNav) firstNav.classList.add("is-active");
         loadEntityArticle(allEntities[0].id);
       }
     } catch (e) {
@@ -435,20 +435,19 @@
       const shown = Number(e.shown_count) || 0;
       const heatColor = shown >= 20 ? "var(--hot)" : shown >= 5 ? "var(--warm)" : shown >= 1 ? "var(--cool)" : "var(--cold)";
       const project = (e.source_ref || "").replace("project:", "").split("/").pop() || "";
-      return `<div class="nav-item" data-id="${escapeHtml(e.id)}">
-        <div class="nav-item-title">
-          <span class="heat-dot" style="background:${heatColor}"></span>
+      return `<li><a class="wiki-topic" data-id="${escapeHtml(e.id)}">
+          <span class="tag is-rounded mr-1" style="background:${heatColor};width:8px;height:8px;padding:0"></span>
           ${escapeHtml(e.title || "Untitled")}
-        </div>
-        ${project ? `<div class="nav-item-project">${escapeHtml(project)}</div>` : ""}
-      </div>`;
+          ${project ? `<br><small class="has-text-grey">${escapeHtml(project)}</small>` : ""}
+      </a></li>`;
     }).join("");
 
     // Click handlers
-    navList.querySelectorAll(".nav-item").forEach((item) => {
-      item.addEventListener("click", () => {
-        navList.querySelectorAll(".nav-item").forEach((i) => i.classList.remove("active"));
-        item.classList.add("active");
+    navList.querySelectorAll(".wiki-topic").forEach((item) => {
+      item.addEventListener("click", (e) => {
+        e.preventDefault();
+        navList.querySelectorAll(".wiki-topic").forEach((i) => i.classList.remove("is-active"));
+        item.classList.add("is-active");
         loadEntityArticle(item.dataset.id);
       });
     });
@@ -508,8 +507,8 @@
           link.addEventListener("click", () => {
             loadEntityArticle(link.dataset.id);
             // Update sidebar active state
-            document.querySelectorAll(".nav-item").forEach((i) => {
-              i.classList.toggle("active", i.dataset.id === link.dataset.id);
+            document.querySelectorAll(".wiki-topic").forEach((i) => {
+              i.classList.toggle("is-active", i.dataset.id === link.dataset.id);
             });
           });
         });
@@ -833,12 +832,12 @@
     const el = document.getElementById("memory-filters");
     if (!el) return;
     const allTotal = Object.values(memCategories).reduce((s, n) => s + n, 0);
-    let html = `<button class="filter-pill ${memCategory === "" ? "active" : ""}" data-category="">All (${allTotal})</button>`;
+    let html = `<span class="tag is-medium ${memCategory === "" ? "is-active is-link" : "is-light"}" data-category="" style="cursor:pointer">All (${allTotal})</span>`;
     for (const [cat, count] of Object.entries(memCategories).sort((a, b) => b[1] - a[1])) {
-      html += `<button class="filter-pill ${memCategory === cat ? "active" : ""}" data-category="${escapeHtml(cat)}">${escapeHtml(cat)} (${count})</button>`;
+      html += `<span class="tag is-medium ${memCategory === cat ? "is-active is-link" : "is-light"}" data-category="${escapeHtml(cat)}" style="cursor:pointer">${escapeHtml(cat)} (${count})</span>`;
     }
     el.innerHTML = html;
-    el.querySelectorAll(".filter-pill").forEach((btn) => {
+    el.querySelectorAll(".tag").forEach((btn) => {
       btn.addEventListener("click", () => { memCategory = btn.dataset.category; memOffset = 0; loadMemories(); renderMemFilters(); });
     });
   }
@@ -948,15 +947,15 @@
       document.getElementById("edit-category").value = doc.category || "";
       document.getElementById("edit-tags").value = (doc.tags || []).join(", ");
       document.getElementById("edit-source-ref").value = doc.source_ref || "";
-      document.getElementById("edit-modal").classList.add("open");
+      document.getElementById("edit-modal").classList.add("is-active");
     } catch (e) { console.error("Edit failed", e); }
   }
 
-  function closeMemEdit() { document.getElementById("edit-modal").classList.remove("open"); editingId = null; }
+  function closeMemEdit() { document.getElementById("edit-modal").classList.remove("is-active"); editingId = null; }
 
   document.getElementById("edit-cancel")?.addEventListener("click", closeMemEdit);
-  document.querySelector(".modal-close")?.addEventListener("click", closeMemEdit);
-  document.getElementById("edit-modal")?.addEventListener("click", (e) => { if (e.target.classList.contains("modal")) closeMemEdit(); });
+  document.querySelector(".modal-close-btn")?.addEventListener("click", closeMemEdit);
+  document.querySelector(".modal-background")?.addEventListener("click", closeMemEdit);
 
   document.getElementById("edit-save")?.addEventListener("click", async () => {
     if (!editingId) return;

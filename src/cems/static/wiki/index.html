@@ -1,9 +1,10 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>CEMS Knowledge Engine</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bulma@1.0.4/css/bulma.min.css">
   <link rel="stylesheet" href="style.css">
   <script src="https://cdn.jsdelivr.net/npm/d3@7.9.0/dist/d3.min.js" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/marked@15.0.4/marked.min.js" crossorigin="anonymous"></script>
@@ -12,211 +13,232 @@
   <div id="app">
     <!-- Login -->
     <div id="login-view">
-      <div class="login-card">
-        <h1>CEMS</h1>
-        <p>Knowledge Engine</p>
-        <form id="login-form">
-          <input type="password" id="api-key-input" placeholder="API key" autocomplete="off" required>
-          <button type="submit">Connect</button>
-        </form>
-        <p id="login-error" class="error" hidden></p>
-      </div>
+      <section class="hero is-fullheight">
+        <div class="hero-body">
+          <div class="container">
+            <div class="columns is-centered">
+              <div class="column is-4">
+                <div class="box has-text-centered">
+                  <h1 class="title is-3">CEMS</h1>
+                  <p class="subtitle is-6 has-text-grey">Knowledge Engine</p>
+                  <form id="login-form">
+                    <div class="field">
+                      <div class="control">
+                        <input class="input" type="password" id="api-key-input" placeholder="API key" autocomplete="off" required>
+                      </div>
+                    </div>
+                    <div class="field">
+                      <div class="control">
+                        <button class="button is-link is-fullwidth" type="submit">Connect</button>
+                      </div>
+                    </div>
+                  </form>
+                  <p id="login-error" class="help is-danger" hidden></p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
     </div>
 
-    <!-- Main Layout: Sidebar + Content -->
+    <!-- Main Layout -->
     <div id="main-layout">
-      <!-- Left Sidebar -->
-      <nav id="sidebar">
-        <div class="sidebar-brand">
-          <h2>CEMS</h2>
-          <span id="health-badge" class="badge badge-good">--</span>
-        </div>
-
-        <div class="sidebar-nav">
-          <button class="nav-item active" data-view="wiki">
-            <span class="nav-icon">&#128214;</span> Wiki
-          </button>
-          <button class="nav-item" data-view="memories">
-            <span class="nav-icon">&#128466;</span> Memories
-          </button>
-          <button class="nav-item" data-view="graph">
-            <span class="nav-icon">&#127760;</span> Graph
-          </button>
-          <button class="nav-item" data-view="stats">
-            <span class="nav-icon">&#128202;</span> Stats
-          </button>
-          <button class="nav-item" data-view="health">
-            <span class="nav-icon">&#129657;</span> Health
-          </button>
-        </div>
-
-        <div class="sidebar-footer">
-          <button id="logout-btn" class="nav-item nav-logout">Logout</button>
-        </div>
-      </nav>
-
-      <!-- Content Area -->
-      <main id="content">
-
-        <!-- Wiki View (entity pages — landing) -->
-        <section id="view-wiki" class="content-view">
-          <div class="wiki-layout">
-            <aside id="wiki-sidebar">
-              <div class="sidebar-header"><h3>Topics</h3></div>
-              <div id="sidebar-search">
-                <input type="text" id="entity-search" placeholder="Filter topics...">
-              </div>
-              <div id="entity-nav-list"></div>
-              <p id="entities-empty" class="empty-msg" hidden>No entity pages yet. The scheduler will compile them automatically.</p>
+      <div class="columns is-gapless" style="min-height:100vh">
+        <!-- Sidebar -->
+        <aside id="sidebar" class="column is-2 sidebar-col">
+          <div class="p-4">
+            <div class="is-flex is-align-items-center is-justify-content-space-between mb-4">
+              <h2 class="title is-5 mb-0">CEMS</h2>
+              <span id="health-badge" class="tag is-success is-light">--</span>
+            </div>
+            <aside class="menu">
+              <ul class="menu-list">
+                <li><a class="nav-link is-active" data-view="wiki"><span class="icon-text"><span>📖</span><span>Wiki</span></span></a></li>
+                <li><a class="nav-link" data-view="memories"><span class="icon-text"><span>🗒️</span><span>Memories</span></span></a></li>
+                <li><a class="nav-link" data-view="graph"><span class="icon-text"><span>🌐</span><span>Graph</span></span></a></li>
+                <li><a class="nav-link" data-view="stats"><span class="icon-text"><span>📊</span><span>Stats</span></span></a></li>
+                <li><a class="nav-link" data-view="health"><span class="icon-text"><span>🩹</span><span>Health</span></span></a></li>
+              </ul>
             </aside>
-            <div id="wiki-article">
-              <div id="article-placeholder" class="empty-msg">Select a topic from the sidebar.</div>
-              <div id="article-content" hidden>
-                <div id="article-header">
-                  <h1 id="article-title"></h1>
-                  <div id="article-meta"></div>
-                  <div id="article-heat-bar"></div>
+          </div>
+          <div class="p-4" style="margin-top:auto">
+            <button id="logout-btn" class="button is-small is-fullwidth is-light">Logout</button>
+          </div>
+        </aside>
+
+        <!-- Content -->
+        <main id="content" class="column">
+
+          <!-- Wiki View -->
+          <section id="view-wiki" class="content-view p-4">
+            <div class="columns is-gapless" style="min-height:calc(100vh - 2rem)">
+              <aside class="column is-3 wiki-sidebar-col">
+                <div class="p-3">
+                  <p class="menu-label">Topics</p>
+                  <div class="field mb-3">
+                    <div class="control">
+                      <input class="input is-small" type="text" id="entity-search" placeholder="Filter topics...">
+                    </div>
+                  </div>
+                  <div id="entity-nav-list" class="menu-list"></div>
+                  <p id="entities-empty" class="has-text-grey is-size-7 has-text-centered mt-4" hidden>No entity pages yet.</p>
                 </div>
-                <div id="article-body"></div>
-                <div id="article-related-entities"></div>
-                <div id="article-sources">
-                  <h3>Source Memories</h3>
-                  <div id="source-memories-list"></div>
-                </div>
-                <div id="article-timeline" hidden>
-                  <h3>Timeline <button id="btn-toggle-timeline" class="tool-btn">Show</button></h3>
-                  <div id="timeline-list"></div>
+              </aside>
+              <div id="wiki-article" class="column p-5">
+                <div id="article-placeholder" class="has-text-grey has-text-centered" style="padding-top:4rem">Select a topic from the sidebar.</div>
+                <div id="article-content" hidden>
+                  <div id="article-header" class="mb-5 pb-4" style="border-bottom:1px solid var(--bulma-border-weak)">
+                    <h1 id="article-title" class="title is-3"></h1>
+                    <p id="article-meta" class="subtitle is-6 has-text-grey"></p>
+                    <progress id="article-heat-bar" class="progress is-small is-info" value="0" max="100"></progress>
+                  </div>
+                  <div id="article-body" class="content"></div>
+                  <div id="article-related-entities" class="mt-5 pt-4" style="border-top:1px solid var(--bulma-border-weak)" hidden></div>
+                  <div id="article-sources" class="mt-5 pt-4" style="border-top:1px solid var(--bulma-border-weak)">
+                    <h3 class="title is-5">Source Memories</h3>
+                    <div id="source-memories-list"></div>
+                  </div>
+                  <div id="article-timeline" class="mt-5 pt-4" style="border-top:1px solid var(--bulma-border-weak)" hidden>
+                    <h3 class="title is-5">Timeline <button id="btn-toggle-timeline" class="button is-small is-light ml-2">Show</button></h3>
+                    <div id="timeline-list"></div>
+                  </div>
                 </div>
               </div>
             </div>
-          </div>
-        </section>
+          </section>
 
-        <!-- Memories View (flat list — ported from /dashboard) -->
-        <section id="view-memories" class="content-view">
-          <div class="memories-header">
-            <h2>All Memories</h2>
-            <div class="memories-controls">
-              <input type="search" id="memory-search" placeholder="Search memories...">
-              <div class="scope-toggle">
-                <button class="scope-btn active" data-scope="">All</button>
-                <button class="scope-btn" data-scope="personal">Personal</button>
-                <button class="scope-btn" data-scope="shared">Team</button>
+          <!-- Memories View -->
+          <section id="view-memories" class="content-view p-5">
+            <div class="level mb-4">
+              <div class="level-left">
+                <div class="level-item"><h2 class="title is-4 mb-0">All Memories</h2></div>
+              </div>
+              <div class="level-right">
+                <div class="level-item">
+                  <div class="field"><div class="control"><input class="input is-small" type="search" id="memory-search" placeholder="Search memories..."></div></div>
+                </div>
+                <div class="level-item">
+                  <div class="buttons has-addons">
+                    <button class="button is-small scope-btn is-active" data-scope="">All</button>
+                    <button class="button is-small scope-btn" data-scope="personal">Personal</button>
+                    <button class="button is-small scope-btn" data-scope="shared">Team</button>
+                  </div>
+                </div>
               </div>
             </div>
-          </div>
-          <div id="memory-filters"></div>
-          <div id="memory-list"></div>
-          <div id="memory-pagination" hidden>
-            <button id="prev-btn" disabled>Previous</button>
-            <span id="page-info"></span>
-            <button id="next-btn" disabled>Next</button>
-          </div>
-        </section>
+            <div id="memory-filters" class="tags mb-4"></div>
+            <div id="memory-list"></div>
+            <nav id="memory-pagination" class="pagination is-small is-centered mt-4" hidden>
+              <button id="prev-btn" class="pagination-previous" disabled>Previous</button>
+              <button id="next-btn" class="pagination-next" disabled>Next</button>
+              <ul class="pagination-list"><li><span id="page-info" class="pagination-link"></span></li></ul>
+            </nav>
+          </section>
 
-        <!-- Graph View -->
-        <section id="view-graph" class="content-view">
-          <div id="graph-toolbar">
-            <span id="graph-info">Loading graph...</span>
-            <div class="toolbar-right">
-              <select id="graph-filter-heat" class="tool-select">
-                <option value="">All heat</option>
-                <option value="hot">Hot (20+)</option>
-                <option value="warm">Warm (5-19)</option>
-                <option value="cool">Cool (1-4)</option>
-                <option value="cold">Cold (0)</option>
-              </select>
-              <select id="graph-filter-cat" class="tool-select">
-                <option value="">All categories</option>
-              </select>
-              <button id="btn-recenter" class="tool-btn">Reset</button>
+          <!-- Graph View -->
+          <section id="view-graph" class="content-view p-4">
+            <div class="level mb-2">
+              <div class="level-left"><div class="level-item"><span id="graph-info" class="has-text-grey is-size-7">Loading...</span></div></div>
+              <div class="level-right">
+                <div class="level-item"><div class="select is-small"><select id="graph-filter-heat"><option value="">All heat</option><option value="hot">Hot</option><option value="warm">Warm</option><option value="cool">Cool</option><option value="cold">Cold</option></select></div></div>
+                <div class="level-item"><div class="select is-small"><select id="graph-filter-cat"><option value="">All categories</option></select></div></div>
+                <div class="level-item"><button id="btn-recenter" class="button is-small is-light">Reset</button></div>
+              </div>
+            </div>
+            <div id="graph-legend" class="tags mb-2">
+              <span class="tag is-danger is-light">Hot</span>
+              <span class="tag is-warning is-light">Warm</span>
+              <span class="tag is-info is-light">Cool</span>
+              <span class="tag is-light">Cold</span>
+            </div>
+            <svg id="graph-svg"></svg>
+          </section>
+
+          <!-- Stats View -->
+          <section id="view-stats" class="content-view p-5">
+            <h2 class="title is-4">Statistics</h2>
+            <div class="columns is-multiline mb-5">
+              <div class="column is-2"><div class="box has-text-centered"><p class="title is-3 has-text-link" id="stat-total">--</p><p class="heading">Memories</p></div></div>
+              <div class="column is-2"><div class="box has-text-centered"><p class="title is-3 has-text-link" id="stat-relations">--</p><p class="heading">Relations</p></div></div>
+              <div class="column is-2"><div class="box has-text-centered"><p class="title is-3 has-text-link" id="stat-connected">--</p><p class="heading">Connected</p></div></div>
+              <div class="column is-2"><div class="box has-text-centered"><p class="title is-3 has-text-link" id="stat-orphans">--</p><p class="heading">Orphans</p></div></div>
+              <div class="column is-2"><div class="box has-text-centered"><p class="title is-3 has-text-link" id="stat-conflicts">--</p><p class="heading">Conflicts</p></div></div>
+              <div class="column is-2"><div class="box has-text-centered"><p class="title is-3 has-text-link" id="stat-avg-rel">--</p><p class="heading">Avg Rels</p></div></div>
+            </div>
+            <div class="columns">
+              <div class="column"><div class="box"><h3 class="title is-6">Heat Distribution</h3><div id="heat-bars"></div></div></div>
+              <div class="column"><div class="box"><h3 class="title is-6">Categories</h3><div id="category-bars"></div></div></div>
+            </div>
+          </section>
+
+          <!-- Health View -->
+          <section id="view-health" class="content-view p-5">
+            <h2 class="title is-4">Knowledge Health</h2>
+            <div id="lint-report" hidden><div id="lint-stats" class="columns is-multiline mb-4"></div></div>
+            <div id="gaps-section" hidden>
+              <h3 class="title is-5 mt-5">Knowledge Gaps</h3>
+              <div id="gaps-list"></div>
+            </div>
+            <div id="orphans-section" hidden>
+              <h3 class="title is-5 mt-5">Top Orphan Memories</h3>
+              <div id="orphans-list"></div>
+            </div>
+            <h3 class="title is-5 mt-5">Open Conflicts</h3>
+            <div id="conflicts-list"></div>
+            <p id="conflicts-empty" class="has-text-grey is-size-7" hidden>No open conflicts.</p>
+          </section>
+
+          <!-- Detail Panel -->
+          <div id="detail-panel" class="detail-panel-overlay" hidden>
+            <div class="box">
+              <div class="is-flex is-justify-content-space-between is-align-items-center mb-3">
+                <h2 id="detail-title" class="title is-5 mb-0"></h2>
+                <button id="detail-close" class="delete is-medium"></button>
+              </div>
+              <div id="detail-content"></div>
+              <div id="detail-relations" class="mt-4"></div>
             </div>
           </div>
-          <div id="graph-legend">
-            <span class="legend-item"><span class="legend-dot" style="background:var(--hot)"></span>Hot</span>
-            <span class="legend-item"><span class="legend-dot" style="background:var(--warm)"></span>Warm</span>
-            <span class="legend-item"><span class="legend-dot" style="background:var(--cool)"></span>Cool</span>
-            <span class="legend-item"><span class="legend-dot" style="background:var(--cold)"></span>Cold</span>
-          </div>
-          <svg id="graph-svg"></svg>
-        </section>
-
-        <!-- Stats View -->
-        <section id="view-stats" class="content-view">
-          <h2>Statistics</h2>
-          <div class="stat-cards">
-            <div class="stat-card"><div class="stat-value" id="stat-total">--</div><div class="stat-label">Memories</div></div>
-            <div class="stat-card"><div class="stat-value" id="stat-relations">--</div><div class="stat-label">Relations</div></div>
-            <div class="stat-card"><div class="stat-value" id="stat-connected">--</div><div class="stat-label">Connected</div></div>
-            <div class="stat-card"><div class="stat-value" id="stat-orphans">--</div><div class="stat-label">Orphans</div></div>
-            <div class="stat-card"><div class="stat-value" id="stat-conflicts">--</div><div class="stat-label">Conflicts</div></div>
-            <div class="stat-card"><div class="stat-value" id="stat-avg-rel">--</div><div class="stat-label">Avg Relations</div></div>
-          </div>
-          <div class="stat-sections">
-            <div class="stat-section"><h3>Heat Distribution</h3><div id="heat-bars"></div></div>
-            <div class="stat-section"><h3>Categories</h3><div id="category-bars"></div></div>
-          </div>
-        </section>
-
-        <!-- Health View -->
-        <section id="view-health" class="content-view">
-          <h2>Knowledge Health</h2>
-          <div id="lint-report" hidden><div id="lint-stats" class="stat-cards"></div></div>
-          <div id="gaps-section" hidden>
-            <h3 class="section-title">Knowledge Gaps</h3>
-            <div id="gaps-list"></div>
-          </div>
-          <div id="orphans-section" hidden>
-            <h3 class="section-title">Top Orphan Memories</h3>
-            <div id="orphans-list"></div>
-          </div>
-          <h3 class="section-title">Open Conflicts</h3>
-          <div id="conflicts-list"></div>
-          <p id="conflicts-empty" class="empty-msg" hidden>No open conflicts.</p>
-        </section>
-
-        <!-- Detail Panel (overlay) -->
-        <div id="detail-panel" hidden>
-          <div class="detail-header">
-            <h2 id="detail-title">Memory Details</h2>
-            <button id="detail-close">&times;</button>
-          </div>
-          <div id="detail-content"></div>
-          <div id="detail-relations"></div>
-        </div>
-      </main>
+        </main>
+      </div>
     </div>
 
     <!-- Edit Modal -->
     <div id="edit-modal" class="modal">
-      <div class="modal-content">
-        <div class="modal-header">
-          <h2>Edit Memory</h2>
-          <button class="modal-close">&times;</button>
-        </div>
-        <textarea id="edit-textarea"></textarea>
-        <div class="edit-meta-fields">
-          <div class="field-row">
-            <label for="edit-category">Category</label>
-            <input type="text" id="edit-category" placeholder="e.g. testing, debugging">
+      <div class="modal-background"></div>
+      <div class="modal-card">
+        <header class="modal-card-head">
+          <p class="modal-card-title">Edit Memory</p>
+          <button class="delete modal-close-btn" aria-label="close"></button>
+        </header>
+        <section class="modal-card-body">
+          <div class="field">
+            <label class="label">Content</label>
+            <div class="control"><textarea id="edit-textarea" class="textarea" rows="8"></textarea></div>
           </div>
-          <div class="field-row">
-            <label for="edit-tags">Tags</label>
-            <input type="text" id="edit-tags" placeholder="comma-separated tags">
+          <div class="columns">
+            <div class="column">
+              <div class="field"><label class="label is-small">Category</label><div class="control"><input class="input is-small" type="text" id="edit-category" placeholder="e.g. testing"></div></div>
+            </div>
+            <div class="column">
+              <div class="field"><label class="label is-small">Tags</label><div class="control"><input class="input is-small" type="text" id="edit-tags" placeholder="comma-separated"></div></div>
+            </div>
+            <div class="column">
+              <div class="field"><label class="label is-small">Source Ref</label><div class="control"><input class="input is-small" type="text" id="edit-source-ref" placeholder="project:org/repo"></div></div>
+            </div>
           </div>
-          <div class="field-row">
-            <label for="edit-source-ref">Source Ref</label>
-            <input type="text" id="edit-source-ref" placeholder="e.g. project:org/repo">
+        </section>
+        <footer class="modal-card-foot">
+          <div class="buttons">
+            <button id="edit-save" class="button is-link">Save</button>
+            <button id="edit-cancel" class="button">Cancel</button>
           </div>
-        </div>
-        <div class="modal-actions">
-          <button id="edit-cancel" class="btn-secondary">Cancel</button>
-          <button id="edit-save" class="btn-primary">Save</button>
-        </div>
+        </footer>
       </div>
     </div>
 
-    <!-- Toast container -->
+    <!-- Toast -->
     <div id="toast-container"></div>
   </div>
   <script src="app.js"></script>
