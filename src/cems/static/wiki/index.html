@@ -69,7 +69,7 @@
         <!-- Panel: Wiki Entity Browser (shown when Wiki is active) -->
         <div id="sidebar-wiki" class="hidden flex-col h-full">
           <div class="p-3 border-b border-gray-800">
-            <button id="sidebar-back" class="flex items-center gap-2 text-sm text-gray-400 hover:text-gray-200 transition-colors mb-3">
+            <button id="sidebar-back" class="flex items-center gap-2 text-sm text-gray-400 hover:text-gray-200 transition-colors mb-3 cursor-pointer">
               <i data-lucide="arrow-left" class="w-4 h-4"></i><span>Back</span>
             </button>
             <input class="w-full bg-gray-800 border border-gray-700 text-gray-100 text-sm rounded-lg px-3 py-2 placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent" type="text" id="entity-search" placeholder="Search topics...">
@@ -163,40 +163,40 @@
         <!-- Stats View -->
         <section id="view-stats" class="content-view p-6">
           <h2 class="text-xl font-bold mb-5">Statistics</h2>
-          <div class="grid grid-cols-6 gap-4 mb-6">
-            <div class="bg-gray-900 border border-gray-800 rounded-lg p-4 text-center">
-              <p class="text-2xl font-bold text-blue-400" id="stat-total">--</p>
-              <p class="text-xs text-gray-500 uppercase tracking-wider mt-1">Memories</p>
+          <div class="grid grid-cols-3 gap-4 mb-6">
+            <div class="bg-gray-900 border border-gray-800 rounded-xl p-5 text-center">
+              <p class="text-3xl font-bold text-blue-400" id="stat-total">--</p>
+              <p class="text-xs text-gray-500 uppercase tracking-wider mt-2">Memories</p>
             </div>
-            <div class="bg-gray-900 border border-gray-800 rounded-lg p-4 text-center">
-              <p class="text-2xl font-bold text-blue-400" id="stat-relations">--</p>
-              <p class="text-xs text-gray-500 uppercase tracking-wider mt-1">Relations</p>
+            <div class="bg-gray-900 border border-gray-800 rounded-xl p-5 text-center">
+              <p class="text-3xl font-bold text-blue-400" id="stat-relations">--</p>
+              <p class="text-xs text-gray-500 uppercase tracking-wider mt-2">Relations</p>
             </div>
-            <div class="bg-gray-900 border border-gray-800 rounded-lg p-4 text-center">
-              <p class="text-2xl font-bold text-blue-400" id="stat-connected">--</p>
-              <p class="text-xs text-gray-500 uppercase tracking-wider mt-1">Connected</p>
+            <div class="bg-gray-900 border border-gray-800 rounded-xl p-5 text-center">
+              <p class="text-3xl font-bold text-blue-400" id="stat-connected">--</p>
+              <p class="text-xs text-gray-500 uppercase tracking-wider mt-2">Connected</p>
             </div>
-            <div class="bg-gray-900 border border-gray-800 rounded-lg p-4 text-center">
-              <p class="text-2xl font-bold text-blue-400" id="stat-orphans">--</p>
-              <p class="text-xs text-gray-500 uppercase tracking-wider mt-1">Orphans</p>
+            <div class="bg-gray-900 border border-gray-800 rounded-xl p-5 text-center">
+              <p class="text-3xl font-bold text-amber-400" id="stat-orphans">--</p>
+              <p class="text-xs text-gray-500 uppercase tracking-wider mt-2">Orphans</p>
             </div>
-            <div class="bg-gray-900 border border-gray-800 rounded-lg p-4 text-center">
-              <p class="text-2xl font-bold text-blue-400" id="stat-conflicts">--</p>
-              <p class="text-xs text-gray-500 uppercase tracking-wider mt-1">Conflicts</p>
+            <div class="bg-gray-900 border border-gray-800 rounded-xl p-5 text-center">
+              <p class="text-3xl font-bold text-red-400" id="stat-conflicts">--</p>
+              <p class="text-xs text-gray-500 uppercase tracking-wider mt-2">Conflicts</p>
             </div>
-            <div class="bg-gray-900 border border-gray-800 rounded-lg p-4 text-center">
-              <p class="text-2xl font-bold text-blue-400" id="stat-avg-rel">--</p>
-              <p class="text-xs text-gray-500 uppercase tracking-wider mt-1">Avg Rels</p>
+            <div class="bg-gray-900 border border-gray-800 rounded-xl p-5 text-center">
+              <p class="text-3xl font-bold text-green-400" id="stat-avg-rel">--</p>
+              <p class="text-xs text-gray-500 uppercase tracking-wider mt-2">Avg Rels</p>
             </div>
           </div>
           <div class="grid grid-cols-2 gap-6">
-            <div class="bg-gray-900 border border-gray-800 rounded-lg p-5">
-              <h3 class="text-sm font-semibold text-gray-300 mb-3">Heat Distribution</h3>
-              <div id="heat-bars" class="space-y-2"></div>
+            <div class="bg-gray-900 border border-gray-800 rounded-xl p-6">
+              <h3 class="text-sm font-semibold text-gray-300 mb-4">Heat Distribution</h3>
+              <div id="heat-bars" class="space-y-3"></div>
             </div>
-            <div class="bg-gray-900 border border-gray-800 rounded-lg p-5">
-              <h3 class="text-sm font-semibold text-gray-300 mb-3">Categories</h3>
-              <div id="category-bars" class="space-y-2"></div>
+            <div class="bg-gray-900 border border-gray-800 rounded-xl p-6">
+              <h3 class="text-sm font-semibold text-gray-300 mb-4">Categories</h3>
+              <div id="category-bars" class="space-y-3"></div>
             </div>
           </div>
         </section>
@@ -205,7 +205,7 @@
         <section id="view-health" class="content-view p-6">
           <h2 class="text-xl font-bold mb-5">Knowledge Health</h2>
           <div id="lint-report" hidden>
-            <div id="lint-stats" class="grid grid-cols-4 gap-4 mb-6"></div>
+            <div id="lint-stats" class="grid grid-cols-4 gap-4 mb-8"></div>
           </div>
           <div id="gaps-section" hidden>
             <h3 class="text-lg font-semibold mt-6 mb-3">Knowledge Gaps</h3>

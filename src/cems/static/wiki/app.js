@@ -346,11 +346,21 @@
     node.append("title")
       .text((d) => d.title || d.id.slice(0, 8));
 
-    // Labels for hot nodes only (reduce clutter)
+    // Labels for hot/warm nodes (reduce clutter)
     node.filter((d) => (d.shown_count || 0) >= 5)
       .append("text")
       .attr("dy", (d) => getNodeRadius(d) + 12)
-      .text((d) => (d.title || d.category || "").slice(0, 20));
+      .text((d) => {
+        // Show project + category instead of raw title/session tag
+        const proj = (d.source_ref || "").replace("project:", "").split("/").pop();
+        const cat = d.category || "";
+        if (proj) return `${proj}: ${cat}`.slice(0, 25);
+        return (d.title || cat).slice(0, 25);
+      });
+
+    // Start zoomed out to show more of the graph
+    const initialScale = Math.min(1, Math.max(0.3, 50 / Math.sqrt(d3Nodes.length)));
+    svg.call(zoom.transform, d3.zoomIdentity.translate(width / 2, height / 2).scale(initialScale).translate(-width / 2, -height / 2));
 
     simulation.on("tick", () => {
       link
@@ -457,10 +467,7 @@
       // Auto-select first entity and mark it active
       if (allEntities.length > 0) {
         const firstNav = document.querySelector(".wiki-topic");
-        if (firstNav) {
-          firstNav.classList.add("bg-blue-600", "text-white");
-          firstNav.classList.remove("text-gray-300", "hover:bg-gray-800");
-        }
+        if (firstNav) firstNav.classList.add("bg-blue-600/20", "!border-l-blue-400");
         loadEntityArticle(allEntities[0].id);
       }
     } catch (e) {
@@ -474,11 +481,11 @@
       const shown = Number(e.shown_count) || 0;
       const heatColor = shown >= 20 ? "#ef4444" : shown >= 5 ? "#f59e0b" : shown >= 1 ? "#3b82f6" : "#6b7280";
       const project = (e.source_ref || "").replace("project:", "").split("/").pop() || "";
-      return `<a class="wiki-topic flex items-center gap-2 px-2 py-1.5 rounded text-sm text-gray-300 hover:bg-gray-800 cursor-pointer transition-colors" data-id="${escapeHtml(e.id)}">
-          <span class="flex-shrink-0 w-2 h-2 rounded-full" style="background:${heatColor}"></span>
-          <span class="truncate">
-            ${escapeHtml(e.title || "Untitled")}
-            ${project ? `<span class="text-gray-500 text-xs block">${escapeHtml(project)}</span>` : ""}
+      const heatBorder = shown >= 20 ? "border-red-500" : shown >= 5 ? "border-amber-500" : shown >= 1 ? "border-blue-500" : "border-gray-600";
+      return `<a class="wiki-topic flex items-start gap-2.5 px-3 py-2.5 rounded-lg text-sm text-gray-300 hover:bg-gray-800 cursor-pointer transition-colors border-l-2 ${heatBorder}" data-id="${escapeHtml(e.id)}">
+          <span class="min-w-0">
+            <span class="block text-gray-200 leading-snug">${escapeHtml(e.title || "Untitled")}</span>
+            ${project ? `<span class="text-gray-500 text-xs">${escapeHtml(project)}</span>` : ""}
           </span>
       </a>`;
     }).join("");
@@ -488,11 +495,9 @@
       item.addEventListener("click", (e) => {
         e.preventDefault();
         navList.querySelectorAll(".wiki-topic").forEach((i) => {
-          i.classList.remove("bg-blue-600", "text-white");
-          i.classList.add("text-gray-300", "hover:bg-gray-800");
+          i.classList.remove("bg-blue-600/20", "!border-l-blue-400");
         });
-        item.classList.add("bg-blue-600", "text-white");
-        item.classList.remove("text-gray-300", "hover:bg-gray-800");
+        item.classList.add("bg-blue-600/20", "!border-l-blue-400");
         loadEntityArticle(item.dataset.id);
       });
     });
@@ -558,11 +563,8 @@
             loadEntityArticle(link.dataset.id);
             // Update sidebar active state
             document.querySelectorAll(".wiki-topic").forEach((i) => {
-              const match = i.dataset.id === link.dataset.id;
-              i.classList.toggle("bg-blue-600", match);
-              i.classList.toggle("text-white", match);
-              i.classList.toggle("text-gray-300", !match);
-              i.classList.toggle("hover:bg-gray-800", !match);
+              i.classList.remove("bg-blue-600/20", "!border-l-blue-400");
+              if (i.dataset.id === link.dataset.id) i.classList.add("bg-blue-600/20", "!border-l-blue-400");
             });
           });
         });
@@ -768,11 +770,12 @@
       const data = await apiFetch("/api/wiki/stats");
       if (!data.success) return;
       const s = data.stats;
-      const statCard = (val, label) => `<div class="bg-gray-900 border border-gray-800 rounded-lg p-4 text-center"><p class="text-xl font-bold text-blue-400">${val}</p><p class="text-xs text-gray-500 uppercase tracking-wider mt-1">${label}</p></div>`;
-      statsEl.innerHTML = statCard(s.health_score, "Health Score") +
-        statCard(s.open_conflicts, "Open Conflicts") +
-        statCard(s.orphan_memories, "Orphans") +
-        statCard(`${s.connected_memories}/${s.total_memories}`, "Connected");
+      const hsc = (val, label, color) => `<div class="bg-gray-900 border border-gray-800 rounded-xl p-5 text-center"><p class="text-2xl font-bold ${color}">${val}</p><p class="text-xs text-gray-500 uppercase tracking-wider mt-2">${label}</p></div>`;
+      const scoreColor = s.health_score >= 80 ? "text-green-400" : s.health_score >= 50 ? "text-amber-400" : "text-red-400";
+      statsEl.innerHTML = hsc(s.health_score, "Health Score", scoreColor) +
+        hsc(s.open_conflicts, "Open Conflicts", s.open_conflicts > 0 ? "text-red-400" : "text-green-400") +
+        hsc(s.orphan_memories, "Orphans", "text-amber-400") +
+        hsc(`${s.connected_memories}/${s.total_memories}`, "Connected", "text-blue-400");
     } catch (e) { console.error("Lint stats failed:", e); }
   }
 
@@ -920,10 +923,10 @@
           ${shown ? `<span>${shown}</span>` : ""}
         </div>
         <div class="memory-content text-sm text-gray-300 leading-relaxed whitespace-pre-wrap break-words ${isShort ? "short" : ""}">${content}</div>
-        <div class="flex gap-3 mt-3">
-          <button class="btn-expand text-xs text-gray-500 hover:text-gray-300 transition-colors" data-id="${escapeHtml(m.id)}">Expand</button>
-          <button class="btn-edit text-xs text-gray-500 hover:text-blue-400 transition-colors" data-id="${escapeHtml(m.id)}">Edit</button>
-          <button class="btn-delete text-xs text-gray-500 hover:text-red-400 transition-colors" data-id="${escapeHtml(m.id)}">Delete</button>
+        <div class="flex gap-2 mt-3">
+          <button class="btn-expand text-xs bg-gray-800 hover:bg-gray-700 text-gray-400 hover:text-gray-200 px-2.5 py-1 rounded cursor-pointer transition-colors" data-id="${escapeHtml(m.id)}">Expand</button>
+          <button class="btn-edit text-xs bg-gray-800 hover:bg-gray-700 text-gray-400 hover:text-blue-400 px-2.5 py-1 rounded cursor-pointer transition-colors" data-id="${escapeHtml(m.id)}">Edit</button>
+          <button class="btn-delete text-xs bg-gray-800 hover:bg-gray-700 text-gray-400 hover:text-red-400 px-2.5 py-1 rounded cursor-pointer transition-colors" data-id="${escapeHtml(m.id)}">Delete</button>
         </div>
       </div>`;
     }).join("");
