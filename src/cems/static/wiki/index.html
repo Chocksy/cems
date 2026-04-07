@@ -11,183 +11,213 @@
 <body>
   <div id="app">
     <!-- Login -->
-    <div id="login-view" class="view">
+    <div id="login-view">
       <div class="login-card">
-        <h1>Knowledge Engine</h1>
-        <p>Enter your API key to explore the knowledge graph.</p>
+        <h1>CEMS</h1>
+        <p>Knowledge Engine</p>
         <form id="login-form">
-          <input type="password" id="api-key-input" placeholder="Bearer API key" autocomplete="off" required>
+          <input type="password" id="api-key-input" placeholder="API key" autocomplete="off" required>
           <button type="submit">Connect</button>
         </form>
         <p id="login-error" class="error" hidden></p>
       </div>
     </div>
 
-    <!-- Dashboard -->
-    <div id="dashboard-view" class="view" hidden>
-      <header>
-        <div class="header-left">
-          <h1>Knowledge Engine</h1>
-          <span id="health-badge" class="badge">--</span>
-          <div class="view-toggle">
-            <button class="toggle-btn active" data-view="graph">Graph</button>
-            <button class="toggle-btn" data-view="stats">Stats</button>
-            <button class="toggle-btn" data-view="entities">Wiki</button>
-            <button class="toggle-btn" data-view="lint">Health</button>
-          </div>
-        </div>
-        <div class="header-right">
-          <a href="/dashboard" class="nav-link">Memories</a>
-          <button id="logout-btn" title="Logout">Logout</button>
-        </div>
-      </header>
-
-      <!-- Stats Panel -->
-      <div id="stats-panel">
-        <div class="stat-cards">
-          <div class="stat-card">
-            <div class="stat-value" id="stat-total">--</div>
-            <div class="stat-label">Memories</div>
-          </div>
-          <div class="stat-card">
-            <div class="stat-value" id="stat-relations">--</div>
-            <div class="stat-label">Relations</div>
-          </div>
-          <div class="stat-card">
-            <div class="stat-value" id="stat-connected">--</div>
-            <div class="stat-label">Connected</div>
-          </div>
-          <div class="stat-card">
-            <div class="stat-value" id="stat-orphans">--</div>
-            <div class="stat-label">Orphans</div>
-          </div>
-          <div class="stat-card">
-            <div class="stat-value" id="stat-conflicts">--</div>
-            <div class="stat-label">Conflicts</div>
-          </div>
-          <div class="stat-card">
-            <div class="stat-value" id="stat-avg-rel">--</div>
-            <div class="stat-label">Avg Relations</div>
-          </div>
+    <!-- Main Layout: Sidebar + Content -->
+    <div id="main-layout" hidden>
+      <!-- Left Sidebar -->
+      <nav id="sidebar">
+        <div class="sidebar-brand">
+          <h2>CEMS</h2>
+          <span id="health-badge" class="badge badge-good">--</span>
         </div>
 
-        <div class="stat-sections">
-          <div class="stat-section">
-            <h3>Heat Distribution</h3>
-            <div id="heat-bars"></div>
-          </div>
-          <div class="stat-section">
-            <h3>Categories</h3>
-            <div id="category-bars"></div>
-          </div>
+        <div class="sidebar-nav">
+          <button class="nav-item active" data-view="wiki">
+            <span class="nav-icon">&#128214;</span> Wiki
+          </button>
+          <button class="nav-item" data-view="memories">
+            <span class="nav-icon">&#128466;</span> Memories
+          </button>
+          <button class="nav-item" data-view="graph">
+            <span class="nav-icon">&#127760;</span> Graph
+          </button>
+          <button class="nav-item" data-view="stats">
+            <span class="nav-icon">&#128202;</span> Stats
+          </button>
+          <button class="nav-item" data-view="health">
+            <span class="nav-icon">&#129657;</span> Health
+          </button>
         </div>
-      </div>
 
-      <!-- Entities View (Wikipedia layout) -->
-      <div id="entities-view" class="panel-view" hidden>
-        <div class="wiki-layout">
-          <!-- Sidebar: entity list -->
-          <aside id="wiki-sidebar">
-            <div class="sidebar-header">
-              <h3>Topics</h3>
-            </div>
-            <div id="sidebar-search">
-              <input type="text" id="entity-search" placeholder="Filter topics...">
-            </div>
-            <div id="entity-nav-list"></div>
-            <p id="entities-empty" class="empty-msg" hidden>No entity pages yet.</p>
-          </aside>
+        <div class="sidebar-footer">
+          <button id="logout-btn" class="nav-item nav-logout">Logout</button>
+        </div>
+      </nav>
 
-          <!-- Main: article content -->
-          <main id="wiki-article">
-            <div id="article-placeholder" class="empty-msg">
-              Select a topic from the sidebar to view its knowledge page.
-            </div>
-            <div id="article-content" hidden>
-              <div id="article-header">
-                <h1 id="article-title"></h1>
-                <div id="article-meta"></div>
-                <div id="article-heat-bar"></div>
+      <!-- Content Area -->
+      <main id="content">
+
+        <!-- Wiki View (entity pages — landing) -->
+        <section id="view-wiki" class="content-view">
+          <div class="wiki-layout">
+            <aside id="wiki-sidebar">
+              <div class="sidebar-header"><h3>Topics</h3></div>
+              <div id="sidebar-search">
+                <input type="text" id="entity-search" placeholder="Filter topics...">
               </div>
-              <div id="article-body"></div>
-              <div id="article-related-entities"></div>
-              <div id="article-sources">
-                <h3>Source Memories</h3>
-                <div id="source-memories-list"></div>
-              </div>
-              <div id="article-timeline" hidden>
-                <h3>Timeline <button id="btn-toggle-timeline" class="tool-btn">Show</button></h3>
-                <div id="timeline-list"></div>
+              <div id="entity-nav-list"></div>
+              <p id="entities-empty" class="empty-msg" hidden>No entity pages yet. The scheduler will compile them automatically.</p>
+            </aside>
+            <div id="wiki-article">
+              <div id="article-placeholder" class="empty-msg">Select a topic from the sidebar.</div>
+              <div id="article-content" hidden>
+                <div id="article-header">
+                  <h1 id="article-title"></h1>
+                  <div id="article-meta"></div>
+                  <div id="article-heat-bar"></div>
+                </div>
+                <div id="article-body"></div>
+                <div id="article-related-entities"></div>
+                <div id="article-sources">
+                  <h3>Source Memories</h3>
+                  <div id="source-memories-list"></div>
+                </div>
+                <div id="article-timeline" hidden>
+                  <h3>Timeline <button id="btn-toggle-timeline" class="tool-btn">Show</button></h3>
+                  <div id="timeline-list"></div>
+                </div>
               </div>
             </div>
-          </main>
-        </div>
-      </div>
+          </div>
+        </section>
 
-      <!-- Lint / Health View -->
-      <div id="lint-view" class="panel-view" hidden>
-        <div class="panel-header">
+        <!-- Memories View (flat list — ported from /dashboard) -->
+        <section id="view-memories" class="content-view" hidden>
+          <div class="memories-header">
+            <h2>All Memories</h2>
+            <div class="memories-controls">
+              <input type="search" id="memory-search" placeholder="Search memories...">
+              <div class="scope-toggle">
+                <button class="scope-btn active" data-scope="">All</button>
+                <button class="scope-btn" data-scope="personal">Personal</button>
+                <button class="scope-btn" data-scope="shared">Team</button>
+              </div>
+            </div>
+          </div>
+          <div id="memory-filters"></div>
+          <div id="memory-list"></div>
+          <div id="memory-pagination" hidden>
+            <button id="prev-btn" disabled>Previous</button>
+            <span id="page-info"></span>
+            <button id="next-btn" disabled>Next</button>
+          </div>
+        </section>
+
+        <!-- Graph View -->
+        <section id="view-graph" class="content-view" hidden>
+          <div id="graph-toolbar">
+            <span id="graph-info">Loading graph...</span>
+            <div class="toolbar-right">
+              <select id="graph-filter-heat" class="tool-select">
+                <option value="">All heat</option>
+                <option value="hot">Hot (20+)</option>
+                <option value="warm">Warm (5-19)</option>
+                <option value="cool">Cool (1-4)</option>
+                <option value="cold">Cold (0)</option>
+              </select>
+              <select id="graph-filter-cat" class="tool-select">
+                <option value="">All categories</option>
+              </select>
+              <button id="btn-recenter" class="tool-btn">Reset</button>
+            </div>
+          </div>
+          <div id="graph-legend">
+            <span class="legend-item"><span class="legend-dot" style="background:var(--hot)"></span>Hot</span>
+            <span class="legend-item"><span class="legend-dot" style="background:var(--warm)"></span>Warm</span>
+            <span class="legend-item"><span class="legend-dot" style="background:var(--cool)"></span>Cool</span>
+            <span class="legend-item"><span class="legend-dot" style="background:var(--cold)"></span>Cold</span>
+          </div>
+          <svg id="graph-svg"></svg>
+        </section>
+
+        <!-- Stats View -->
+        <section id="view-stats" class="content-view" hidden>
+          <h2>Statistics</h2>
+          <div class="stat-cards">
+            <div class="stat-card"><div class="stat-value" id="stat-total">--</div><div class="stat-label">Memories</div></div>
+            <div class="stat-card"><div class="stat-value" id="stat-relations">--</div><div class="stat-label">Relations</div></div>
+            <div class="stat-card"><div class="stat-value" id="stat-connected">--</div><div class="stat-label">Connected</div></div>
+            <div class="stat-card"><div class="stat-value" id="stat-orphans">--</div><div class="stat-label">Orphans</div></div>
+            <div class="stat-card"><div class="stat-value" id="stat-conflicts">--</div><div class="stat-label">Conflicts</div></div>
+            <div class="stat-card"><div class="stat-value" id="stat-avg-rel">--</div><div class="stat-label">Avg Relations</div></div>
+          </div>
+          <div class="stat-sections">
+            <div class="stat-section"><h3>Heat Distribution</h3><div id="heat-bars"></div></div>
+            <div class="stat-section"><h3>Categories</h3><div id="category-bars"></div></div>
+          </div>
+        </section>
+
+        <!-- Health View -->
+        <section id="view-health" class="content-view" hidden>
           <h2>Knowledge Health</h2>
-        </div>
-        <div id="lint-report" hidden>
-          <div id="lint-stats" class="stat-cards"></div>
-        </div>
+          <div id="lint-report" hidden><div id="lint-stats" class="stat-cards"></div></div>
+          <div id="gaps-section" hidden>
+            <h3 class="section-title">Knowledge Gaps</h3>
+            <div id="gaps-list"></div>
+          </div>
+          <div id="orphans-section" hidden>
+            <h3 class="section-title">Top Orphan Memories</h3>
+            <div id="orphans-list"></div>
+          </div>
+          <h3 class="section-title">Open Conflicts</h3>
+          <div id="conflicts-list"></div>
+          <p id="conflicts-empty" class="empty-msg" hidden>No open conflicts.</p>
+        </section>
 
-        <!-- Knowledge Gaps -->
-        <div id="gaps-section" hidden>
-          <h3 class="section-title">Knowledge Gaps</h3>
-          <div id="gaps-list"></div>
+        <!-- Detail Panel (overlay) -->
+        <div id="detail-panel" hidden>
+          <div class="detail-header">
+            <h2 id="detail-title">Memory Details</h2>
+            <button id="detail-close">&times;</button>
+          </div>
+          <div id="detail-content"></div>
+          <div id="detail-relations"></div>
         </div>
+      </main>
+    </div>
 
-        <!-- Top Orphans -->
-        <div id="orphans-section" hidden>
-          <h3 class="section-title">Top Orphan Memories (most shown, no connections)</h3>
-          <div id="orphans-list"></div>
+    <!-- Edit Modal -->
+    <div id="edit-modal" class="modal" hidden>
+      <div class="modal-content">
+        <div class="modal-header">
+          <h2>Edit Memory</h2>
+          <button class="modal-close">&times;</button>
         </div>
-
-        <!-- Conflicts -->
-        <h3 class="section-title">Open Conflicts</h3>
-        <div id="conflicts-list"></div>
-        <p id="conflicts-empty" class="empty-msg" hidden>No open conflicts.</p>
-      </div>
-
-      <!-- Graph View -->
-      <div id="graph-view">
-        <div id="graph-toolbar">
-          <span id="graph-info">Loading graph...</span>
-          <div class="toolbar-right">
-            <select id="graph-filter-heat" class="tool-select" title="Filter by heat">
-              <option value="">All heat</option>
-              <option value="hot">Hot (20+)</option>
-              <option value="warm">Warm (5-19)</option>
-              <option value="cool">Cool (1-4)</option>
-              <option value="cold">Cold (0)</option>
-            </select>
-            <select id="graph-filter-cat" class="tool-select" title="Filter by category">
-              <option value="">All categories</option>
-            </select>
-            <button id="btn-recenter" class="tool-btn" title="Recenter">Reset</button>
+        <textarea id="edit-textarea"></textarea>
+        <div class="edit-meta-fields">
+          <div class="field-row">
+            <label for="edit-category">Category</label>
+            <input type="text" id="edit-category" placeholder="e.g. testing, debugging">
+          </div>
+          <div class="field-row">
+            <label for="edit-tags">Tags</label>
+            <input type="text" id="edit-tags" placeholder="comma-separated tags">
+          </div>
+          <div class="field-row">
+            <label for="edit-source-ref">Source Ref</label>
+            <input type="text" id="edit-source-ref" placeholder="e.g. project:org/repo">
           </div>
         </div>
-        <div id="graph-legend">
-          <span class="legend-item"><span class="legend-dot" style="background:var(--hot)"></span>Hot</span>
-          <span class="legend-item"><span class="legend-dot" style="background:var(--warm)"></span>Warm</span>
-          <span class="legend-item"><span class="legend-dot" style="background:var(--cool)"></span>Cool</span>
-          <span class="legend-item"><span class="legend-dot" style="background:var(--cold)"></span>Cold</span>
+        <div class="modal-actions">
+          <button id="edit-cancel" class="btn-secondary">Cancel</button>
+          <button id="edit-save" class="btn-primary">Save</button>
         </div>
-        <svg id="graph-svg"></svg>
-      </div>
-
-      <!-- Detail Panel (shows when clicking a node) -->
-      <div id="detail-panel" hidden>
-        <div class="detail-header">
-          <h2 id="detail-title">Memory Details</h2>
-          <button id="detail-close">&times;</button>
-        </div>
-        <div id="detail-content"></div>
-        <div id="detail-relations"></div>
       </div>
     </div>
+
+    <!-- Toast container -->
+    <div id="toast-container"></div>
   </div>
   <script src="app.js"></script>
 </body>

@@ -257,16 +257,18 @@ def create_http_app():
     ]
     logger.info("REST API routes enabled (/api/memory/*, /api/index/*, /api/session/*, /api/tool/*, /api/wiki/*)")
 
-    # Mount dashboard static files
+    # Mount static files
     from pathlib import Path
 
+    from starlette.responses import RedirectResponse
     from starlette.routing import Mount
     from starlette.staticfiles import StaticFiles
 
-    dashboard_dir = Path(__file__).parent / "static" / "dashboard"
-    if dashboard_dir.exists():
-        routes.append(Mount("/dashboard", app=StaticFiles(directory=str(dashboard_dir), html=True)))
-        logger.info(f"Dashboard mounted at /dashboard (dir: {dashboard_dir})")
+    # Redirect old /dashboard to unified wiki app
+    async def dashboard_redirect(request):
+        return RedirectResponse("/wiki/#memories")
+    routes.append(Route("/dashboard", dashboard_redirect))
+    routes.append(Route("/dashboard/{path:path}", dashboard_redirect))
 
     # Mount wiki dashboard (Knowledge Engine)
     wiki_dir = Path(__file__).parent / "static" / "wiki"

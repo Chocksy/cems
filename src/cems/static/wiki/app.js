@@ -4,29 +4,36 @@
 
   // --- State ---
   let apiKey = sessionStorage.getItem("cems_api_key") || "";
-  let currentView = "graph";
+  let currentView = "wiki";
   let graphData = null;
   let simulation = null;
+  // Memory list state
+  let memOffset = 0;
+  let memLimit = 50;
+  let memTotal = 0;
+  let memCategory = "";
+  let memSearch = "";
+  let memScope = "";
+  let memSearchTimeout = null;
+  let editingId = null;
+  let memCategories = {};
 
   // --- DOM refs ---
   const loginView = document.getElementById("login-view");
-  const dashView = document.getElementById("dashboard-view");
+  const mainLayout = document.getElementById("main-layout");
   const loginForm = document.getElementById("login-form");
   const apiKeyInput = document.getElementById("api-key-input");
   const loginError = document.getElementById("login-error");
   const healthBadge = document.getElementById("health-badge");
-  const statsPanel = document.getElementById("stats-panel");
-  const graphView = document.getElementById("graph-view");
   const graphInfo = document.getElementById("graph-info");
   const detailPanel = document.getElementById("detail-panel");
 
   // --- API helpers ---
   const baseUrl = window.location.origin;
 
-  async function apiFetch(path) {
-    const res = await fetch(baseUrl + path, {
-      headers: { Authorization: "Bearer " + apiKey },
-    });
+  async function apiFetch(path, opts = {}) {
+    const headers = { Authorization: "Bearer " + apiKey, ...opts.headers };
+    const res = await fetch(baseUrl + path, { ...opts, headers });
     if (res.status === 401) {
       sessionStorage.removeItem("cems_api_key");
       apiKey = "";
@@ -39,15 +46,15 @@
   // --- Views ---
   function showLogin() {
     loginView.hidden = false;
-    dashView.hidden = true;
+    mainLayout.hidden = true;
     loginError.hidden = true;
   }
 
   function showDashboard() {
     loginView.hidden = true;
-    dashView.hidden = false;
+    mainLayout.hidden = false;
     loadStats();
-    loadGraph();
+    switchView("wiki");
   }
 
   // --- Login ---
@@ -70,36 +77,29 @@
     }
   });
 
-  // --- View Toggle ---
-  const entitiesView = document.getElementById("entities-view");
-  const lintView = document.getElementById("lint-view");
-
-  document.querySelectorAll(".toggle-btn").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      document.querySelectorAll(".toggle-btn").forEach((b) => b.classList.remove("active"));
-      btn.classList.add("active");
-      currentView = btn.dataset.view;
-
-      // Hide all views
-      statsPanel.classList.remove("active");
-      graphView.classList.add("hidden");
-      if (entitiesView) entitiesView.classList.remove("active");
-      if (lintView) lintView.classList.remove("active");
-
-      // Show selected view
-      if (currentView === "stats") {
-        statsPanel.classList.add("active");
-      } else if (currentView === "graph") {
-        graphView.classList.remove("hidden");
-      } else if (currentView === "entities") {
-        if (entitiesView) { entitiesView.classList.add("active"); entitiesView.hidden = false; }
-        loadEntities();
-      } else if (currentView === "lint") {
-        if (lintView) { lintView.classList.add("active"); lintView.hidden = false; }
-        loadConflicts();
-        loadLintStats();
-      }
+  // --- Sidebar Navigation ---
+  function switchView(viewName) {
+    currentView = viewName;
+    // Update sidebar active state
+    document.querySelectorAll("#sidebar .nav-item").forEach((n) => {
+      n.classList.toggle("active", n.dataset.view === viewName);
     });
+    // Hide all content views, show selected
+    document.querySelectorAll(".content-view").forEach((v) => { v.hidden = true; });
+    const target = document.getElementById("view-" + viewName);
+    if (target) target.hidden = false;
+    // Update URL hash
+    history.replaceState(null, "", "#" + viewName);
+    // Load data for the view
+    if (viewName === "wiki") loadEntities();
+    if (viewName === "graph") loadGraph();
+    if (viewName === "stats") loadStats();
+    if (viewName === "health") { loadConflicts(); loadLintStats(); }
+    if (viewName === "memories") { loadMemCategories(); loadMemories(); }
+  }
+
+  document.querySelectorAll("#sidebar .nav-item[data-view]").forEach((btn) => {
+    btn.addEventListener("click", () => switchView(btn.dataset.view));
   });
 
   // --- Stats ---
@@ -469,7 +469,7 @@
     const content = document.getElementById("article-content");
     placeholder.hidden = true;
     content.hidden = false;
-    updateHash("wiki", entityId);
+    history.replaceState(null, "", "#wiki/" + entityId);
 
     try {
       const data = await apiFetch(`/api/wiki/entity?id=${entityId}`);
@@ -813,6 +813,198 @@
     });
   }
 
+  // =========================================================================
+  // MEMORIES VIEW (ported from /dashboard)
+  // =========================================================================
+
+  async function loadMemCategories() {
+    try {
+      const data = await apiFetch("/api/memory/summary/personal");
+      if (!data.success) return;
+      memCategories = data.categories || {};
+      renderMemFilters();
+    } catch (e) { console.error("Failed to load categories", e); }
+  }
+
+  function renderMemFilters() {
+    const el = document.getElementById("memory-filters");
+    if (!el) return;
+    const allTotal = Object.values(memCategories).reduce((s, n) => s + n, 0);
+    let html = `<button class="filter-pill ${memCategory === "" ? "active" : ""}" data-category="">All (${allTotal})</button>`;
+    for (const [cat, count] of Object.entries(memCategories).sort((a, b) => b[1] - a[1])) {
+      html += `<button class="filter-pill ${memCategory === cat ? "active" : ""}" data-category="${escapeHtml(cat)}">${escapeHtml(cat)} (${count})</button>`;
+    }
+    el.innerHTML = html;
+    el.querySelectorAll(".filter-pill").forEach((btn) => {
+      btn.addEventListener("click", () => { memCategory = btn.dataset.category; memOffset = 0; loadMemories(); renderMemFilters(); });
+    });
+  }
+
+  async function loadMemories() {
+    const listEl = document.getElementById("memory-list");
+    if (!listEl) return;
+    listEl.innerHTML = '<div class="loading">Loading...</div>';
+    try {
+      let params = `limit=${memLimit}&offset=${memOffset}`;
+      if (memScope) params += `&scope=${encodeURIComponent(memScope)}`;
+      if (memCategory) params += `&category=${encodeURIComponent(memCategory)}`;
+      if (memSearch) params += `&q=${encodeURIComponent(memSearch)}`;
+      const data = await apiFetch(`/api/memory/list?${params}`);
+      if (!data.success) { listEl.innerHTML = '<div class="empty">Error loading memories.</div>'; return; }
+      memTotal = data.total || 0;
+      renderMemList(data.results || []);
+      renderMemPagination(data.mode === "search");
+    } catch (e) { listEl.innerHTML = '<div class="empty">Failed to load.</div>'; }
+  }
+
+  function renderMemList(memories) {
+    const listEl = document.getElementById("memory-list");
+    if (!memories.length) { listEl.innerHTML = '<div class="empty">No memories found.</div>'; return; }
+    listEl.innerHTML = memories.map((m) => {
+      const tags = (m.tags || []).map((t) => `<span class="tag">#${escapeHtml(t)}</span>`).join(" ");
+      const content = escapeHtml(m.content || "");
+      const isShort = content.length < 300;
+      const date = m.created_at ? new Date(m.created_at).toLocaleDateString() : "";
+      const shown = m.shown_count ? `shown: ${m.shown_count}` : "";
+      return `<div class="memory-card" data-id="${escapeHtml(m.id)}">
+        <div class="memory-meta">
+          <span class="cat">${escapeHtml(m.category || "general")}</span>
+          ${tags}
+          ${m.scope ? `<span class="scope-badge scope-${escapeHtml(m.scope)}">${escapeHtml(m.scope)}</span>` : ""}
+          ${m.source_ref ? `<span class="source-ref">${escapeHtml(m.source_ref)}</span>` : ""}
+          ${date ? `<span>${date}</span>` : ""}
+          ${shown ? `<span>${shown}</span>` : ""}
+        </div>
+        <div class="memory-content ${isShort ? "short" : ""}">${content}</div>
+        <div class="memory-actions">
+          <button class="btn-expand" data-id="${escapeHtml(m.id)}">Expand</button>
+          <button class="btn-edit" data-id="${escapeHtml(m.id)}">Edit</button>
+          <button class="btn-delete" data-id="${escapeHtml(m.id)}">Delete</button>
+        </div>
+      </div>`;
+    }).join("");
+    // Event handlers
+    listEl.querySelectorAll(".btn-expand").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const el = btn.closest(".memory-card").querySelector(".memory-content");
+        el.classList.toggle("expanded");
+        btn.textContent = el.classList.contains("expanded") ? "Collapse" : "Expand";
+      });
+    });
+    listEl.querySelectorAll(".memory-content").forEach((el) => {
+      el.addEventListener("click", () => { el.classList.toggle("expanded"); });
+    });
+    listEl.querySelectorAll(".btn-edit").forEach((btn) => {
+      btn.addEventListener("click", () => openMemEdit(btn.dataset.id));
+    });
+    listEl.querySelectorAll(".btn-delete").forEach((btn) => {
+      btn.addEventListener("click", () => deleteMemory(btn.dataset.id));
+    });
+  }
+
+  function renderMemPagination(isSearch) {
+    const pagEl = document.getElementById("memory-pagination");
+    if (!pagEl) return;
+    if (isSearch) { pagEl.hidden = true; return; }
+    pagEl.hidden = memTotal <= memLimit;
+    document.getElementById("prev-btn").disabled = memOffset === 0;
+    document.getElementById("next-btn").disabled = memOffset + memLimit >= memTotal;
+    const page = Math.floor(memOffset / memLimit) + 1;
+    const pages = Math.ceil(memTotal / memLimit);
+    document.getElementById("page-info").textContent = `Page ${page} of ${pages} (${memTotal} total)`;
+  }
+
+  document.getElementById("prev-btn")?.addEventListener("click", () => { memOffset = Math.max(0, memOffset - memLimit); loadMemories(); });
+  document.getElementById("next-btn")?.addEventListener("click", () => { memOffset += memLimit; loadMemories(); });
+
+  // Search
+  document.getElementById("memory-search")?.addEventListener("input", (e) => {
+    clearTimeout(memSearchTimeout);
+    memSearchTimeout = setTimeout(() => { memSearch = e.target.value.trim(); memOffset = 0; loadMemories(); }, 400);
+  });
+
+  // Scope toggle
+  document.querySelectorAll(".scope-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      document.querySelectorAll(".scope-btn").forEach((b) => b.classList.remove("active"));
+      btn.classList.add("active");
+      memScope = btn.dataset.scope;
+      memOffset = 0;
+      loadMemories();
+    });
+  });
+
+  // Edit modal
+  async function openMemEdit(id) {
+    try {
+      const data = await apiFetch(`/api/memory/get?id=${id}`);
+      if (!data.success) return;
+      const doc = data.document;
+      editingId = id;
+      document.getElementById("edit-textarea").value = doc.content || "";
+      document.getElementById("edit-category").value = doc.category || "";
+      document.getElementById("edit-tags").value = (doc.tags || []).join(", ");
+      document.getElementById("edit-source-ref").value = doc.source_ref || "";
+      document.getElementById("edit-modal").hidden = false;
+    } catch (e) { console.error("Edit failed", e); }
+  }
+
+  function closeMemEdit() { document.getElementById("edit-modal").hidden = true; editingId = null; }
+
+  document.getElementById("edit-cancel")?.addEventListener("click", closeMemEdit);
+  document.querySelector(".modal-close")?.addEventListener("click", closeMemEdit);
+  document.getElementById("edit-modal")?.addEventListener("click", (e) => { if (e.target.id === "edit-modal") closeMemEdit(); });
+
+  document.getElementById("edit-save")?.addEventListener("click", async () => {
+    if (!editingId) return;
+    const body = { memory_id: editingId };
+    const content = document.getElementById("edit-textarea").value.trim();
+    const category = document.getElementById("edit-category").value.trim();
+    const tagsStr = document.getElementById("edit-tags").value.trim();
+    const sourceRef = document.getElementById("edit-source-ref").value.trim();
+    if (content) body.content = content;
+    if (category) body.category = category;
+    if (tagsStr) body.tags = tagsStr.split(",").map((t) => t.trim()).filter(Boolean);
+    if (sourceRef) body.source_ref = sourceRef;
+    try {
+      const data = await apiFetch("/api/memory/update", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      if (data.success) { closeMemEdit(); loadMemories(); loadMemCategories(); showToast("Memory updated."); }
+    } catch (e) { showToast("Update failed."); }
+  });
+
+  // Delete with undo
+  async function deleteMemory(id) {
+    try {
+      const data = await apiFetch("/api/memory/forget", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ memory_id: id }) });
+      if (data.success) {
+        const card = document.querySelector(`.memory-card[data-id="${id}"]`);
+        if (card) { card.style.opacity = "0"; setTimeout(() => card.remove(), 200); }
+        showToast("Memory deleted.", async () => {
+          await apiFetch("/api/memory/restore", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ memory_id: id }) });
+          loadMemories();
+        });
+      }
+    } catch (e) { showToast("Delete failed."); }
+  }
+
+  // Toast
+  function showToast(message, undoCallback) {
+    const container = document.getElementById("toast-container");
+    container.innerHTML = "";
+    const toast = document.createElement("div");
+    toast.className = "toast";
+    toast.innerHTML = `<span>${escapeHtml(message)}</span>`;
+    if (undoCallback) {
+      const btn = document.createElement("button");
+      btn.className = "undo-btn";
+      btn.textContent = "Undo";
+      btn.addEventListener("click", async () => { toast.remove(); try { await undoCallback(); } catch (e) {} });
+      toast.appendChild(btn);
+    }
+    container.appendChild(toast);
+    setTimeout(() => toast.remove(), 5000);
+  }
+
   // --- Logout ---
   document.getElementById("logout-btn").addEventListener("click", () => {
     sessionStorage.removeItem("cems_api_key");
@@ -829,24 +1021,14 @@
   }
 
   // --- URL Hash Routing ---
-  function updateHash(view, entityId) {
-    const hash = entityId ? `#${view}/${entityId}` : `#${view}`;
-    if (window.location.hash !== hash) {
-      history.pushState(null, "", hash);
-    }
-  }
-
   function handleHashRoute() {
-    const hash = window.location.hash.slice(1); // Remove #
+    const hash = window.location.hash.slice(1);
     if (!hash || !apiKey) return;
 
     const [view, entityId] = hash.split("/");
-    if (view && ["graph", "stats", "wiki", "lint"].includes(view)) {
-      // Simulate tab click
-      const btn = document.querySelector(`.toggle-btn[data-view="${view === "wiki" ? "entities" : view}"]`);
-      if (btn) btn.click();
-
-      // If entity ID provided, load that entity
+    const validViews = ["wiki", "memories", "graph", "stats", "health"];
+    if (view && validViews.includes(view)) {
+      switchView(view);
       if (entityId && view === "wiki") {
         setTimeout(() => loadEntityArticle(entityId), 500);
       }
@@ -855,19 +1037,9 @@
 
   window.addEventListener("hashchange", handleHashRoute);
 
-  // Patch view toggle to update URL
-  const origToggleHandler = (view) => {
-    const urlView = view === "entities" ? "wiki" : view;
-    updateHash(urlView);
-  };
-  document.querySelectorAll(".toggle-btn").forEach((btn) => {
-    btn.addEventListener("click", () => origToggleHandler(btn.dataset.view));
-  });
-
   // --- Init ---
   if (apiKey) {
     showDashboard();
-    // Handle initial hash route after dashboard loads
     setTimeout(handleHashRoute, 300);
   } else {
     showLogin();
