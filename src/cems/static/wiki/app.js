@@ -516,8 +516,13 @@
       document.getElementById("article-heat-bar").innerHTML =
         `<div class="h-full rounded-full transition-all" style="width:${heatPct}%;background:${heatColor}"></div>`;
 
-      // Render markdown content (simple renderer)
-      document.getElementById("article-body").innerHTML = renderMarkdown(e.content || "");
+      // Render markdown content — strip duplicate title (first h1 matching article title)
+      let articleMd = e.content || "";
+      const titleLine = (e.title || "").trim();
+      if (titleLine) {
+        articleMd = articleMd.replace(new RegExp("^#\\s+" + titleLine.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\s*\\n*", "i"), "");
+      }
+      document.getElementById("article-body").innerHTML = renderMarkdown(articleMd);
 
       // Related entities
       const relEl = document.getElementById("article-related-entities");
@@ -867,8 +872,10 @@
       if (memSearch) params += `&q=${encodeURIComponent(memSearch)}`;
       const data = await apiFetch(`/api/memory/list?${params}`);
       if (!data.success) { listEl.innerHTML = '<div class="text-sm text-gray-500 text-center py-8">Error loading memories.</div>'; return; }
+      // Filter out entity-page memories (they belong in Wiki view, not here)
+      const filtered = (data.results || []).filter((m) => m.category !== "entity-page");
       memTotal = data.total || 0;
-      renderMemList(data.results || []);
+      renderMemList(filtered);
       renderMemPagination(data.mode === "search");
     } catch (e) { listEl.innerHTML = '<div class="text-sm text-gray-500 text-center py-8">Failed to load.</div>'; }
   }

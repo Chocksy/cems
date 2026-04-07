@@ -32,20 +32,25 @@
 .link { stroke: #374151; stroke-opacity: 0.4; fill: none; }
 
 /* Article body markdown styling (replaces @tailwindcss/typography) */
-#article-body h1 { font-size: 1.3rem; margin-top: 1.5rem; padding-bottom: 0.3rem; border-bottom: 1px solid #374151; font-weight: 700; color: #f3f4f6; }
-#article-body h2 { font-size: 1.1rem; margin-top: 1.25rem; font-weight: 600; color: #f3f4f6; }
-#article-body h3 { font-size: 0.95rem; margin-top: 1rem; font-weight: 600; color: #e5e7eb; }
-#article-body p { margin: 0.75rem 0; }
-#article-body ul, #article-body ol { padding-left: 1.5rem; margin: 0.5rem 0; }
-#article-body li { margin: 0.25rem 0; }
-#article-body pre { background: #1f2937; border: 1px solid #374151; border-radius: 6px; padding: 0.75rem; overflow-x: auto; margin: 0.75rem 0; }
-#article-body code { font-size: 0.85em; background: #1f2937; padding: 0.1em 0.3em; border-radius: 3px; }
-#article-body pre code { background: none; padding: 0; }
-#article-body a { color: #60a5fa; text-decoration: underline; }
-#article-body blockquote { border-left: 3px solid #374151; padding-left: 1rem; color: #9ca3af; margin: 0.75rem 0; }
-#article-body table { width: 100%; border-collapse: collapse; margin: 0.75rem 0; font-size: 0.85rem; }
-#article-body th, #article-body td { border: 1px solid #374151; padding: 0.4rem 0.6rem; text-align: left; }
-#article-body th { background: #1f2937; font-weight: 600; }
+#article-body h1 { font-size: 1.5rem; margin-top: 2rem; margin-bottom: 0.75rem; padding-bottom: 0.5rem; border-bottom: 1px solid #374151; font-weight: 700; color: #f9fafb; letter-spacing: -0.01em; }
+#article-body h2 { font-size: 1.25rem; margin-top: 1.75rem; margin-bottom: 0.5rem; font-weight: 700; color: #f9fafb; letter-spacing: -0.01em; }
+#article-body h3 { font-size: 1.05rem; margin-top: 1.25rem; margin-bottom: 0.4rem; font-weight: 600; color: #e5e7eb; }
+#article-body h4 { font-size: 0.95rem; margin-top: 1rem; margin-bottom: 0.3rem; font-weight: 600; color: #d1d5db; }
+#article-body p { margin: 0.75rem 0; line-height: 1.7; }
+#article-body ul, #article-body ol { padding-left: 1.5rem; margin: 0.75rem 0; }
+#article-body li { margin: 0.35rem 0; line-height: 1.6; }
+#article-body li > ul, #article-body li > ol { margin: 0.25rem 0; }
+#article-body pre { background: #111827; border: 1px solid #1f2937; border-radius: 8px; padding: 1rem; overflow-x: auto; margin: 1rem 0; font-size: 0.85rem; line-height: 1.5; }
+#article-body code { font-size: 0.85em; background: #1f2937; color: #93c5fd; padding: 0.15em 0.4em; border-radius: 4px; }
+#article-body pre code { background: none; color: #d1d5db; padding: 0; }
+#article-body a { color: #60a5fa; text-decoration: underline; text-underline-offset: 2px; }
+#article-body a:hover { color: #93c5fd; }
+#article-body blockquote { border-left: 3px solid #3b82f6; padding-left: 1rem; color: #9ca3af; margin: 1rem 0; font-style: italic; }
+#article-body table { width: 100%; border-collapse: collapse; margin: 1rem 0; font-size: 0.85rem; }
+#article-body th, #article-body td { border: 1px solid #374151; padding: 0.5rem 0.75rem; text-align: left; }
+#article-body th { background: #111827; font-weight: 600; color: #e5e7eb; }
+#article-body strong { color: #f3f4f6; font-weight: 600; }
+#article-body hr { border: none; border-top: 1px solid #374151; margin: 1.5rem 0; }
 
 /* Memory content expand/collapse */
 .memory-content { max-height: 100px; overflow: hidden; cursor: pointer; }
