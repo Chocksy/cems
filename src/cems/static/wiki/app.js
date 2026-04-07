@@ -87,6 +87,20 @@
   });
 
   // --- Sidebar Navigation ---
+  const sidebarNav = document.getElementById("sidebar-nav");
+  const sidebarWiki = document.getElementById("sidebar-wiki");
+
+  function setSidebarMode(mode) {
+    if (mode === "wiki") {
+      sidebarNav.style.display = "none";
+      sidebarWiki.style.display = "flex";
+    } else {
+      sidebarNav.style.display = "";
+      sidebarWiki.style.display = "none";
+    }
+    refreshIcons();
+  }
+
   function switchView(viewName) {
     currentView = viewName;
     // Update sidebar active state
@@ -102,6 +116,8 @@
     document.querySelectorAll(".content-view").forEach((v) => { v.classList.remove("active"); });
     const target = document.getElementById("view-" + viewName);
     if (target) target.classList.add("active");
+    // Contextual sidebar — show wiki entity browser or main nav
+    setSidebarMode(viewName === "wiki" ? "wiki" : "nav");
     // Update URL hash
     history.replaceState(null, "", "#" + viewName);
     // Load data for the view
@@ -111,6 +127,11 @@
     if (viewName === "health") { loadConflicts(); loadLintStats(); }
     if (viewName === "memories") { loadMemCategories(); loadMemories(); }
   }
+
+  // Sidebar back button — return to main nav
+  document.getElementById("sidebar-back")?.addEventListener("click", () => {
+    setSidebarMode("nav");
+  });
 
   document.querySelectorAll(".nav-link[data-view]").forEach((btn) => {
     btn.addEventListener("click", (e) => { e.preventDefault(); switchView(btn.dataset.view); });

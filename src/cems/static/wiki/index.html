@@ -34,34 +34,50 @@
     <!-- Main Layout -->
     <div id="main-layout" class="min-h-screen">
       <!-- Sidebar -->
-      <aside id="sidebar" class="w-56 flex-shrink-0 bg-gray-900 border-r border-gray-800 flex flex-col sticky top-0 h-screen overflow-y-auto">
-        <div class="p-4">
-          <div class="flex items-center justify-between mb-6">
-            <h2 class="text-lg font-bold tracking-tight">CEMS</h2>
-            <span id="health-badge" class="text-xs px-2 py-0.5 rounded-full bg-green-900/50 text-green-400 font-medium">--</span>
+      <aside id="sidebar" class="w-60 flex-shrink-0 bg-gray-900 border-r border-gray-800 flex flex-col sticky top-0 h-screen overflow-y-auto">
+        <!-- Panel: Main Nav -->
+        <div id="sidebar-nav" class="flex flex-col h-full">
+          <div class="p-4">
+            <div class="flex items-center justify-between mb-6">
+              <h2 class="text-lg font-bold tracking-tight">CEMS</h2>
+              <span id="health-badge" class="text-xs px-2 py-0.5 rounded-full bg-green-900/50 text-green-400 font-medium">--</span>
+            </div>
+            <nav class="space-y-1">
+              <a class="nav-link active flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors cursor-pointer" data-view="wiki">
+                <i data-lucide="book-open" class="w-4 h-4 opacity-70"></i><span>Wiki</span>
+              </a>
+              <a class="nav-link flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors cursor-pointer" data-view="memories">
+                <i data-lucide="brain" class="w-4 h-4 opacity-70"></i><span>Memories</span>
+              </a>
+              <a class="nav-link flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors cursor-pointer" data-view="graph">
+                <i data-lucide="network" class="w-4 h-4 opacity-70"></i><span>Graph</span>
+              </a>
+              <a class="nav-link flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors cursor-pointer" data-view="stats">
+                <i data-lucide="bar-chart-3" class="w-4 h-4 opacity-70"></i><span>Stats</span>
+              </a>
+              <a class="nav-link flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors cursor-pointer" data-view="health">
+                <i data-lucide="heart-pulse" class="w-4 h-4 opacity-70"></i><span>Health</span>
+              </a>
+            </nav>
           </div>
-          <nav class="space-y-1">
-            <a class="nav-link active flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors cursor-pointer" data-view="wiki">
-              <i data-lucide="book-open" class="w-4 h-4 opacity-70"></i><span>Wiki</span>
-            </a>
-            <a class="nav-link flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors cursor-pointer" data-view="memories">
-              <i data-lucide="brain" class="w-4 h-4 opacity-70"></i><span>Memories</span>
-            </a>
-            <a class="nav-link flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors cursor-pointer" data-view="graph">
-              <i data-lucide="network" class="w-4 h-4 opacity-70"></i><span>Graph</span>
-            </a>
-            <a class="nav-link flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors cursor-pointer" data-view="stats">
-              <i data-lucide="bar-chart-3" class="w-4 h-4 opacity-70"></i><span>Stats</span>
-            </a>
-            <a class="nav-link flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors cursor-pointer" data-view="health">
-              <i data-lucide="heart-pulse" class="w-4 h-4 opacity-70"></i><span>Health</span>
-            </a>
-          </nav>
+          <div class="p-4 mt-auto border-t border-gray-800">
+            <button id="logout-btn" class="w-full flex items-center justify-center gap-2 text-sm text-gray-500 hover:text-gray-300 py-2 transition-colors">
+              <i data-lucide="log-out" class="w-3.5 h-3.5"></i><span>Logout</span>
+            </button>
+          </div>
         </div>
-        <div class="p-4 mt-auto border-t border-gray-800">
-          <button id="logout-btn" class="w-full flex items-center justify-center gap-2 text-sm text-gray-500 hover:text-gray-300 py-2 transition-colors">
-            <i data-lucide="log-out" class="w-3.5 h-3.5"></i><span>Logout</span>
-          </button>
+        <!-- Panel: Wiki Entity Browser (shown when Wiki is active) -->
+        <div id="sidebar-wiki" class="hidden flex-col h-full">
+          <div class="p-3 border-b border-gray-800">
+            <button id="sidebar-back" class="flex items-center gap-2 text-sm text-gray-400 hover:text-gray-200 transition-colors mb-3">
+              <i data-lucide="arrow-left" class="w-4 h-4"></i><span>Back</span>
+            </button>
+            <input class="w-full bg-gray-800 border border-gray-700 text-gray-100 text-sm rounded-lg px-3 py-2 placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent" type="text" id="entity-search" placeholder="Search topics...">
+          </div>
+          <div class="flex-1 overflow-y-auto p-2">
+            <div id="entity-nav-list" class="space-y-0.5"></div>
+            <p id="entities-empty" class="text-gray-500 text-xs text-center mt-6" hidden>No entity pages yet.</p>
+          </div>
         </div>
       </aside>
 
@@ -69,20 +85,9 @@
       <main id="content" class="flex-1 overflow-y-auto max-h-screen">
 
         <!-- Wiki View -->
-        <section id="view-wiki" class="content-view p-4">
-          <div class="flex min-h-[calc(100vh-2rem)]">
-            <!-- Wiki Sidebar -->
-            <aside class="w-64 flex-shrink-0 bg-gray-900/50 border-r border-gray-800 overflow-y-auto max-h-[calc(100vh-2rem)]">
-              <div class="p-3">
-                <p class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Topics</p>
-                <input class="w-full bg-gray-800 border border-gray-700 text-gray-100 text-sm rounded-lg px-3 py-2 placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent mb-3" type="text" id="entity-search" placeholder="Filter topics...">
-                <div id="entity-nav-list" class="space-y-0.5"></div>
-                <p id="entities-empty" class="text-gray-500 text-xs text-center mt-6" hidden>No entity pages yet.</p>
-              </div>
-            </aside>
-            <!-- Wiki Article -->
-            <div id="wiki-article" class="flex-1 px-8 py-6 max-w-4xl">
-              <div id="article-placeholder" class="text-gray-500 text-center pt-16">Select a topic from the sidebar.</div>
+        <section id="view-wiki" class="content-view">
+          <div id="wiki-article" class="px-10 py-8 max-w-4xl mx-auto">
+            <div id="article-placeholder" class="text-gray-500 text-center pt-16">Select a topic from the sidebar.</div>
               <div id="article-content" hidden>
                 <div id="article-header" class="mb-6 pb-4 border-b border-gray-800">
                   <h1 id="article-title" class="text-2xl font-bold mb-2"></h1>
@@ -103,7 +108,6 @@
                   <div id="timeline-list" class="space-y-1"></div>
                 </div>
               </div>
-            </div>
           </div>
         </section>
 
