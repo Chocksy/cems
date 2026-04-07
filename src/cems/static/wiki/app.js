@@ -945,15 +945,15 @@
       document.getElementById("edit-category").value = doc.category || "";
       document.getElementById("edit-tags").value = (doc.tags || []).join(", ");
       document.getElementById("edit-source-ref").value = doc.source_ref || "";
-      document.getElementById("edit-modal").hidden = false;
+      document.getElementById("edit-modal").classList.add("open");
     } catch (e) { console.error("Edit failed", e); }
   }
 
-  function closeMemEdit() { document.getElementById("edit-modal").hidden = true; editingId = null; }
+  function closeMemEdit() { document.getElementById("edit-modal").classList.remove("open"); editingId = null; }
 
   document.getElementById("edit-cancel")?.addEventListener("click", closeMemEdit);
   document.querySelector(".modal-close")?.addEventListener("click", closeMemEdit);
-  document.getElementById("edit-modal")?.addEventListener("click", (e) => { if (e.target.id === "edit-modal") closeMemEdit(); });
+  document.getElementById("edit-modal")?.addEventListener("click", (e) => { if (e.target.classList.contains("modal")) closeMemEdit(); });
 
   document.getElementById("edit-save")?.addEventListener("click", async () => {
     if (!editingId) return;

@@ -217,7 +217,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;b
 .relation-cat{color:var(--fg2);font-size:.7rem}
 
 /* Modal */
-.modal{position:fixed;inset:0;background:rgba(0,0,0,.5);display:flex;align-items:center;justify-content:center;z-index:200}
+.modal{position:fixed;inset:0;background:rgba(0,0,0,.5);display:none;align-items:center;justify-content:center;z-index:200}
+.modal.open{display:flex}
 .modal-content{background:var(--bg);border:1px solid var(--border);border-radius:var(--radius);padding:1.5rem;width:90%;max-width:600px;max-height:80vh;overflow-y:auto}
 .modal-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem}
 .modal-header h2{font-size:1.1rem}
