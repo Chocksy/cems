@@ -467,7 +467,7 @@
       // Auto-select first entity and mark it active
       if (allEntities.length > 0) {
         const firstNav = document.querySelector(".wiki-topic");
-        if (firstNav) firstNav.classList.add("bg-blue-600/20", "!border-l-blue-400");
+        if (firstNav) firstNav.classList.add("bg-blue-600/15", "ring-1", "ring-blue-500/30");
         loadEntityArticle(allEntities[0].id);
       }
     } catch (e) {
@@ -481,12 +481,9 @@
       const shown = Number(e.shown_count) || 0;
       const heatColor = shown >= 20 ? "#ef4444" : shown >= 5 ? "#f59e0b" : shown >= 1 ? "#3b82f6" : "#6b7280";
       const project = (e.source_ref || "").replace("project:", "").split("/").pop() || "";
-      const heatBorder = shown >= 20 ? "border-red-500" : shown >= 5 ? "border-amber-500" : shown >= 1 ? "border-blue-500" : "border-gray-600";
-      return `<a class="wiki-topic flex items-start gap-2.5 px-3 py-2.5 rounded-lg text-sm text-gray-300 hover:bg-gray-800 cursor-pointer transition-colors border-l-2 ${heatBorder}" data-id="${escapeHtml(e.id)}">
-          <span class="min-w-0">
-            <span class="block text-gray-200 leading-snug">${escapeHtml(e.title || "Untitled")}</span>
-            ${project ? `<span class="text-gray-500 text-xs">${escapeHtml(project)}</span>` : ""}
-          </span>
+      return `<a class="wiki-topic group block px-3 py-2 rounded-lg cursor-pointer transition-colors hover:bg-gray-800/70" data-id="${escapeHtml(e.id)}">
+          <div class="text-[13px] text-gray-300 group-hover:text-gray-100 leading-snug">${escapeHtml(e.title || "Untitled")}</div>
+          ${project ? `<div class="text-[11px] text-gray-600 mt-0.5">${escapeHtml(project)} &middot; ${shown}x shown</div>` : `<div class="text-[11px] text-gray-600 mt-0.5">${shown}x shown</div>`}
       </a>`;
     }).join("");
 
@@ -495,9 +492,9 @@
       item.addEventListener("click", (e) => {
         e.preventDefault();
         navList.querySelectorAll(".wiki-topic").forEach((i) => {
-          i.classList.remove("bg-blue-600/20", "!border-l-blue-400");
+          i.classList.remove("bg-blue-600/15", "ring-1", "ring-blue-500/30");
         });
-        item.classList.add("bg-blue-600/20", "!border-l-blue-400");
+        item.classList.add("bg-blue-600/15", "ring-1", "ring-blue-500/30");
         loadEntityArticle(item.dataset.id);
       });
     });
@@ -563,8 +560,8 @@
             loadEntityArticle(link.dataset.id);
             // Update sidebar active state
             document.querySelectorAll(".wiki-topic").forEach((i) => {
-              i.classList.remove("bg-blue-600/20", "!border-l-blue-400");
-              if (i.dataset.id === link.dataset.id) i.classList.add("bg-blue-600/20", "!border-l-blue-400");
+              i.classList.remove("bg-blue-600/15", "ring-1", "ring-blue-500/30");
+              if (i.dataset.id === link.dataset.id) i.classList.add("bg-blue-600/15", "ring-1", "ring-blue-500/30");
             });
           });
         });
@@ -618,20 +615,21 @@
       const srcList = document.getElementById("source-memories-list");
       if (data.source_memories && data.source_memories.length > 0) {
         document.getElementById("article-sources").hidden = false;
-        const heatIcons = { 20: "flame", 5: "thermometer", 1: "snowflake", 0: "circle" };
         srcList.innerHTML = data.source_memories.map((m) => {
           const mShown = Number(m.shown_count) || 0;
-          const iconName = mShown >= 20 ? "flame" : mShown >= 5 ? "thermometer" : mShown >= 1 ? "snowflake" : "circle";
-          const iconColor = mShown >= 20 ? "text-red-400" : mShown >= 5 ? "text-amber-400" : mShown >= 1 ? "text-blue-400" : "text-gray-500";
-          return `<div class="flex items-start gap-3 p-3 bg-gray-900 border border-gray-800 rounded-lg">
-            <i data-lucide="${iconName}" class="w-4 h-4 flex-shrink-0 mt-0.5 ${iconColor}"></i>
-            <div class="min-w-0">
+          const heatColor = mShown >= 20 ? "bg-red-500" : mShown >= 5 ? "bg-amber-500" : mShown >= 1 ? "bg-blue-500" : "bg-gray-600";
+          const matchPct = m.similarity ? (m.similarity * 100).toFixed(0) + "%" : "";
+          return `<div class="flex items-start gap-3 p-3 bg-gray-800/50 border border-gray-800 rounded-lg">
+            <div class="flex-shrink-0 mt-1.5 w-2 h-2 rounded-full ${heatColor}"></div>
+            <div class="min-w-0 flex-1">
               <div class="text-sm text-gray-300 leading-relaxed">${escapeHtml(m.content || "")}</div>
-              <div class="text-xs text-gray-500 mt-1">${escapeHtml(m.category || "")} &middot; ${m.similarity ? (m.similarity * 100).toFixed(0) + "% match" : ""}</div>
+              <div class="flex items-center gap-2 text-xs text-gray-500 mt-1.5">
+                <span>${escapeHtml(m.category || "")}</span>
+                ${matchPct ? `<span class="text-blue-400 font-medium">${matchPct} match</span>` : ""}
+              </div>
             </div>
           </div>`;
         }).join("");
-        refreshIcons();
       } else {
         document.getElementById("article-sources").hidden = true;
       }
