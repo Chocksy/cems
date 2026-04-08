@@ -62,13 +62,19 @@ def find_project_credentials(cwd: str) -> str | None:
 def resolve_credentials(cwd: str | None = None) -> dict[str, str]:
     """Resolve CEMS credentials with full precedence chain.
 
-    1. Environment variables (always win — useful for CI, testing)
-    2. Per-project .cems/credentials (walk up from CWD, stop before $HOME)
+    1. Per-project .cems/credentials (walk up from CWD, stop before $HOME)
+    2. Environment variables (both CEMS_API_URL and CEMS_API_KEY must be set)
     3. Global ~/.cems/credentials (fallback)
 
     Returns dict with all keys found (CEMS_API_URL, CEMS_API_KEY, etc.)
     """
-    # 1. Check env vars — if both URL and key are set, use them
+    # 1. Walk up from CWD looking for project .cems/credentials
+    if cwd:
+        project_path = find_project_credentials(cwd)
+        if project_path:
+            return parse_credentials_file(project_path)
+
+    # 2. Check env vars — require BOTH URL and key
     env_url = os.environ.get("CEMS_API_URL", "")
     env_key = os.environ.get("CEMS_API_KEY", "")
     if env_url and env_key:
@@ -78,12 +84,6 @@ def resolve_credentials(cwd: str | None = None) -> dict[str, str]:
             if v:
                 result[k] = v
         return result
-
-    # 2. Walk up from CWD looking for project .cems/credentials
-    if cwd:
-        project_path = find_project_credentials(cwd)
-        if project_path:
-            return parse_credentials_file(project_path)
 
     # 3. Global fallback
     global_path = os.getenv("CEMS_CREDENTIALS_FILE", _DEFAULT_CREDENTIALS_PATH)

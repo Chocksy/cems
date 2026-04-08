@@ -61,8 +61,8 @@ class TestGetConfigWithResolver:
         assert api_url == "http://global:8765"
         assert api_key == "global-key"
 
-    def test_env_vars_win_over_file_credentials(self):
-        """Env vars take highest precedence via resolve_credentials."""
+    def test_env_vars_used_via_resolver(self):
+        """Env vars are passed through from resolve_credentials."""
         with patch("cems.mcp_stdio.resolve_credentials", return_value={
             "CEMS_API_URL": "http://env:8765",
             "CEMS_API_KEY": "env-key",
@@ -225,3 +225,77 @@ class TestResources:
             result = memory_shared_summary()
 
         mock_req.assert_called_once_with("GET", "/api/memory/summary/shared")
+
+
+class TestNoCredentials:
+    """MCP tools return friendly message when unconfigured (no API_URL)."""
+
+    def test_memory_search_no_creds(self):
+        from cems.mcp_stdio import memory_search, _NOT_CONFIGURED_MSG
+
+        with patch("cems.mcp_stdio.API_URL", ""):
+            result = memory_search("test query")
+        assert result == _NOT_CONFIGURED_MSG
+
+    def test_memory_add_no_creds(self):
+        from cems.mcp_stdio import memory_add, _NOT_CONFIGURED_MSG
+
+        with patch("cems.mcp_stdio.API_URL", ""):
+            result = memory_add("test content")
+        assert result == _NOT_CONFIGURED_MSG
+
+    def test_memory_forget_no_creds(self):
+        from cems.mcp_stdio import memory_forget, _NOT_CONFIGURED_MSG
+
+        with patch("cems.mcp_stdio.API_URL", ""):
+            result = memory_forget("mem-123")
+        assert result == _NOT_CONFIGURED_MSG
+
+    def test_memory_update_no_creds(self):
+        from cems.mcp_stdio import memory_update, _NOT_CONFIGURED_MSG
+
+        with patch("cems.mcp_stdio.API_URL", ""):
+            result = memory_update("mem-123", "new content")
+        assert result == _NOT_CONFIGURED_MSG
+
+    def test_memory_maintenance_no_creds(self):
+        from cems.mcp_stdio import memory_maintenance, _NOT_CONFIGURED_MSG
+
+        with patch("cems.mcp_stdio.API_URL", ""):
+            result = memory_maintenance()
+        assert result == _NOT_CONFIGURED_MSG
+
+    def test_memory_pin_no_creds(self):
+        from cems.mcp_stdio import memory_pin, _NOT_CONFIGURED_MSG
+
+        with patch("cems.mcp_stdio.API_URL", ""):
+            result = memory_pin("mem-123")
+        assert result == _NOT_CONFIGURED_MSG
+
+    def test_memory_get_no_creds(self):
+        from cems.mcp_stdio import memory_get, _NOT_CONFIGURED_MSG
+
+        with patch("cems.mcp_stdio.API_URL", ""):
+            result = memory_get("mem-123")
+        assert result == _NOT_CONFIGURED_MSG
+
+    def test_memory_status_no_creds(self):
+        from cems.mcp_stdio import memory_status, _NOT_CONFIGURED_MSG
+
+        with patch("cems.mcp_stdio.API_URL", ""):
+            result = memory_status()
+        assert result == _NOT_CONFIGURED_MSG
+
+    def test_memory_personal_summary_no_creds(self):
+        from cems.mcp_stdio import memory_personal_summary, _NOT_CONFIGURED_MSG
+
+        with patch("cems.mcp_stdio.API_URL", ""):
+            result = memory_personal_summary()
+        assert result == _NOT_CONFIGURED_MSG
+
+    def test_memory_shared_summary_no_creds(self):
+        from cems.mcp_stdio import memory_shared_summary, _NOT_CONFIGURED_MSG
+
+        with patch("cems.mcp_stdio.API_URL", ""):
+            result = memory_shared_summary()
+        assert result == _NOT_CONFIGURED_MSG

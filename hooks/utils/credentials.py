@@ -2,8 +2,8 @@
 """CEMS credentials loader with per-project support.
 
 Resolution order:
-  1. Environment variables (CEMS_API_URL, CEMS_API_KEY) — highest priority
-  2. .cems/credentials found by walking up from CWD — project override
+  1. .cems/credentials found by walking up from CWD — project override (highest priority)
+  2. Environment variables (CEMS_API_URL, CEMS_API_KEY)
   3. ~/.cems/credentials — global fallback
 
 Project credentials: place a .cems/credentials file in your project root.
@@ -75,31 +75,30 @@ def _find_project_credentials(cwd: str) -> str | None:
 def resolve_credentials(cwd: str | None = None) -> dict[str, str]:
     """Resolve CEMS credentials with full precedence chain.
 
-    1. Environment variables (always win — useful for CI, testing)
-    2. Per-project .cems/credentials (walk up from CWD, stop before $HOME)
+    1. Per-project .cems/credentials (walk up from CWD, stop before $HOME)
+    2. Environment variables (both CEMS_API_URL and CEMS_API_KEY must be set)
     3. Global ~/.cems/credentials (fallback)
 
     Returns dict with all keys found (CEMS_API_URL, CEMS_API_KEY, etc.)
     """
-    # 1. Check env vars — require BOTH URL and key to be set.
+    # 1. Walk up from CWD looking for project .cems/credentials
+    if cwd:
+        project_path = _find_project_credentials(cwd)
+        if project_path:
+            return _parse_credentials_file(project_path)
+
+    # 2. Check env vars — require BOTH URL and key to be set.
     # Partial env (e.g., URL in env, key in file) is intentionally not supported
     # to avoid silently mixing credentials from different sources.
     env_url = os.environ.get("CEMS_API_URL", "")
     env_key = os.environ.get("CEMS_API_KEY", "")
     if env_url and env_key:
         result = {"CEMS_API_URL": env_url, "CEMS_API_KEY": env_key}
-        # Also pick up other env vars
         for k in ("CEMS_TEAM_ID", "CEMS_SEARCH_MODE"):
             v = os.environ.get(k, "")
             if v:
                 result[k] = v
         return result
-
-    # 2. Walk up from CWD looking for project .cems/credentials
-    if cwd:
-        project_path = _find_project_credentials(cwd)
-        if project_path:
-            return _parse_credentials_file(project_path)
 
     # 3. Global fallback
     return _parse_credentials_file(str(_get_credentials_path()))
@@ -170,11 +169,11 @@ def get_credentials_env(cwd: str | None = None) -> dict[str, str]:
     """Get a dict of CEMS env vars suitable for subprocess.Popen(env=...).
 
     Merges current os.environ with resolved credentials.
-    Env vars already set take priority (won't be overridden).
+    Resolved credentials always win (matches resolve_credentials precedence).
     """
     env = dict(os.environ)
     creds = resolve_credentials(cwd)
     for key in ("CEMS_API_URL", "CEMS_API_KEY", "CEMS_SEARCH_MODE"):
-        if not env.get(key) and key in creds:
+        if key in creds:
             env[key] = creds[key]
     return env
