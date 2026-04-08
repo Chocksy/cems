@@ -280,9 +280,16 @@ def _setup_credentials(api_url: str | None = None, api_key: str | None = None) -
     cems_dir = Path.home() / ".cems"
     creds_file = cems_dir / "credentials"
 
-    # Already configured
+    # Already configured — but offer project setup if interactive
     if creds_file.exists() and not api_key:
         console.print(f"[green]Credentials:[/green] {creds_file}")
+        if _is_interactive():
+            also_project = click.confirm(
+                "Also set up project-specific credentials in this directory?",
+                default=False,
+            )
+            if also_project:
+                _setup_project_credentials(None, None)
         return True
 
     # Non-interactive with explicit values — preserve existing custom keys
