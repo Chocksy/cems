@@ -38,6 +38,11 @@ def _get_config() -> tuple[str, str, str, str]:
 
 API_URL, API_KEY, SEARCH_MODE, TEAM_ID = _get_config()
 
+_NOT_CONFIGURED_MSG = (
+    "CEMS is not configured for this project. "
+    "Run: cems setup --project"
+)
+
 # ---------------------------------------------------------------------------
 # HTTP helpers (stdlib only — no extra deps)
 # ---------------------------------------------------------------------------
@@ -134,6 +139,8 @@ def memory_search(
     project: str | None = None,
 ) -> str:
     """Search memories using unified retrieval pipeline: query synthesis, vector+graph search, relevance filtering, temporal ranking, and token budgeting."""
+    if not API_URL:
+        return _NOT_CONFIGURED_MSG
     payload: dict = {
         "query": query,
         "scope": scope,
@@ -145,7 +152,7 @@ def memory_search(
     }
     if project:
         payload["project"] = project
-    # Pass search mode resolved at startup (env > project creds > global creds)
+    # Pass search mode resolved at startup (project creds > env > global creds)
     search_mode = SEARCH_MODE
     if search_mode:
         payload["mode"] = search_mode
@@ -166,6 +173,8 @@ def memory_add(
     source_ref: str | None = None,
 ) -> str:
     """Store a memory. Set infer=false for bulk imports (faster)."""
+    if not API_URL:
+        return _NOT_CONFIGURED_MSG
     payload: dict = {
         "content": content,
         "scope": scope,
@@ -184,6 +193,8 @@ def memory_forget(
     hard_delete: bool = False,
 ) -> str:
     """Delete or archive a memory."""
+    if not API_URL:
+        return _NOT_CONFIGURED_MSG
     return json.dumps(_request("POST", "/api/memory/forget", {
         "memory_id": memory_id,
         "hard_delete": hard_delete,
@@ -196,6 +207,8 @@ def memory_update(
     content: str,
 ) -> str:
     """Update an existing memory's content."""
+    if not API_URL:
+        return _NOT_CONFIGURED_MSG
     return json.dumps(_request("POST", "/api/memory/update", {
         "memory_id": memory_id,
         "content": content,
@@ -207,6 +220,8 @@ def memory_maintenance(
     job_type: str = "consolidation",
 ) -> str:
     """Run memory maintenance jobs (consolidation, distillation, summarization, reindex, all)."""
+    if not API_URL:
+        return _NOT_CONFIGURED_MSG
     return json.dumps(_request("POST", "/api/memory/maintenance", {
         "job_type": job_type,
     }))
@@ -218,6 +233,8 @@ def memory_pin(
     pin: bool = True,
 ) -> str:
     """Pin or unpin a memory. Pinned memories are protected from distillation, consolidation, and noise pruning."""
+    if not API_URL:
+        return _NOT_CONFIGURED_MSG
     return json.dumps(_request("POST", "/api/memory/pin", {
         "memory_id": memory_id,
         "pin": pin,
@@ -229,6 +246,8 @@ def memory_get(
     memory_id: str,
 ) -> str:
     """Get full document content by ID. Returns content_detailed (original full text) when available, otherwise content."""
+    if not API_URL:
+        return _NOT_CONFIGURED_MSG
     return json.dumps(_request("GET", f"/api/memory/get?id={memory_id}"))
 
 
@@ -237,18 +256,24 @@ def memory_get(
 @mcp.resource("memory://status")
 def memory_status() -> str:
     """Current status of the memory system."""
+    if not API_URL:
+        return _NOT_CONFIGURED_MSG
     return json.dumps(_request("GET", "/api/memory/status"), indent=2)
 
 
 @mcp.resource("memory://personal/summary")
 def memory_personal_summary() -> str:
     """Summary of personal memories."""
+    if not API_URL:
+        return _NOT_CONFIGURED_MSG
     return json.dumps(_request("GET", "/api/memory/summary/personal"), indent=2)
 
 
 @mcp.resource("memory://shared/summary")
 def memory_shared_summary() -> str:
     """Summary of shared team memories."""
+    if not API_URL:
+        return _NOT_CONFIGURED_MSG
     return json.dumps(_request("GET", "/api/memory/summary/shared"), indent=2)
 
 

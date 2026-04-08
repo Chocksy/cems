@@ -82,8 +82,8 @@ class TestResolveCredentials:
         # Walk-up stopped at fake_home, then fallback reads global via CEMS_CREDENTIALS_FILE
         assert result.get("CEMS_API_URL") == "https://global.cems.io"
 
-    def test_env_vars_override_project(self, tmp_path):
-        """Environment variables take priority over project .cems/credentials."""
+    def test_project_overrides_env_vars(self, tmp_path):
+        """Project .cems/credentials wins over environment variables."""
         # Create project credentials
         cems_dir = tmp_path / ".cems"
         cems_dir.mkdir()
@@ -97,6 +97,19 @@ class TestResolveCredentials:
             "CEMS_API_URL": "https://env.cems.io",
             "CEMS_API_KEY": "env_key",
         }):
+            result = resolve(cwd=str(tmp_path))
+
+        assert result["CEMS_API_URL"] == "https://project.cems.io"
+        assert result["CEMS_API_KEY"] == "project_key"
+
+    def test_env_vars_used_without_project_file(self, tmp_path):
+        """Env vars apply when no project .cems/credentials exists."""
+        resolve = self._get_resolve()
+        with patch.dict(os.environ, {
+            "CEMS_API_URL": "https://env.cems.io",
+            "CEMS_API_KEY": "env_key",
+            "CEMS_CREDENTIALS_FILE": "/dev/null",
+        }, clear=True):
             result = resolve(cwd=str(tmp_path))
 
         assert result["CEMS_API_URL"] == "https://env.cems.io"
@@ -297,3 +310,65 @@ class TestSignalCwd:
 
         assert sig is not None
         assert sig.cwd == ""  # Default empty string
+
+
+class TestSharedResolveCredentials:
+    """Tests for src/cems/shared/credentials.py resolve_credentials()."""
+
+    def test_project_overrides_env_vars(self, tmp_path):
+        """Project .cems/credentials wins over environment variables."""
+        from cems.shared.credentials import resolve_credentials
+
+        cems_dir = tmp_path / ".cems"
+        cems_dir.mkdir()
+        (cems_dir / "credentials").write_text(
+            "CEMS_API_URL=https://project.cems.io\n"
+            "CEMS_API_KEY=project_key\n"
+        )
+
+        with patch.dict(os.environ, {
+            "CEMS_API_URL": "https://env.cems.io",
+            "CEMS_API_KEY": "env_key",
+        }):
+            result = resolve_credentials(cwd=str(tmp_path))
+
+        assert result["CEMS_API_URL"] == "https://project.cems.io"
+        assert result["CEMS_API_KEY"] == "project_key"
+
+    def test_env_vars_used_without_project_file(self, tmp_path):
+        """Env vars apply when no project .cems/credentials exists."""
+        from cems.shared.credentials import resolve_credentials
+
+        with patch.dict(os.environ, {
+            "CEMS_API_URL": "https://env.cems.io",
+            "CEMS_API_KEY": "env_key",
+            "CEMS_CREDENTIALS_FILE": "/dev/null",
+        }, clear=True):
+            result = resolve_credentials(cwd=str(tmp_path))
+
+        assert result["CEMS_API_URL"] == "https://env.cems.io"
+        assert result["CEMS_API_KEY"] == "env_key"
+
+    def test_global_fallback(self, tmp_path):
+        """Global ~/.cems/credentials used when no project file and no env vars."""
+        from cems.shared.credentials import resolve_credentials
+
+        global_creds = tmp_path / "global_creds"
+        global_creds.write_text(
+            "CEMS_API_URL=https://global.cems.io\n"
+            "CEMS_API_KEY=global_key\n"
+        )
+
+        with patch.dict(os.environ, {"CEMS_CREDENTIALS_FILE": str(global_creds)}, clear=True):
+            result = resolve_credentials(cwd=str(tmp_path))
+
+        assert result["CEMS_API_URL"] == "https://global.cems.io"
+
+    def test_no_creds_returns_empty(self, tmp_path):
+        """No credentials anywhere returns empty dict."""
+        from cems.shared.credentials import resolve_credentials
+
+        with patch.dict(os.environ, {"CEMS_CREDENTIALS_FILE": "/dev/null"}, clear=True):
+            result = resolve_credentials(cwd=str(tmp_path))
+
+        assert result == {}
