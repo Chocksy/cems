@@ -13,8 +13,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Match the threshold used in write.py auto-link
-SIMILARITY_THRESHOLD = 0.75
+# Lower than write.py auto-link (0.75) to catch more semantic connections
+SIMILARITY_THRESHOLD = 0.65
 NEIGHBORS_PER_DOC = 10
 
 

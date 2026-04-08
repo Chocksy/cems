@@ -5,6 +5,9 @@
 !deploy/.env.example
 *.secrets
 
+# Binaries
+tailwindcss
+
 # Python
 .venv/
 __pycache__/

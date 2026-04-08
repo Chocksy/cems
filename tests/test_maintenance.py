@@ -549,78 +549,240 @@ class TestConsolidationJob:
 
 
 class TestSummarizationJob:
-    """Tests for the async SummarizationJob."""
+    """Tests for the async SummarizationJob (entity-aware: archive compiled, prune noise)."""
 
-    def test_summarization_no_old_docs(self, mock_memory):
-        """Returns zeros when no old documents found."""
+    def test_summarization_no_docs(self, mock_memory):
+        """Returns zeros when no documents found."""
         from cems.maintenance.summarization import SummarizationJob
 
         memory, doc_store, _ = mock_memory
         doc_store.get_all_documents = AsyncMock(return_value=[])
+        doc_store.get_compiled_sources = AsyncMock(return_value=[])
 
         job = SummarizationJob(memory)
         result = _run(job.run_async())
 
-        assert result["categories_updated"] == 0
-        assert result["memories_pruned"] == 0
-        assert result["never_shown_pruned"] == 0
-        assert result["old_memories_checked"] == 0
+        assert result["archived_compiled"] == 0
+        assert result["noise_pruned"] == 0
 
-    @patch("cems.llm.summarize_memories")
-    def test_summarization_compresses_category(self, mock_summarize, mock_memory):
-        """Compresses categories with 3+ old docs into summaries."""
+    def test_summarization_archives_compiled_sources(self, mock_memory):
+        """Archives memories that have been compiled into entity pages."""
         from cems.maintenance.summarization import SummarizationJob
 
         memory, doc_store, _ = mock_memory
-        mock_summarize.return_value = "Summary of debugging tips"
 
-        # 20 days old: qualifies for compression (14d+)
-        old_time = datetime.now(UTC) - timedelta(days=20)
-        docs = [
-            _make_doc(f"doc-{i}", f"Debugging tip {i}", category="debugging", created_at=old_time)
-            for i in range(4)
+        compiled_docs = [
+            _make_doc("doc-1", "Old compiled memory 1"),
+            _make_doc("doc-2", "Old compiled memory 2"),
+            _make_doc("doc-3", "Old compiled memory 3"),
         ]
 
-        doc_store.get_all_documents = AsyncMock(return_value=docs)
+        doc_store.get_all_documents = AsyncMock(return_value=[])
+        doc_store.get_compiled_sources = AsyncMock(return_value=compiled_docs)
         doc_store.delete_document = AsyncMock(return_value=True)
 
         job = SummarizationJob(memory)
         result = _run(job.run_async())
 
-        assert result["categories_updated"] == 1
-        assert result["originals_deleted"] == 4
-        mock_summarize.assert_called_once()
-        memory.add_async.assert_awaited_once()
+        assert result["archived_compiled"] == 3
+        assert doc_store.delete_document.await_count == 3
+        # Verify soft-delete (not hard)
+        for call in doc_store.delete_document.call_args_list:
+            assert call[1].get("hard") is False
 
-        # Verify the summary was stored with correct metadata
-        call_kwargs = memory.add_async.call_args[1]
-        assert call_kwargs["category"] == "category-summary"
-        assert "category:debugging" in call_kwargs["tags"]
-
-        # Verify originals were soft-deleted after summary was created
-        assert doc_store.delete_document.await_count == 4
-
-    @patch("cems.llm.summarize_memories")
-    def test_summarization_skips_small_categories(self, mock_summarize, mock_memory):
-        """Categories with fewer than 3 docs are not summarized."""
+    def test_summarization_prunes_noisy_memories(self, mock_memory):
+        """Prunes memories with >50% noise rate and >=5 signals."""
         from cems.maintenance.summarization import SummarizationJob
 
         memory, doc_store, _ = mock_memory
 
-        old_time = datetime.now(UTC) - timedelta(days=60)
-        docs = [
-            _make_doc("doc-1", "Tip 1", category="small-cat", created_at=old_time),
-            _make_doc("doc-2", "Tip 2", category="small-cat", created_at=old_time),
-        ]
+        noisy_doc = _make_doc("noisy-1", "Always irrelevant")
+        noisy_doc["relevant_count"] = 1
+        noisy_doc["noise_count"] = 5  # 83% noise rate
 
-        doc_store.get_all_documents = AsyncMock(return_value=docs)
+        clean_doc = _make_doc("clean-1", "Mostly relevant")
+        clean_doc["relevant_count"] = 8
+        clean_doc["noise_count"] = 2  # 20% noise rate
+
+        doc_store.get_all_documents = AsyncMock(return_value=[noisy_doc, clean_doc])
+        doc_store.get_compiled_sources = AsyncMock(return_value=[])
         doc_store.delete_document = AsyncMock(return_value=True)
 
         job = SummarizationJob(memory)
         result = _run(job.run_async())
 
-        assert result["categories_updated"] == 0
-        mock_summarize.assert_not_called()
+        assert result["noise_pruned"] == 1
+        doc_store.delete_document.assert_awaited_once_with(
+            "noisy-1", hard=False, user_id=TEST_UUID
+        )
+
+    def test_summarization_skips_protected_categories_for_noise(self, mock_memory):
+        """Protected categories are not pruned even if noisy."""
+        from cems.maintenance.summarization import SummarizationJob
+
+        memory, doc_store, _ = mock_memory
+
+        protected_doc = _make_doc("gate-1", "Gate rule", category="gate-rules")
+        protected_doc["relevant_count"] = 0
+        protected_doc["noise_count"] = 10
+
+        doc_store.get_all_documents = AsyncMock(return_value=[protected_doc])
+        doc_store.get_compiled_sources = AsyncMock(return_value=[])
+        doc_store.delete_document = AsyncMock(return_value=True)
+
+        job = SummarizationJob(memory)
+        result = _run(job.run_async())
+
+        assert result["noise_pruned"] == 0
+
+
+class TestOrphanAssignerJob:
+    """Tests for the OrphanAssignerJob — LLM-based orphan assignment."""
+
+    def test_orphan_assigner_no_entity_pages(self, mock_memory):
+        """Returns early when no entity pages exist."""
+        from cems.maintenance.orphan_assigner import OrphanAssignerJob
+
+        memory, doc_store, _ = mock_memory
+        pool = AsyncMock()
+        pool.fetch = AsyncMock(return_value=[])
+        doc_store._get_pool = AsyncMock(return_value=pool)
+
+        job = OrphanAssignerJob(memory)
+        result = _run(job.run_async())
+
+        assert result["orphans_found"] == 0
+        assert result["assigned"] == 0
+        assert "no entity pages" in result.get("message", "")
+
+    def test_orphan_assigner_no_orphans(self, mock_memory):
+        """Returns early when no orphan memories found."""
+        from cems.maintenance.orphan_assigner import OrphanAssignerJob
+
+        memory, doc_store, _ = mock_memory
+        pool = AsyncMock()
+        # First call: entity pages (returns some)
+        entity_row = MagicMock()
+        entity_row.__getitem__ = lambda s, k: {
+            "id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+            "title": "Docker Setup",
+            "summary": "How to set up Docker...",
+        }[k]
+        # Second call: orphans (returns none)
+        pool.fetch = AsyncMock(side_effect=[[entity_row], []])
+        doc_store._get_pool = AsyncMock(return_value=pool)
+
+        job = OrphanAssignerJob(memory)
+        result = _run(job.run_async())
+
+        assert result["orphans_found"] == 0
+        assert result["assigned"] == 0
+
+    @patch("cems.llm.client.get_client")
+    def test_orphan_assigner_assigns_matching_orphan(self, mock_get_client, mock_memory):
+        """Assigns orphan to matching entity page via LLM."""
+        from cems.maintenance.orphan_assigner import OrphanAssignerJob
+
+        memory, doc_store, _ = mock_memory
+
+        entity_id = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+
+        # Mock the LLM client
+        mock_client = MagicMock()
+        mock_client.complete.return_value = "aaaaaaaa"
+        mock_get_client.return_value = mock_client
+
+        # Mock _get_entity_index and _get_orphan_memories directly
+        job = OrphanAssignerJob(memory)
+        job._get_entity_index = AsyncMock(return_value=[
+            {"id": entity_id, "title": "Docker Setup", "summary": "Docker..."},
+        ])
+        job._get_orphan_memories = AsyncMock(return_value=[
+            {"id": "orphan-1", "content": "Docker build failed on Mac", "category": "general", "source_ref": None},
+        ])
+        doc_store.add_relations = AsyncMock(return_value=1)
+
+        result = _run(job.run_async())
+
+        assert result["orphans_found"] == 1
+        assert result["assigned"] == 1
+        # Both forward and reverse relations should be added
+        assert doc_store.add_relations.await_count == 2
+        # Verify 'assigned_to' type (not 'compiled_from') to prevent archival
+        for call in doc_store.add_relations.call_args_list:
+            rel = call[0][1][0]
+            assert rel["relation_type"] == "assigned_to"
+
+    @patch("cems.llm.client.get_client")
+    def test_orphan_assigner_skips_no_match(self, mock_get_client, mock_memory):
+        """Skips orphans that don't match any entity page."""
+        from cems.maintenance.orphan_assigner import OrphanAssignerJob
+
+        memory, doc_store, _ = mock_memory
+
+        mock_client = MagicMock()
+        mock_client.complete.return_value = "none"
+        mock_get_client.return_value = mock_client
+
+        job = OrphanAssignerJob(memory)
+        job._get_entity_index = AsyncMock(return_value=[
+            {"id": "aaaaaaaa-1111-2222-3333-444444444444", "title": "Docker Setup", "summary": "Docker..."},
+        ])
+        job._get_orphan_memories = AsyncMock(return_value=[
+            {"id": "orphan-1", "content": "Unrelated cooking recipe", "category": "general", "source_ref": None},
+        ])
+
+        result = _run(job.run_async())
+
+        assert result["orphans_found"] == 1
+        assert result["assigned"] == 0
+        assert result["skipped"] == 1
+        doc_store.add_relations.assert_not_awaited()
+
+class TestCompilationJob:
+    """Tests for CompilationJob — entity page synthesis from clusters."""
+
+    def test_compilation_excludes_entity_pages_from_clusters(self, mock_memory):
+        """Entity-page docs should not appear in discovered clusters."""
+        from cems.maintenance.compilation import CompilationJob
+
+        memory, doc_store, embedder = mock_memory
+
+        # Mock pool with edges that include an entity-page source
+        pool = AsyncMock()
+        # Return edges where source is entity-page (should be excluded by query)
+        pool.fetch = AsyncMock(return_value=[])  # No 'similar' edges
+        pool.acquire = MagicMock()
+        pool.acquire.return_value.__aenter__ = AsyncMock(return_value=pool)
+        pool.acquire.return_value.__aexit__ = AsyncMock()
+        doc_store._get_pool = AsyncMock(return_value=pool)
+
+        job = CompilationJob(memory)
+        result = _run(job.run_async(limit=5))
+
+        assert result["clusters_found"] == 0
+        assert result["pages_created"] == 0
+
+    def test_compilation_empty_returns_zeros(self, mock_memory):
+        """No clusters means no pages."""
+        from cems.maintenance.compilation import CompilationJob
+
+        memory, doc_store, _ = mock_memory
+
+        pool = AsyncMock()
+        pool.fetch = AsyncMock(return_value=[])
+        pool.acquire = MagicMock()
+        pool.acquire.return_value.__aenter__ = AsyncMock(return_value=pool)
+        pool.acquire.return_value.__aexit__ = AsyncMock()
+        doc_store._get_pool = AsyncMock(return_value=pool)
+
+        job = CompilationJob(memory)
+        result = _run(job.run_async())
+
+        assert result["clusters_found"] == 0
+        assert result["pages_created"] == 0
+        assert result["pages_updated"] == 0
+
 
 class TestReindexJob:
     """Tests for the async ReindexJob."""
@@ -739,13 +901,14 @@ class TestSchedulerIntegration:
 
         memory, doc_store, _ = mock_memory
         doc_store.get_all_documents = AsyncMock(return_value=[])
+        doc_store.get_compiled_sources = AsyncMock(return_value=[])
 
         config = memory.config
         scheduler = CEMSScheduler(config)
         result = scheduler.run_now("summarization", memory)
 
-        assert "categories_updated" in result
-        assert "memories_pruned" in result
+        assert "archived_compiled" in result
+        assert "noise_pruned" in result
 
     def test_run_now_reindex(self, mock_memory):
         """run_now('reindex') dispatches to ReindexJob.run_async."""

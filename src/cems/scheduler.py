@@ -12,6 +12,7 @@ from cems.maintenance.consolidation import ConsolidationJob
 from cems.maintenance.distillation import DistillationJob
 from cems.maintenance.lint import LintJob
 from cems.maintenance.observation_reflector import ObservationReflector
+from cems.maintenance.orphan_assigner import OrphanAssignerJob
 from cems.maintenance.reindex import ReindexJob
 from cems.maintenance.relation_builder import RelationBuilderJob
 from cems.maintenance.summarization import SummarizationJob
@@ -115,9 +116,9 @@ class CEMSScheduler:
 
         self._scheduler.add_job(
             self._run_compilation,
-            CronTrigger(minute="*/10"),
+            CronTrigger(hour="*/6"),
             id="entity_compilation",
-            name="Entity Compilation (10min)",
+            name="Entity Compilation (6h)",
             replace_existing=True,
         )
 
@@ -127,6 +128,15 @@ class CEMSScheduler:
             CronTrigger(hour=self.config.nightly_hour, minute=45),
             id="daily_lint",
             name="Daily Knowledge Lint",
+            replace_existing=True,
+        )
+
+        # Orphan assigner: daily at 4:55 AM (avoids */10 relation_builder/compilation)
+        self._scheduler.add_job(
+            self._run_orphan_assigner,
+            CronTrigger(hour=self.config.nightly_hour, minute=55),
+            id="daily_orphan_assigner",
+            name="Daily Orphan Assigner",
             replace_existing=True,
         )
 
@@ -180,6 +190,9 @@ class CEMSScheduler:
     def _run_lint(self) -> None:
         self._run_for_all_users("lint")
 
+    def _run_orphan_assigner(self) -> None:
+        self._run_for_all_users("orphan_assigner")
+
     def start(self) -> None:
         """Start the scheduler."""
         if not self._scheduler.running:
@@ -206,7 +219,7 @@ class CEMSScheduler:
         Returns:
             Job result dict (single user) or dict of user_id -> result (all users)
         """
-        valid_jobs = {"consolidation", "distillation", "summarization", "reindex", "reflect", "relations", "compilation", "lint"}
+        valid_jobs = {"consolidation", "distillation", "summarization", "reindex", "reflect", "relations", "compilation", "lint", "orphan_assigner"}
         if job_type not in valid_jobs:
             raise ValueError(f"Unknown job type: {job_type}. Use: {sorted(valid_jobs)}")
 
@@ -239,6 +252,7 @@ class CEMSScheduler:
             "relations": lambda: RelationBuilderJob(memory).run_async(limit=100),
             "compilation": lambda: CompilationJob(memory).run_async(limit=20),
             "lint": lambda: LintJob(memory).run_async(detect_contradictions=False),
+            "orphan_assigner": lambda: OrphanAssignerJob(memory).run_async(**kwargs),
         }
         return _run_async(jobs[job_type]())
 

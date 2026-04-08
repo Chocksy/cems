@@ -1551,6 +1551,64 @@ class DocumentStore:
 
         return count or 0
 
+    async def get_compiled_sources(
+        self,
+        user_id: str,
+        min_age_days: int = 14,
+        max_shown_count: int = 20,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        """Get source memories that have been compiled into entity pages.
+
+        Returns documents that:
+        - Have a compiled_from relation (are targets of an entity page)
+        - Are older than min_age_days
+        - Have shown_count below max_shown_count (not hot)
+        - Are not soft-deleted and not in protected categories
+
+        Args:
+            user_id: User ID
+            min_age_days: Minimum age in days
+            max_shown_count: Maximum shown_count (hot threshold)
+            limit: Maximum results
+
+        Returns:
+            List of document dicts eligible for archival
+        """
+        pool = await self._get_pool()
+        user_uuid = UUID(user_id)
+
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                f"""
+                SELECT {DOCUMENT_COLUMNS}
+                FROM memory_documents d
+                WHERE d.user_id = $1
+                  AND d.deleted_at IS NULL
+                  AND d.category NOT IN (
+                      'entity-page', 'gate-rules', 'guidelines',
+                      'preferences', 'category-summary', 'session-summary'
+                  )
+                  AND d.created_at < NOW() - INTERVAL '1 day' * $2
+                  AND COALESCE(d.shown_count, 0) < $3
+                  AND NOT ('pinned' = ANY(COALESCE(d.tags, ARRAY[]::text[])))
+                  AND EXISTS (
+                      SELECT 1 FROM memory_relations r
+                      JOIN memory_documents ep ON r.source_id = ep.id
+                      WHERE r.target_id = d.id
+                        AND r.relation_type = 'compiled_from'
+                        AND ep.deleted_at IS NULL
+                        AND ep.category = 'entity-page'
+                        AND ep.user_id = d.user_id
+                  )
+                ORDER BY d.created_at ASC
+                LIMIT $4
+                """,
+                user_uuid, min_age_days, max_shown_count, limit,
+            )
+
+        return [self._doc_row_to_dict(row) for row in rows]
+
     # =========================================================================
     # Utility Operations
     # =========================================================================

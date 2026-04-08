@@ -1164,6 +1164,17 @@ async def api_memory_maintenance(request: Request):
                 "results": result,
             })
 
+        if job_type == "orphan_assigner":
+            from cems.maintenance.orphan_assigner import OrphanAssignerJob
+            result = await OrphanAssignerJob(memory).run_async(
+                limit=sweep_limit or 50,
+            )
+            return JSONResponse({
+                "success": True,
+                "job_type": job_type,
+                "results": result,
+            })
+
         jobs = {
             "distillation": DistillationJob(memory).run_async,
             "summarization": SummarizationJob(memory).run_async,
@@ -1173,7 +1184,7 @@ async def api_memory_maintenance(request: Request):
         if job_type not in jobs:
             return JSONResponse({
                 "success": False,
-                "error": f"Unknown job type: {job_type}. Use: consolidation, distillation, summarization, reindex, reflect, relations, all",
+                "error": f"Unknown job type: {job_type}. Use: consolidation, distillation, summarization, reindex, reflect, relations, compilation, orphan_assigner, lint, all",
             }, status_code=400)
 
         result = await jobs[job_type]()

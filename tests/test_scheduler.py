@@ -20,6 +20,8 @@ def _make_async_memory(user_id: str) -> MagicMock:
     doc_store.get_recent_documents.return_value = []
     doc_store.get_all_documents.return_value = []
     doc_store.get_documents_by_category.return_value = []
+    doc_store.get_compiled_sources.return_value = []
+    doc_store._get_pool.return_value = AsyncMock(fetch=AsyncMock(return_value=[]))
 
     mock._ensure_document_store = AsyncMock(return_value=doc_store)
     mock._ensure_initialized_async = AsyncMock()
@@ -72,7 +74,8 @@ class TestSchedulerInit:
         assert "relation_builder" in job_ids
         assert "entity_compilation" in job_ids
         assert "daily_lint" in job_ids
-        assert len(jobs) == 8
+        assert "daily_orphan_assigner" in job_ids
+        assert len(jobs) == 9
 
     def test_scheduler_start_stop(self, scheduler):
         """Scheduler should start and stop without errors."""

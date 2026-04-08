@@ -12,6 +12,7 @@ Follows the standard async maintenance job pattern.
 import logging
 from collections import defaultdict
 from typing import TYPE_CHECKING
+from uuid import UUID
 
 if TYPE_CHECKING:
     from cems.memory import CEMSMemory
@@ -19,7 +20,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # Minimum cluster size to generate an entity page
-MIN_CLUSTER_SIZE = 3
+MIN_CLUSTER_SIZE = 2
 # Maximum memories to include in a single entity page synthesis
 MAX_CLUSTER_CONTENT = 15
 
@@ -91,18 +92,21 @@ class CompilationJob:
         Returns list of clusters, each cluster is a list of document dicts.
         Sorted by cluster size descending.
         """
-        from uuid import UUID
         pool = await doc_store._get_pool()
         user_uuid = UUID(user_id)
 
-        # Get all relations for this user's documents
+        # Get only 'similar' relations (not compiled_from/assigned_to which are
+        # compilation artifacts, not semantic edges for clustering)
         async with pool.acquire() as conn:
             edges = await conn.fetch(
                 """
                 SELECT r.source_id, r.target_id
                 FROM memory_relations r
                 JOIN memory_documents s ON r.source_id = s.id
-                WHERE s.user_id = $1 AND s.deleted_at IS NULL
+                WHERE s.user_id = $1
+                  AND s.deleted_at IS NULL
+                  AND s.category != 'entity-page'
+                  AND r.relation_type = 'similar'
                 """,
                 user_uuid,
             )
@@ -143,13 +147,13 @@ class CompilationJob:
         # Sort by size descending (biggest clusters first)
         components.sort(key=len, reverse=True)
 
-        # Fetch document content for each cluster
+        # Fetch document content for each cluster (exclude entity pages)
         result = []
         for component in components:
             docs = []
             for doc_id in component[:MAX_CLUSTER_CONTENT]:
                 doc = await doc_store.get_document(doc_id, user_id=user_id)
-                if doc:
+                if doc and doc.get("category") != "entity-page":
                     docs.append(doc)
             if len(docs) >= min_size:
                 result.append(docs)
@@ -180,6 +184,23 @@ class CompilationJob:
         if existing and not force:
             return "skipped"
 
+        # Extract content from cluster docs (needed for both dedup recompile and fresh compile)
+        contents = []
+        categories = set()
+        source_refs = set()
+        for doc in cluster_docs:
+            content = doc.get("content_detailed") or doc.get("content", "")
+            if content:
+                contents.append(content)  # Full content — no truncation
+            cat = doc.get("category", "general")
+            categories.add(cat)
+            ref = doc.get("source_ref")
+            if ref:
+                source_refs.add(ref)
+
+        if not contents:
+            return None
+
         # Dedup: check if a similar entity page already exists (cosine similarity)
         # This prevents near-duplicate entity pages about the same concept
         await self.memory._ensure_initialized_async()
@@ -197,28 +218,51 @@ class CompilationJob:
                     )
                     for ent in existing_entities:
                         if ent.get("score", 0) > 0.85:
-                            logger.info(
-                                f"Skipping cluster — similar entity page exists "
-                                f"(score={ent['score']:.2f}, doc={ent['document_id'][:8]})"
+                            existing_entity_id = ent.get("document_id")
+                            # Check if cluster has new members not in existing entity's sources
+                            existing_sources = await doc_store.get_related_documents(
+                                existing_entity_id, user_id=user_id,
+                                relation_type="compiled_from", limit=100,
                             )
+                            existing_source_ids = {str(s["id"]) for s in existing_sources}
+                            cluster_ids = {str(d["id"]) for d in cluster_docs}
+                            new_members = [d for d in cluster_docs
+                                           if str(d["id"]) not in existing_source_ids]
+                            if not new_members:
+                                return "skipped"  # No new content
+                            # Require source overlap: at least 30% of existing sources
+                            # must be in current cluster to confirm same topic
+                            overlap = existing_source_ids & cluster_ids
+                            if existing_source_ids and len(overlap) / len(existing_source_ids) < 0.3:
+                                continue  # Different topic, check next entity
+                            # Recompile: update existing entity page with full cluster
+                            entity_content = await self._synthesize_entity(contents, categories)
+                            if entity_content:
+                                lines = entity_content.strip().split("\n")
+                                title = lines[0].lstrip("# ").strip()[:100]
+                                await self.memory.update_async(
+                                    existing_entity_id, entity_content,
+                                )
+                                await self._update_title(doc_store, existing_entity_id, title)
+                                # Add relations for new members (both directions)
+                                for d in new_members:
+                                    await doc_store.add_relations(
+                                        existing_entity_id,
+                                        [{"target_id": d["id"], "relation_type": "compiled_from",
+                                          "similarity": 1.0}],
+                                    )
+                                    await doc_store.add_relations(
+                                        d["id"],
+                                        [{"target_id": existing_entity_id,
+                                          "relation_type": "compiled_from",
+                                          "similarity": 1.0}],
+                                    )
+                                logger.info(
+                                    f"Updated entity page {existing_entity_id[:8]} "
+                                    f"with {len(new_members)} new members"
+                                )
+                                return "updated"
                             return "skipped"
-
-        # Synthesize the entity page content
-        contents = []
-        categories = set()
-        source_refs = set()
-        for doc in cluster_docs:
-            content = doc.get("content_detailed") or doc.get("content", "")
-            if content:
-                contents.append(content)  # Full content — no truncation
-            cat = doc.get("category", "general")
-            categories.add(cat)
-            ref = doc.get("source_ref")
-            if ref:
-                source_refs.add(ref)
-
-        if not contents:
-            return None
 
         # LLM synthesis
         entity_content = await self._synthesize_entity(contents, categories)
@@ -238,12 +282,8 @@ class CompilationJob:
         # Store or update the entity page
         if existing and force:
             doc_id = existing[0]["id"]
-            await doc_store.update_document(
-                doc_id,
-                content=entity_content,
-                title=title,
-                user_id=user_id,
-            )
+            await self.memory.update_async(doc_id, entity_content)
+            await self._update_title(doc_store, doc_id, title)
             return "updated"
 
         # Create new entity page
@@ -282,6 +322,16 @@ class CompilationJob:
                     )
 
         return "created"
+
+    @staticmethod
+    async def _update_title(doc_store, document_id: str, title: str) -> None:
+        """Update a document's title via direct SQL."""
+        pool = await doc_store._get_pool()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                "UPDATE memory_documents SET title = $1 WHERE id = $2",
+                title, UUID(document_id),
+            )
 
     async def _synthesize_entity(
         self, contents: list[str], categories: set[str]
