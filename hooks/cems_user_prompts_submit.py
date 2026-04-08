@@ -86,6 +86,67 @@ def _clean_search_query(text: str) -> str:
     return cleaned
 
 
+def _format_agentic_response(data: dict) -> tuple[str | None, list[str], list[bool], list[dict]]:
+    """Format agentic search results with entity-first layout.
+
+    Returns (formatted_string, memory_ids, truncation_flags, score_details) tuple.
+    """
+    parts = []
+    memory_ids = []
+    truncation_flags = []
+    score_details = []
+
+    entities = data.get("entities", [])
+    memories = data.get("memories", data.get("results", []))[:3]
+
+    if entities:
+        parts.append("KNOWLEDGE TOPICS matching your query:\n")
+        for i, e in enumerate(entities, 1):
+            sources = f" ({e['sources']} sources)" if e.get("sources") else ""
+            parts.append(f"{i}. {e['title']}{sources}")
+            if e.get("summary"):
+                parts.append(f"   {e['summary']}")
+            short_id = e.get("id", "")[:8]
+            parts.append(f"   \u2192 /recall {short_id} for full details")
+            if e.get("id"):
+                memory_ids.append(e["id"])
+        parts.append("")
+
+    if memories:
+        parts.append("RELEVANT MEMORIES:")
+        for i, m in enumerate(memories, 1):
+            category = m.get("category", "general")
+            content = m.get("content", m.get("memory", ""))
+            mem_id = m.get("memory_id", m.get("id", ""))
+            short_id = mem_id[:8] if mem_id else ""
+            score = m.get("score", 0.0)
+            truncated = m.get("truncated", False)
+            full_len = m.get("full_length", 0)
+            suffix = f" [truncated — full doc: {full_len} chars]" if truncated else ""
+            parts.append(f"{i}. [{category}] (score: {score:.2f}) {content}{suffix} (id: {short_id})")
+            truncation_flags.append(truncated)
+            if mem_id:
+                memory_ids.append(mem_id)
+            score_details.append({"id": short_id, "score": round(score, 3), "category": category, "content": content})
+
+    if not entities and not memories:
+        return None, [], [], []
+
+    # Add retrieval summary
+    n_entities = len(entities)
+    n_memories = len(memories)
+    total_candidates = data.get("total_candidates", 0)
+    entity_candidates = data.get("entity_candidates", 0)
+    parts.append(
+        f"\n--- Agentic retrieval: {n_entities} topics, {n_memories} memories "
+        f"from {total_candidates} memories + {entity_candidates} entity pages ---"
+    )
+    if entities:
+        parts.append("Use /recall <id> to read full topic pages for deeper context.")
+
+    return "\n".join(parts), memory_ids, truncation_flags, score_details
+
+
 def search_cems(client: CEMSClient, query: str, project: str | None = None) -> tuple[str | None, list[str], list[bool], list[dict]]:
     """Search CEMS for relevant memories.
 
@@ -99,16 +160,24 @@ def search_cems(client: CEMSClient, query: str, project: str | None = None) -> t
         if project:
             payload["project"] = project  # Boosts same-project memories via source_ref scoring
 
+        # Pass search mode from credentials if configured
+        if client.search_mode:
+            payload["mode"] = client.search_mode
+
         response = client.post("/api/memory/search", json=payload)
 
         if response.status_code != 200:
             return None, [], [], []
 
         data = response.json()
-        if not data.get("success") or not data.get("results"):
+        if not data.get("success"):
             return None, [], [], []
 
-        results = data["results"]
+        # Agentic mode returns structured {entities, memories} — use entity-first formatting
+        if data.get("entities") is not None or data.get("mode") == "agentic":
+            return _format_agentic_response(data)
+
+        results = data.get("results", [])
         if not results:
             return None, [], [], []
 

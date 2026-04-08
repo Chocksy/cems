@@ -1,8 +1,11 @@
 """Agentic search: LLM agents replace embeddings for memory retrieval.
 
 Inspired by Supermemory's ASMR (Agentic Search and Memory Retrieval).
-Three parallel search agents (Direct Seeker, Inference Engine, Temporal Navigator)
-reason over stored memories to find relevant results.
+Four parallel search agents:
+  - Entity Picker: searches entity page summaries (~100 docs, ~50K chars)
+  - Direct Seeker, Inference Engine, Temporal Navigator: search raw memories
+
+Returns structured response: {entities: [...], memories: [...], results: [...]}
 
 Usage in the API:
     POST /api/memory/search {"mode": "agentic", "query": "..."}
@@ -64,6 +67,31 @@ AGENT_SYSTEM_PROMPTS = {
     ),
 }
 
+ENTITY_PICKER_SYSTEM = (
+    "You are a Topic Matcher — a knowledge retrieval specialist.\n\n"
+    "You receive a list of knowledge topic pages (entity pages). Each has a title "
+    "and a brief summary synthesized from multiple source memories.\n\n"
+    "Your task: given a user question, identify which topic pages are most likely "
+    "to contain relevant knowledge. Return the IDs of the most relevant topics.\n\n"
+    "Prefer topics that DIRECTLY address the question over loosely related ones.\n"
+    "Return at most 5 IDs, ranked by relevance. If none are relevant, return an empty array."
+)
+
+ENTITY_PICKER_USER_PROMPT = """I need to find which knowledge topics are relevant to this question:
+
+QUESTION: {question}
+{project_context}
+Below are {n} knowledge topic pages. Each has a title and summary.
+
+{formatted_entities}
+
+Return a JSON array of topic IDs ranked by relevance, most relevant first.
+Return ONLY IDs that are relevant. If none seem relevant, return an empty array.
+Return at most 5 IDs.
+
+Example output: ["abc12345", "def67890"]"""
+
+
 SEARCH_USER_PROMPT = """I need to find which stored memories are relevant to answering this question:
 
 QUESTION: {question}
@@ -108,6 +136,126 @@ def _format_memories_for_agents(memories: list[dict]) -> str:
             f"{content}"
         )
     return "\n\n".join(parts)
+
+
+async def _load_entity_summaries(
+    document_store,
+    user_id: str,
+    project: str | None = None,
+    limit: int = 200,
+) -> list[dict]:
+    """Load entity page summaries for entity picker agent.
+
+    Returns compact list: id, title, summary, source count.
+    Same query pattern as api_wiki_index.
+    """
+    from uuid import UUID
+
+    pool = await document_store._get_pool()
+    user_uuid = UUID(user_id)
+
+    async with pool.acquire() as conn:
+        if project:
+            rows = await conn.fetch(
+                """
+                SELECT id, title, content, source_ref, tags
+                FROM memory_documents
+                WHERE user_id = $1 AND category = 'entity-page'
+                  AND deleted_at IS NULL AND source_ref LIKE $2
+                ORDER BY COALESCE(shown_count, 0) DESC
+                LIMIT $3
+                """,
+                user_uuid,
+                f"project:{project}%",
+                limit,
+            )
+        else:
+            rows = await conn.fetch(
+                """
+                SELECT id, title, content, source_ref, tags
+                FROM memory_documents
+                WHERE user_id = $1 AND category = 'entity-page' AND deleted_at IS NULL
+                ORDER BY COALESCE(shown_count, 0) DESC
+                LIMIT $2
+                """,
+                user_uuid,
+                limit,
+            )
+
+    entries = []
+    for row in rows:
+        title = row["title"] or ""
+        content = row["content"] or ""
+        # Extract first 2-3 sentences as summary (skip title line)
+        sentences = content.replace("\n", " ").split(". ")
+        summary = ". ".join(sentences[1:4]).strip()
+        if len(summary) > 200:
+            summary = summary[:200] + "..."
+
+        cluster_size = ""
+        for tag in (row["tags"] or []):
+            if tag.startswith("cluster-size:"):
+                cluster_size = tag.split(":")[1]
+
+        entries.append({
+            "id": str(row["id"]),
+            "title": title,
+            "summary": summary,
+            "sources": cluster_size,
+        })
+    return entries
+
+
+def _format_entities_for_picker(entities: list[dict]) -> str:
+    """Format entity summaries for entity picker agent context."""
+    parts = []
+    for ent in entities:
+        eid = ent.get("id", "")[:8]
+        title = ent.get("title", "")
+        summary = ent.get("summary", "")
+        sources = ent.get("sources", "")
+        source_info = f", {sources} sources" if sources else ""
+        parts.append(
+            f"--- Topic {eid} (title: {title}{source_info}) ---\n"
+            f"{summary}"
+        )
+    return "\n\n".join(parts)
+
+
+def _run_entity_picker(
+    question: str,
+    entities_text: str,
+    n_entities: int,
+    model: str,
+    project: str | None = None,
+) -> tuple[str, str | list[str]]:
+    """Run entity picker agent. Thread-safe. Returns (role, raw_response)."""
+    project_context = f"\nCURRENT PROJECT: {project}\n" if project else ""
+    user_prompt = ENTITY_PICKER_USER_PROMPT.format(
+        question=question,
+        n=n_entities,
+        formatted_entities=entities_text,
+        project_context=project_context,
+    )
+
+    client = get_client()
+    try:
+        response = client.complete(
+            prompt=user_prompt,
+            system=ENTITY_PICKER_SYSTEM,
+            model=model,
+            temperature=0.1,
+            max_tokens=500,
+            fast_route=False,
+        )
+    except Exception as e:
+        logger.warning(f"Entity picker agent failed: {e}")
+        return "entity_picker", []
+
+    if not response:
+        return "entity_picker", []
+
+    return "entity_picker", response
 
 
 def _parse_agent_response(response: str, valid_ids: set[str]) -> list[str]:
@@ -317,14 +465,15 @@ async def agentic_search_async(
     model: str = DEFAULT_MODEL,
     project: str | None = None,
 ) -> dict:
-    """Run agentic search using smart 3-bucket context loading.
+    """Run agentic search with entity-first architecture.
 
-    Loads memories from 3 sources:
-    1. Current project memories (all time)
-    2. Profile memories (preferences, guidelines, etc.)
-    3. Recent memories (last 14 days, any project)
+    Runs 4 parallel agents:
+      1. Entity Picker: searches entity page summaries (~100 docs, ~50K chars)
+      2. Direct Seeker: searches raw memories for exact matches
+      3. Inference Engine: searches raw memories for implicit connections
+      4. Temporal Navigator: searches raw memories for temporal relevance
 
-    Then runs 3 parallel search agents and merges via RRF.
+    Returns structured response with separate entities and memories arrays.
 
     Args:
         document_store: DocumentStore instance
@@ -337,57 +486,87 @@ async def agentic_search_async(
         project: Project ID for project-scoped filtering
 
     Returns:
-        Dict matching the standard search response format
+        Dict with entities, memories, and results (backward compat) arrays
     """
-    # Smart context loading: 3 buckets
-    memories = await _load_context_memories(
-        document_store, user_id, project=project, scope=scope,
+    # Load entity summaries and raw memories in parallel
+    entity_summaries, memories = await asyncio.gather(
+        _load_entity_summaries(document_store, user_id, project=project),
+        _load_context_memories(document_store, user_id, project=project, scope=scope),
     )
 
-    if not memories:
-        return {
-            "results": [],
-            "count": 0,
-            "mode": "agentic",
-            "tokens_used": 0,
-            "queries_used": 0,
-            "total_candidates": 0,
-            "filtered_count": 0,
-        }
+    empty_response = {
+        "entities": [],
+        "memories": [],
+        "results": [],
+        "count": 0,
+        "mode": "agentic",
+        "tokens_used": 0,
+        "queries_used": 0,
+        "total_candidates": 0,
+        "entity_candidates": len(entity_summaries),
+        "filtered_count": 0,
+    }
 
-    # Format all memories for agents
-    memories_text = _format_memories_for_agents(memories)
+    if not memories and not entity_summaries:
+        return empty_response
+
+    # Format memories for memory agents
+    memories_text = _format_memories_for_agents(memories) if memories else ""
     n_memories = len(memories)
 
-    # Build valid ID set (short IDs for response parsing)
-    id_to_full: dict[str, str] = {}
+    # Build valid memory ID set
+    mem_id_to_full: dict[str, str] = {}
     for mem in memories:
         short_id = str(mem.get("id", ""))[:8]
-        id_to_full[short_id] = str(mem.get("id", ""))
-    valid_ids = set(id_to_full.keys())
+        mem_id_to_full[short_id] = str(mem.get("id", ""))
+    valid_mem_ids = set(mem_id_to_full.keys())
 
-    # Run 3 search agents in parallel using ThreadPoolExecutor
+    # Build valid entity ID set
+    ent_id_to_full: dict[str, dict] = {}
+    for ent in entity_summaries:
+        short_id = ent.get("id", "")[:8]
+        ent_id_to_full[short_id] = ent
+    valid_ent_ids = set(ent_id_to_full.keys())
+
+    # Run 4 agents in parallel
     loop = asyncio.get_running_loop()
-    rankings: list[list[str]] = []
+    memory_rankings: list[list[str]] = []
+    entity_ranking: list[str] = []
 
-    with ThreadPoolExecutor(max_workers=3) as pool:
+    with ThreadPoolExecutor(max_workers=4) as pool:
         futures = []
-        for role in AGENT_SYSTEM_PROMPTS:
-            future = loop.run_in_executor(
-                pool,
-                _run_single_agent,
-                role, query, memories_text, n_memories, model, project,
-            )
-            futures.append(future)
 
-        # Server-side timeout: prevent orphaned LLM requests if hook times out
+        # Entity picker agent (if entity pages exist)
+        if entity_summaries:
+            entities_text = _format_entities_for_picker(entity_summaries)
+            futures.append(
+                loop.run_in_executor(
+                    pool, _run_entity_picker,
+                    query, entities_text, len(entity_summaries), model, project,
+                )
+            )
+
+        # 3 memory search agents (if memories exist)
+        if memories:
+            for role in AGENT_SYSTEM_PROMPTS:
+                futures.append(
+                    loop.run_in_executor(
+                        pool, _run_single_agent,
+                        role, query, memories_text, n_memories, model, project,
+                    )
+                )
+
+        if not futures:
+            return empty_response
+
+        # Server-side timeout
         try:
             results = await asyncio.wait_for(
                 asyncio.gather(*futures, return_exceptions=True),
-                timeout=8.0,  # Hook timeout is 10s, leave 2s for DB + response
+                timeout=10.0,
             )
         except asyncio.TimeoutError:
-            logger.warning("Agentic search timed out after 8s")
+            logger.warning("Agentic search timed out after 10s")
             results = []
 
         for result in results:
@@ -395,61 +574,74 @@ async def agentic_search_async(
                 logger.warning(f"Agentic search agent failed: {result}")
                 continue
             role, raw_response = result
-            if isinstance(raw_response, str):
-                parsed = _parse_agent_response(raw_response, valid_ids)
+
+            if role == "entity_picker":
+                # Parse entity picker response against entity IDs
+                if isinstance(raw_response, str):
+                    entity_ranking = _parse_agent_response(raw_response, valid_ent_ids)
+                elif isinstance(raw_response, list):
+                    entity_ranking = raw_response
             else:
-                parsed = raw_response
-            if parsed:
-                rankings.append(parsed)
+                # Parse memory agent response
+                if isinstance(raw_response, str):
+                    parsed = _parse_agent_response(raw_response, valid_mem_ids)
+                else:
+                    parsed = raw_response
+                if parsed:
+                    memory_rankings.append(parsed)
 
-    if not rankings:
-        return {
-            "results": [],
-            "count": 0,
-            "mode": "agentic",
-            "tokens_used": 0,
-            "queries_used": 3,
-            "total_candidates": n_memories,
-            "filtered_count": 0,
-        }
+    # Build entity results (top 3)
+    top_entities = []
+    for short_id in entity_ranking[:3]:
+        ent = ent_id_to_full.get(short_id, {})
+        if ent:
+            top_entities.append(ent)
 
-    # RRF merge
-    merged_short_ids = reciprocal_rank_fusion(rankings)[:limit]
+    # RRF merge for memories (top 3)
+    top_memories = []
+    if memory_rankings:
+        merged_short_ids = reciprocal_rank_fusion(memory_rankings)[:3]
+        mem_by_id = {}
+        for mem in memories:
+            full_id = str(mem.get("id", ""))
+            short_id = full_id[:8]
+            mem_by_id[short_id] = mem
 
-    # Build result list matching the standard format
-    mem_by_id = {}
-    for mem in memories:
-        full_id = str(mem.get("id", ""))
-        short_id = full_id[:8]
-        mem_by_id[short_id] = mem
+        for i, short_id in enumerate(merged_short_ids):
+            mem = mem_by_id.get(short_id, {})
+            score = 1.0 - (i * 0.5 / max(len(merged_short_ids), 1))
+            entry = {
+                "memory_id": str(mem.get("id", "")),
+                "content": mem.get("content", ""),
+                "category": mem.get("category", ""),
+                "scope": mem.get("scope", "personal"),
+                "source_ref": mem.get("source_ref", ""),
+                "tags": mem.get("tags", []),
+                "score": round(score, 3),
+                "created_at": str(mem.get("created_at", "")),
+            }
+            if mem.get("content_detailed"):
+                entry["has_detailed"] = True
+                entry["full_length"] = len(mem["content_detailed"])
+            top_memories.append(entry)
 
-    result_list = []
-    for i, short_id in enumerate(merged_short_ids):
-        mem = mem_by_id.get(short_id, {})
-        # Compute a synthetic score based on RRF position (1.0 → 0.5 range)
-        score = 1.0 - (i * 0.5 / max(len(merged_short_ids), 1))
+    queries_used = (1 if entity_summaries else 0) + (3 if memories else 0)
 
-        entry = {
-            "memory_id": str(mem.get("id", "")),
-            "content": mem.get("content", ""),
-            "category": mem.get("category", ""),
-            "scope": mem.get("scope", "personal"),
-            "source_ref": mem.get("source_ref", ""),
-            "tags": mem.get("tags", []),
-            "score": round(score, 3),
-            "created_at": str(mem.get("created_at", "")),
-        }
-        if mem.get("content_detailed"):
-            entry["has_detailed"] = True
-            entry["full_length"] = len(mem["content_detailed"])
-        result_list.append(entry)
+    logger.info(
+        f"Agentic search complete: {len(top_entities)} entities, "
+        f"{len(top_memories)} memories from {n_memories} candidates "
+        f"+ {len(entity_summaries)} entity pages"
+    )
 
     return {
-        "results": result_list,
-        "count": len(result_list),
+        "entities": top_entities,
+        "memories": top_memories,
+        "results": top_memories,  # backward compat
+        "count": len(top_memories),
         "mode": "agentic",
         "tokens_used": 0,
-        "queries_used": 3,
+        "queries_used": queries_used,
         "total_candidates": n_memories,
-        "filtered_count": len(result_list),
+        "entity_candidates": len(entity_summaries),
+        "filtered_count": len(top_memories) + len(top_entities),
     }

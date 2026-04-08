@@ -186,6 +186,7 @@ class CEMSClient:
         enable_graph: bool = True,
         enable_query_synthesis: bool = True,
         raw: bool = False,
+        mode: str | None = None,
     ) -> dict[str, Any]:
         """Search memories using unified retrieval pipeline.
 
@@ -204,23 +205,23 @@ class CEMSClient:
             enable_graph: Include graph traversal
             enable_query_synthesis: Use LLM query expansion
             raw: Debug mode - bypass filtering to see all results
+            mode: Search mode - "vector", "agentic", "hybrid", or None (server default)
 
         Returns:
-            Full search result including results, tokens_used, etc.
+            Full search result including results, tokens_used, entities, etc.
         """
-        return self._request(
-            "POST",
-            "/api/memory/search",
-            json={
-                "query": query,
-                "limit": limit,
-                "scope": scope,
-                "max_tokens": max_tokens,
-                "enable_graph": enable_graph,
-                "enable_query_synthesis": enable_query_synthesis,
-                "raw": raw,
-            },
-        )
+        payload = {
+            "query": query,
+            "limit": limit,
+            "scope": scope,
+            "max_tokens": max_tokens,
+            "enable_graph": enable_graph,
+            "enable_query_synthesis": enable_query_synthesis,
+            "raw": raw,
+        }
+        if mode:
+            payload["mode"] = mode
+        return self._request("POST", "/api/memory/search", json=payload)
 
     def delete(self, memory_id: str, hard: bool = False) -> dict[str, Any]:
         """Delete a memory (soft-delete by default).

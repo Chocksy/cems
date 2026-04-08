@@ -112,9 +112,10 @@ class CEMSClient:
     Created once in main() via CEMSClient.from_cwd(cwd).
     """
 
-    def __init__(self, api_url: str, api_key: str):
+    def __init__(self, api_url: str, api_key: str, search_mode: str = ""):
         self.url = api_url
         self.key = api_key
+        self.search_mode = search_mode
 
     @classmethod
     def from_cwd(cls, cwd: str | None = None) -> CEMSClient | None:
@@ -123,7 +124,7 @@ class CEMSClient:
         url = creds.get("CEMS_API_URL", "")
         key = creds.get("CEMS_API_KEY", "")
         if url and key:
-            return cls(url, key)
+            return cls(url, key, search_mode=creds.get("CEMS_SEARCH_MODE", ""))
         return None
 
     def get(self, path: str, **kwargs):

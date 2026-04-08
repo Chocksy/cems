@@ -287,8 +287,9 @@ class TestAgenticSearchAsync:
     """Tests for agentic_search_async with mocked LLM."""
 
     @pytest.mark.asyncio
+    @patch("cems.agentic.search._load_entity_summaries", new_callable=AsyncMock, return_value=[])
     @patch("cems.agentic.search.get_client")
-    async def test_returns_results(self, mock_get_client):
+    async def test_returns_results(self, mock_get_client, _mock_entities):
         from cems.agentic.search import agentic_search_async
 
         mock_client = MagicMock()
@@ -317,9 +318,12 @@ class TestAgenticSearchAsync:
 
         assert result["mode"] == "agentic"
         assert result["count"] >= 0
+        assert "entities" in result
+        assert "memories" in result
 
     @pytest.mark.asyncio
-    async def test_empty_memories_returns_empty(self):
+    @patch("cems.agentic.search._load_entity_summaries", new_callable=AsyncMock, return_value=[])
+    async def test_empty_memories_returns_empty(self, _mock_entities):
         from cems.agentic.search import agentic_search_async
 
         mock_store = AsyncMock()
@@ -333,3 +337,54 @@ class TestAgenticSearchAsync:
 
         assert result["count"] == 0
         assert result["mode"] == "agentic"
+        assert result["entities"] == []
+
+    @pytest.mark.asyncio
+    @patch("cems.agentic.search.get_client")
+    async def test_entity_picker_returns_entities(self, mock_get_client):
+        """Entity picker agent finds relevant entity pages alongside memories."""
+        from cems.agentic.search import agentic_search_async
+
+        mock_client = MagicMock()
+        mock_get_client.return_value = mock_client
+        # Entity picker returns entity ID, memory agents return memory ID
+        mock_client.complete.side_effect = [
+            '["ent12345"]',   # entity picker
+            '["mem12345"]',   # direct seeker
+            '["mem12345"]',   # inference engine
+            '["mem12345"]',   # temporal navigator
+        ]
+
+        # Mock entity summaries via _load_entity_summaries
+        entity_summaries = [
+            {"id": "ent12345-full-uuid", "title": "Stripe Integration",
+             "summary": "Webhook-based payment flow", "sources": "20"},
+        ]
+
+        mock_store = AsyncMock()
+        mock_store.get_all_documents = AsyncMock(return_value=[
+            {
+                "id": "mem12345-full-uuid",
+                "content": "Keep Stripe requests sampled",
+                "category": "preferences",
+                "source_ref": "project:test",
+                "created_at": "2026-03-22",
+                "scope": "personal",
+                "tags": [],
+            }
+        ])
+
+        with patch("cems.agentic.search._load_entity_summaries",
+                    new_callable=AsyncMock, return_value=entity_summaries):
+            result = await agentic_search_async(
+                document_store=mock_store,
+                user_id="user-1",
+                query="How does Stripe integration work?",
+                project="test",
+            )
+
+        assert result["mode"] == "agentic"
+        assert len(result["entities"]) == 1
+        assert result["entities"][0]["title"] == "Stripe Integration"
+        assert len(result["memories"]) >= 1
+        assert result["entity_candidates"] == 1

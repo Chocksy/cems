@@ -387,7 +387,11 @@ async def api_memory_search(request: Request):
                 max_tokens=max_tokens,
                 project=project,
             )
-            logger.info(f"[API] Agentic search: {result['count']} results from {result['total_candidates']} memories")
+            logger.info(
+                f"[API] Agentic search: {len(result.get('entities', []))} entities, "
+                f"{result['count']} memories from {result['total_candidates']} candidates "
+                f"+ {result.get('entity_candidates', 0)} entity pages"
+            )
             return JSONResponse({"success": True, **result})
 
         if raw_mode:

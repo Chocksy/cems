@@ -66,6 +66,7 @@ def add(
 @click.option("--no-synthesis", is_flag=True, help="Disable LLM query expansion")
 @click.option("--raw", is_flag=True, help="Debug mode: bypass filtering to see all results")
 @click.option("--verbose", "-v", is_flag=True, help="Show full content without truncation")
+@click.option("--mode", "-m", default=None, type=click.Choice(["vector", "agentic", "hybrid"]), help="Search mode")
 @click.pass_context
 def search(
     ctx: click.Context,
@@ -77,6 +78,7 @@ def search(
     no_synthesis: bool,
     raw: bool,
     verbose: bool,
+    mode: str | None,
 ) -> None:
     """Search memories using unified retrieval pipeline.
 
@@ -86,6 +88,7 @@ def search(
     Example:
         cems search "TypeScript preferences"
         cems search "coding style" --raw  # Debug mode
+        cems search "Stripe integration" --mode agentic  # Entity-first search
     """
     try:
         client = get_client(ctx)
@@ -99,15 +102,42 @@ def search(
                 enable_graph=not no_graph,
                 enable_query_synthesis=not no_synthesis,
                 raw=raw,
+                mode=mode,
             )
 
+        entities = result.get("entities", [])
         results = result.get("results", [])
-        mode = result.get("mode", "unified")
+        result_mode = result.get("mode", "unified")
+
+        # Show entity topics (agentic mode)
+        if entities:
+            entity_table = Table(title="Knowledge Topics")
+            entity_table.add_column("ID", style="dim", max_width=12)
+            entity_table.add_column("Topic", style="bold cyan")
+            entity_table.add_column("Sources", style="yellow", max_width=8)
+            entity_table.add_column("Summary", style="white")
+
+            for e in entities:
+                summary = e.get("summary", "")
+                if not verbose and len(summary) > 120:
+                    summary = summary[:120] + "..."
+                entity_table.add_row(
+                    e.get("id", "?")[:12],
+                    e.get("title", "?"),
+                    str(e.get("sources", "")),
+                    summary,
+                )
+
+            console.print(entity_table)
+            console.print(f"[dim]Use: cems get <ID> to read full topic page[/dim]")
+            console.print()
 
         if results:
             title = f"Search Results for: {query}"
-            if mode == "raw":
+            if result_mode == "raw":
                 title += " [RAW MODE]"
+            elif result_mode == "agentic":
+                title = f"Relevant Memories for: {query}"
             table = Table(title=title)
             table.add_column("ID", style="dim", max_width=12)
             table.add_column("Content", style="white")
@@ -116,7 +146,6 @@ def search(
 
             for r in results:
                 content = r.get("content", r.get("memory", ""))
-                # Show full content if verbose, otherwise truncate to 120 chars (up from 80)
                 if verbose:
                     display_content = content
                 else:
@@ -130,8 +159,8 @@ def search(
 
             console.print(table)
 
-            # Show pipeline stats in unified mode
-            if mode == "unified":
+            # Show pipeline stats
+            if result_mode == "unified":
                 console.print(
                     f"[dim]Pipeline: {result.get('total_candidates', '?')} candidates → "
                     f"{result.get('filtered_count', '?')} after filtering → "
@@ -139,9 +168,15 @@ def search(
                     f"Tokens: {result.get('tokens_used', '?')} | "
                     f"Queries: {len(result.get('queries_used', []))}[/dim]"
                 )
-        else:
+            elif result_mode == "agentic":
+                console.print(
+                    f"[dim]Agentic: {result.get('total_candidates', '?')} memories + "
+                    f"{result.get('entity_candidates', '?')} entity pages | "
+                    f"{len(entities)} topics + {len(results)} memories returned[/dim]"
+                )
+        elif not entities:
             console.print("[yellow]No relevant results found[/yellow]")
-            if mode == "unified" and not raw:
+            if result_mode == "unified" and not raw:
                 console.print("[dim]Tip: Use --raw to see unfiltered results[/dim]")
 
     except CEMSClientError as e:
