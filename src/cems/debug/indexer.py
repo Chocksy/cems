@@ -316,22 +316,23 @@ class EventIndex:
     def get_observer_session_memories(self, sid: str) -> list[dict]:
         """Fetch stored memories for an observer session via CEMS API.
 
-        Uses credentials from ~/.cems/credentials to call the CEMS API's
-        /api/memory/list endpoint with tag_prefix filter.
-        Falls back to client-side filtering if server doesn't support tag_prefix.
+        Uses the session's api_url (from state file) when available, otherwise
+        falls back to global credentials. This ensures project-credential
+        sessions query the correct CEMS instance.
         """
-        creds = _load_cems_credentials()
-        if not creds["url"] or not creds["key"]:
+        # Try to use the session's stored API URL + resolve matching key
+        api_url, api_key = self._resolve_session_credentials(sid)
+        if not api_url or not api_key:
             return []
 
         short_id = sid[:12]
         tag_prefix = f"session:{short_id}"
         url = (
-            f"{creds['url'].rstrip('/')}/api/memory/list"
+            f"{api_url.rstrip('/')}/api/memory/list"
             f"?category=session-summary&tag_prefix={tag_prefix}&limit=50"
         )
         req = urllib.request.Request(url, headers={
-            "Authorization": f"Bearer {creds['key']}",
+            "Authorization": f"Bearer {api_key}",
             "User-Agent": "CEMS-Debug/1.0",
         })
         try:
@@ -347,6 +348,48 @@ class EventIndex:
         except (urllib.error.URLError, json.JSONDecodeError, OSError) as e:
             logging.getLogger(__name__).debug(f"Failed to fetch memories for {sid}: {e}")
             return []
+
+    def _resolve_session_credentials(self, sid: str) -> tuple[str, str]:
+        """Resolve API URL and key for a session.
+
+        If the session state has an api_url that differs from global,
+        walk up from the session's CWD to find the matching project key.
+        Falls back to global credentials.
+        """
+        from cems.shared.credentials import find_project_credentials, parse_credentials_file
+
+        state_file = OBSERVER_DIR / f"{sid}.json"
+        session_api_url = ""
+        session_cwd = ""
+        if state_file.exists():
+            try:
+                data = json.loads(state_file.read_text())
+                session_api_url = data.get("api_url", "")
+                # Try to reconstruct CWD from source_ref isn't reliable,
+                # but we stored api_url which is what matters
+            except (json.JSONDecodeError, OSError):
+                pass
+
+        creds = _load_cems_credentials()
+        global_url = creds.get("url", "")
+        global_key = creds.get("key", "")
+
+        # If session used a different API URL, find matching credentials
+        if session_api_url and session_api_url.rstrip("/") != global_url.rstrip("/"):
+            # Scan known project credential files for a matching URL
+            for creds_file in Path.home().glob("Development/*/.cems/credentials"):
+                try:
+                    pcreds = parse_credentials_file(str(creds_file))
+                    purl = pcreds.get("CEMS_API_URL", "")
+                    pkey = pcreds.get("CEMS_API_KEY", "")
+                    if purl.rstrip("/") == session_api_url.rstrip("/") and pkey:
+                        return purl, pkey
+                except OSError:
+                    continue
+            # Couldn't find matching key — fall through to global
+            return session_api_url, global_key
+
+        return global_url, global_key
 
     def get_conflicts(self) -> list[dict]:
         """Fetch open memory conflicts from CEMS API."""

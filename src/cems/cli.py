@@ -19,7 +19,7 @@ from cems.commands.memory import add, delete, list_memories, search
 from cems.commands.memory import update as update_memory
 from cems.commands.rule import rule
 from cems.commands.setup import setup
-from cems.commands.status import health, status
+from cems.commands.status import status
 from cems.commands.uninstall import uninstall
 from cems.commands.update import update_cmd
 
@@ -75,7 +75,6 @@ def main(ctx: click.Context, verbose: bool, api_url: str | None, api_key: str | 
 
 # Register all commands
 main.add_command(status)
-main.add_command(health)
 main.add_command(add)
 main.add_command(search)
 main.add_command(list_memories, name="list")

@@ -8,8 +8,10 @@ Usage:
 """
 
 import os
+import signal
 import shutil
 import subprocess
+import time
 from datetime import datetime, timezone
 from importlib.metadata import version as pkg_version
 from pathlib import Path
@@ -159,6 +161,31 @@ def _redeploy_hooks() -> None:
         console.print("[yellow]Hook re-deploy had errors (see above)[/yellow]")
 
 
+def _restart_daemon() -> None:
+    """Stop the observer daemon so it restarts with updated code.
+
+    Sends SIGTERM to the running daemon (if any). The next hook invocation
+    will auto-respawn it via ensure_daemon_running().
+    """
+    pid_file = Path.home() / ".cems" / "observer" / "daemon.pid"
+    try:
+        if not pid_file.exists():
+            return
+        pid = int(pid_file.read_text().strip())
+        os.kill(pid, signal.SIGTERM)
+        # Wait briefly for clean shutdown
+        for _ in range(10):
+            time.sleep(0.3)
+            try:
+                os.kill(pid, 0)  # Check if still alive
+            except ProcessLookupError:
+                console.print("  Observer daemon stopped (will auto-restart)")
+                return
+        console.print("[yellow]  Observer daemon did not stop in time — it will pick up changes on next restart[/yellow]")
+    except (ValueError, ProcessLookupError, PermissionError, OSError):
+        pass
+
+
 @click.command("update")
 @click.option("--hooks", "hooks_only", is_flag=True, help="Only re-deploy hooks/skills (skip package upgrade)")
 def update_cmd(hooks_only: bool) -> None:
@@ -203,6 +230,10 @@ def update_cmd(hooks_only: bool) -> None:
         _redeploy_hooks()
     else:
         console.print("[dim]Hooks up to date, skipping re-deploy[/dim]")
+
+    # Restart observer daemon so it picks up updated code
+    if hooks_only or version_changed:
+        _restart_daemon()
 
     console.print()
     console.print("[bold green]Update complete![/bold green] Restart your IDE to pick up changes.")

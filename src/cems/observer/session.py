@@ -76,7 +76,10 @@ def discover_active_sessions(max_age_hours: int = 2) -> list[SessionInfo]:
 
 
 def populate_session_metadata(session: SessionInfo) -> SessionInfo:
-    """Read the first JSONL entry to populate cwd, gitBranch, project_id.
+    """Read JSONL entries to populate cwd, gitBranch, project_id.
+
+    Scans the first few lines because line 0 is often a permission-mode
+    or system entry with no cwd.  Stops as soon as a cwd is found.
 
     Mutates the session object in place and returns it.
 
@@ -88,20 +91,28 @@ def populate_session_metadata(session: SessionInfo) -> SessionInfo:
     """
     try:
         with open(session.path, "r") as f:
-            first_line = f.readline().strip()
-            if not first_line:
-                return session
-            entry = json.loads(first_line)
+            for _ in range(10):
+                line = f.readline()
+                if not line:
+                    break
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
 
-        session.cwd = entry.get("cwd", "")
-        session.git_branch = entry.get("gitBranch", "")
+                cwd = entry.get("cwd", "")
+                if cwd:
+                    session.cwd = cwd
+                    session.git_branch = entry.get("gitBranch", "")
+                    session.project_id = _get_project_id(cwd)
+                    if session.project_id:
+                        session.source_ref = f"project:{session.project_id}"
+                    break
 
-        if session.cwd:
-            session.project_id = _get_project_id(session.cwd)
-            if session.project_id:
-                session.source_ref = f"project:{session.project_id}"
-
-    except (json.JSONDecodeError, OSError, KeyError) as e:
+    except (OSError, KeyError) as e:
         logger.debug(f"Could not read metadata from {session.path}: {e}")
 
     return session

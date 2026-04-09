@@ -15,6 +15,7 @@ import logging
 import os
 import os.path
 import signal
+import subprocess
 import time
 import urllib.error
 import urllib.request
@@ -33,11 +34,40 @@ from cems.observer.state import (
 logger = logging.getLogger(__name__)
 
 
+def _resolve_main_worktree(cwd: str) -> str | None:
+    """If CWD is inside a git worktree, return the main worktree path.
+
+    Useful for Codex worktrees: the session CWD is an ephemeral
+    worktree like ~/.codex/worktrees/e8c3/repo, but the project
+    credentials live in the main clone (e.g., ~/Development/repo/.cems/credentials).
+    """
+    try:
+        result = subprocess.run(
+            ["git", "-C", cwd, "worktree", "list", "--porcelain"],
+            capture_output=True, text=True, timeout=3,
+        )
+        if result.returncode == 0:
+            # First "worktree <path>" line is the main worktree
+            for line in result.stdout.splitlines():
+                if line.startswith("worktree "):
+                    main_path = line[9:]  # strip "worktree " prefix
+                    if main_path != cwd:
+                        return main_path
+                    break  # main worktree == cwd, no fallback needed
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        pass
+    return None
+
+
 class CredentialResolver:
     """Resolves CEMS credentials per-session CWD with caching.
 
-    Delegates walk-up and parsing to cems.config.credentials (shared module).
-    Adds per-CWD caching and (url, key) tuple interface for the daemon.
+    Resolution order per session:
+    1. Walk up from session CWD looking for .cems/credentials
+    2. If CWD is a git worktree, walk up from the main worktree path
+    3. Check source_ref cache (reuses credentials from another session
+       of the same project, e.g., a prior Claude session)
+    4. Global ~/.cems/credentials fallback
 
     For the daemon, file takes priority over env vars (env may be stale
     for a long-running process).
@@ -46,6 +76,7 @@ class CredentialResolver:
     def __init__(self):
         from cems.shared.credentials import parse_credentials_file
         self._cache: dict[str, tuple[str, str]] = {}  # cwd -> (url, key)
+        self._source_ref_cache: dict[str, tuple[str, str]] = {}  # source_ref -> (url, key)
         # Load global credentials (the default)
         global_creds = parse_credentials_file(
             str(Path.home() / ".cems" / "credentials")
@@ -53,31 +84,112 @@ class CredentialResolver:
         self.default_url = global_creds.get("CEMS_API_URL") or os.getenv("CEMS_API_URL", "")
         self.default_key = global_creds.get("CEMS_API_KEY") or os.getenv("CEMS_API_KEY", "")
 
-    def resolve(self, cwd: str = "") -> tuple[str, str]:
+    def resolve(self, cwd: str = "", source_ref: str = "") -> tuple[str, str]:
         """Resolve (api_url, api_key) for a session CWD.
 
-        Delegates walk-up to shared find_project_credentials().
-        Caches results per CWD.
+        Tries CWD walk-up, then git worktree fallback, then source_ref
+        cache, then global credentials.  Caches results per CWD and
+        per source_ref.
         """
         if not cwd:
+            # No CWD — try source_ref cache before global fallback
+            if source_ref and source_ref in self._source_ref_cache:
+                logger.info(
+                    f"Credentials via source_ref cache ({source_ref}) "
+                    f"→ {self._source_ref_cache[source_ref][0]}"
+                )
+                return self._source_ref_cache[source_ref]
             return self.default_url, self.default_key
 
         if cwd in self._cache:
             return self._cache[cwd]
 
         from cems.shared.credentials import find_project_credentials, parse_credentials_file
+
+        # Step 1: Walk up from CWD
         project_path = find_project_credentials(cwd)
         if project_path:
-            creds = parse_credentials_file(project_path)
-            url = creds.get("CEMS_API_URL", "")
-            key = creds.get("CEMS_API_KEY", "")
+            url, key = self._try_creds_file(project_path)
             if url and key:
+                logger.info(f"Project credentials for '{cwd}' → {url} (from {project_path})")
                 self._cache[cwd] = (url, key)
+                if source_ref:
+                    self._source_ref_cache[source_ref] = (url, key)
                 return url, key
 
-        # Global fallback
+        # Step 2: Git worktree fallback (e.g., Codex worktrees)
+        main_wt = _resolve_main_worktree(cwd)
+        if main_wt:
+            project_path = find_project_credentials(main_wt)
+            if project_path:
+                url, key = self._try_creds_file(project_path)
+                if url and key:
+                    logger.info(
+                        f"Project credentials for '{cwd}' via main worktree "
+                        f"'{main_wt}' → {url} (from {project_path})"
+                    )
+                    self._cache[cwd] = (url, key)
+                    if source_ref:
+                        self._source_ref_cache[source_ref] = (url, key)
+                    return url, key
+
+        # Step 3: Source-ref cache (another session already resolved this project)
+        if source_ref and source_ref in self._source_ref_cache:
+            result = self._source_ref_cache[source_ref]
+            logger.info(
+                f"Credentials for '{cwd}' via source_ref cache "
+                f"({source_ref}) → {result[0]}"
+            )
+            self._cache[cwd] = result
+            return result
+
+        # Step 4: Global fallback
+        logger.debug(f"No project credentials for '{cwd}', using global → {self.default_url}")
         self._cache[cwd] = (self.default_url, self.default_key)
         return self.default_url, self.default_key
+
+    def seed_from_state(self, source_ref: str, api_url: str) -> None:
+        """Pre-populate source_ref cache from persisted state.
+
+        Called during run_cycle to restore credential mappings for sessions
+        whose worktrees have been cleaned up since the last daemon run.
+        Only seeds the URL; the key is resolved on first actual use.
+        """
+        if source_ref not in self._source_ref_cache:
+            # Find the matching API key for this URL
+            url, key = self._find_key_for_url(api_url)
+            if url and key:
+                self._source_ref_cache[source_ref] = (url, key)
+
+    def _find_key_for_url(self, api_url: str) -> tuple[str, str]:
+        """Find API key matching a given URL from known credential files."""
+        from cems.shared.credentials import parse_credentials_file
+
+        normalized = api_url.rstrip("/")
+
+        # Check if it matches global
+        if normalized == self.default_url.rstrip("/"):
+            return self.default_url, self.default_key
+
+        # Scan project credential files
+        for creds_file in Path.home().glob("Development/*/.cems/credentials"):
+            try:
+                creds = parse_credentials_file(str(creds_file))
+                purl = creds.get("CEMS_API_URL", "")
+                pkey = creds.get("CEMS_API_KEY", "")
+                if purl.rstrip("/") == normalized and pkey:
+                    return purl, pkey
+            except OSError:
+                continue
+
+        return "", ""
+
+    @staticmethod
+    def _try_creds_file(path: str) -> tuple[str, str]:
+        """Parse a credentials file and return (url, key) tuple."""
+        from cems.shared.credentials import parse_credentials_file
+        creds = parse_credentials_file(path)
+        return creds.get("CEMS_API_URL", ""), creds.get("CEMS_API_KEY", "")
 
 
 # Two-phase threshold: cheap raw-byte pre-filter + real extracted-text gate
@@ -240,7 +352,8 @@ def handle_signal(
 
         # Even if no new content, send a finalize to polish the existing summary
         cwd = sig.cwd or session.cwd or ""
-        api_url, api_key = resolver.resolve(cwd)
+        source_ref = state.source_ref or session.source_ref or ""
+        api_url, api_key = resolver.resolve(cwd, source_ref=source_ref)
         success = send_summary(
             content=content or "(session ended)",
             session_id=session.session_id,
@@ -253,6 +366,7 @@ def handle_signal(
         )
         if not success:
             logger.warning(f"Finalize summary failed for {session.session_id[:8]}")
+        state.api_url = api_url
         state.last_finalized_at = time.time()
 
         # Update bytes pointer if we read new content
@@ -294,7 +408,8 @@ def handle_finalize(
     adapter.enrich_metadata(session)
     project_context = _build_project_context(session)
 
-    api_url, api_key = resolver.resolve(session.cwd or "")
+    source_ref = state.source_ref or session.source_ref or ""
+    api_url, api_key = resolver.resolve(session.cwd or "", source_ref=source_ref)
     success = send_summary(
         content="(session idle — epoch finalized)",
         session_id=session.session_id,
@@ -309,6 +424,7 @@ def handle_finalize(
         logger.warning(f"Auto-finalize summary failed for {session.session_id[:8]}")
 
     # Bump epoch so new activity gets a fresh document. Do NOT set is_done.
+    state.api_url = api_url
     state.epoch += 1
     state.epoch_observation_count = 0
     state.last_finalized_at = time.time()
@@ -357,7 +473,7 @@ def process_session_growth(
 
     project_context = _build_project_context(session)
 
-    api_url, api_key = resolver.resolve(session.cwd or "")
+    api_url, api_key = resolver.resolve(session.cwd or "", source_ref=session.source_ref or "")
     success = send_summary(
         content=content,
         session_id=session.session_id,
@@ -372,6 +488,7 @@ def process_session_growth(
     if success:
         state.project_id = session.project_id
         state.source_ref = session.source_ref
+        state.api_url = api_url
         state.last_observed_bytes = session.file_size
         # Update watermark for SQLite-based adapters
         if "last_observed_message_id" in session.extra:
@@ -424,6 +541,11 @@ def run_cycle(resolver: CredentialResolver) -> int:
                 if not state.tool:
                     state.tool = adapter.tool_name
                     save_state(state)
+
+                # Seed source_ref cache from persisted api_url
+                # (handles worktrees that were cleaned up between daemon restarts)
+                if state.api_url and state.source_ref:
+                    resolver.seed_from_state(state.source_ref, state.api_url)
 
                 # Skip completed sessions — unless the file grew (resurrection)
                 if state.is_done:

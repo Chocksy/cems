@@ -34,6 +34,7 @@ class ObservationState:
     is_done: bool = False
     last_observed_message_id: int = 0  # SQLite adapters: max message ID seen
     epoch_observation_count: int = 0   # Observations within current epoch (resets on epoch bump)
+    api_url: str = ""                  # CEMS API URL used for this session (for debug visibility)
 
 
 def session_tag(session_id: str, epoch: int = 0) -> str:
