@@ -1136,7 +1136,7 @@ async def api_memory_maintenance(request: Request):
         if job_type == "relations":
             from cems.maintenance.relation_builder import RelationBuilderJob
             result = await RelationBuilderJob(memory).run_async(
-                limit=sweep_limit or 50, offset=sweep_offset, force=full_sweep,
+                limit=sweep_limit or 50, force=full_sweep,
             )
             return JSONResponse({
                 "success": True,
