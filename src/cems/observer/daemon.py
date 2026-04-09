@@ -81,7 +81,7 @@ class CredentialResolver:
         global_creds = parse_credentials_file(
             str(Path.home() / ".cems" / "credentials")
         )
-        self.default_url = global_creds.get("CEMS_API_URL") or os.getenv("CEMS_API_URL", "")
+        self.default_url = (global_creds.get("CEMS_API_URL") or os.getenv("CEMS_API_URL", "")).rstrip("/")
         self.default_key = global_creds.get("CEMS_API_KEY") or os.getenv("CEMS_API_KEY", "")
 
     def resolve(self, cwd: str = "", source_ref: str = "") -> tuple[str, str]:
@@ -189,7 +189,7 @@ class CredentialResolver:
         """Parse a credentials file and return (url, key) tuple."""
         from cems.shared.credentials import parse_credentials_file
         creds = parse_credentials_file(path)
-        return creds.get("CEMS_API_URL", ""), creds.get("CEMS_API_KEY", "")
+        return creds.get("CEMS_API_URL", "").rstrip("/"), creds.get("CEMS_API_KEY", "")
 
 
 # Two-phase threshold: cheap raw-byte pre-filter + real extracted-text gate
