@@ -86,7 +86,7 @@ Restart your shell and IDE.
 ### 4. Verify
 
 ```bash
-cems health
+cems status
 ```
 
 ## What Gets Installed
@@ -161,7 +161,7 @@ export PATH="$HOME/.local/bin:$PATH"
 
 **Connection errors** — Check your server URL and API key:
 ```bash
-cems health
+cems status
 ```
 
 **Goose doesn't show CEMS tools** — Verify the extension is in your config:

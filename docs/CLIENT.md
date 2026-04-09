@@ -50,8 +50,7 @@ Installs recall, remember, and foundation skills. You still need a CEMS server a
 
 ```bash
 cems --version                       # Check version
-cems health                          # Server health check
-cems status                          # System status + stats
+cems status                          # Server health + system status
 cems search "Docker port binding"    # Search memories
 cems add "Always use port 8080"      # Store a memory
 cems list                            # List recent memories
@@ -187,7 +186,7 @@ No manual steps needed. Memories build up and improve over time.
 ### Memory not being recalled
 
 1. Check credentials: `cat ~/.cems/credentials`
-2. Test connection: `cems health`
+2. Test connection: `cems status`
 3. Test search: `cems search "test"`
 4. Check hook output: `echo '{"prompt": "test"}' | uv run ~/.claude/hooks/cems_user_prompts_submit.py`
 

@@ -93,7 +93,7 @@ source ~/.zshrc
 ## 5. Verify
 
 ```bash
-cems health
+cems status
 ```
 
 ## Quick Reference

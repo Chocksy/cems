@@ -1313,4 +1313,4 @@ def setup(install_claude: bool, install_cursor: bool, install_codex: bool, insta
     console.print("This exports CEMS_API_KEY so the MCP server can authenticate.")
     console.print("Then restart your shell and IDE.")
     console.print()
-    console.print("Test: [cyan]cems health[/cyan]")
+    console.print("Test: [cyan]cems status[/cyan]")

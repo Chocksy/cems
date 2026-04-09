@@ -173,15 +173,20 @@ def _restart_daemon() -> None:
             return
         pid = int(pid_file.read_text().strip())
         os.kill(pid, signal.SIGTERM)
-        # Wait briefly for clean shutdown
-        for _ in range(10):
-            time.sleep(0.3)
+        # Wait for clean shutdown (daemon may be mid-cycle with a 60s API timeout)
+        for _ in range(20):
+            time.sleep(0.5)
             try:
                 os.kill(pid, 0)  # Check if still alive
             except ProcessLookupError:
                 console.print("  Observer daemon stopped (will auto-restart)")
                 return
-        console.print("[yellow]  Observer daemon did not stop in time — it will pick up changes on next restart[/yellow]")
+        # Force kill if SIGTERM didn't work
+        try:
+            os.kill(pid, signal.SIGKILL)
+            console.print("  Observer daemon force-stopped (will auto-restart)")
+        except (ProcessLookupError, PermissionError):
+            pass
     except (ValueError, ProcessLookupError, PermissionError, OSError):
         pass
 

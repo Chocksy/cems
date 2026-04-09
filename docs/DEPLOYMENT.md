@@ -142,8 +142,7 @@ cems search "Docker port binding"     # Search memories
 cems add "Always use port 8080"       # Store a memory
 cems list                             # List recent memories
 cems delete <id>                      # Soft-delete a memory
-cems status                           # Check connection + stats
-cems health                           # Server health check
+cems status                           # Server health + system status
 cems debug                            # Debug dashboard (see what hooks inject)
 cems rule                             # Create gate rules
 cems maintenance consolidation        # Trigger maintenance manually
