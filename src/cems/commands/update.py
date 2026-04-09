@@ -7,6 +7,7 @@ Usage:
     cems update --hooks     # Only re-deploy hooks/skills (no package upgrade)
 """
 
+import os
 import shutil
 import subprocess
 from datetime import datetime, timezone
@@ -131,14 +132,27 @@ def _redeploy_hooks() -> None:
         args.append(f"--{target}")
 
     # Pass existing credentials so setup doesn't prompt
-    creds_file = Path.home() / ".cems" / "credentials"
-    if creds_file.exists():
-        for line in creds_file.read_text().splitlines():
-            line = line.strip()
-            if line.startswith("CEMS_API_URL="):
-                args.extend(["--api-url", line.partition("=")[2].strip().strip("'\"")])
-            elif line.startswith("CEMS_API_KEY="):
-                args.extend(["--api-key", line.partition("=")[2].strip().strip("'\"")])
+    # Check project credentials first (matches resolve_credentials precedence)
+    from cems.shared.credentials import find_project_credentials, parse_credentials_file
+    project_creds_path = find_project_credentials(os.getcwd())
+    if project_creds_path:
+        creds = parse_credentials_file(project_creds_path)
+        args.append("--project")
+    else:
+        creds_file = Path.home() / ".cems" / "credentials"
+        creds = {}
+        if creds_file.exists():
+            for line in creds_file.read_text().splitlines():
+                line = line.strip()
+                if line.startswith("CEMS_API_URL="):
+                    creds["CEMS_API_URL"] = line.partition("=")[2].strip().strip("'\"")
+                elif line.startswith("CEMS_API_KEY="):
+                    creds["CEMS_API_KEY"] = line.partition("=")[2].strip().strip("'\"")
+
+    if creds.get("CEMS_API_URL"):
+        args.extend(["--api-url", creds["CEMS_API_URL"]])
+    if creds.get("CEMS_API_KEY"):
+        args.extend(["--api-key", creds["CEMS_API_KEY"]])
 
     result = subprocess.run(args, text=True)
     if result.returncode != 0:
