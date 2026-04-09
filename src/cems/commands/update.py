@@ -164,29 +164,21 @@ def _redeploy_hooks() -> None:
 def _restart_daemon() -> None:
     """Stop the observer daemon so it restarts with updated code.
 
-    Sends SIGTERM to the running daemon (if any). The next hook invocation
-    will auto-respawn it via ensure_daemon_running().
+    Uses SIGKILL directly — all daemon state is persisted to disk,
+    so force-killing is safe.  The next hook invocation will auto-respawn
+    it via ensure_daemon_running().
     """
     pid_file = Path.home() / ".cems" / "observer" / "daemon.pid"
     try:
         if not pid_file.exists():
             return
         pid = int(pid_file.read_text().strip())
-        os.kill(pid, signal.SIGTERM)
-        # Wait for clean shutdown (daemon may be mid-cycle with a 60s API timeout)
-        for _ in range(20):
-            time.sleep(0.5)
-            try:
-                os.kill(pid, 0)  # Check if still alive
-            except ProcessLookupError:
-                console.print("  Observer daemon stopped (will auto-restart)")
-                return
-        # Force kill if SIGTERM didn't work
-        try:
-            os.kill(pid, signal.SIGKILL)
-            console.print("  Observer daemon force-stopped (will auto-restart)")
-        except (ProcessLookupError, PermissionError):
-            pass
+        # SIGKILL is safe here: daemon state is all on disk.
+        # SIGTERM can take 30-60s if daemon is mid-API-call.
+        os.kill(pid, signal.SIGKILL)
+        time.sleep(0.5)
+        pid_file.unlink(missing_ok=True)
+        console.print("  Observer daemon stopped (will auto-restart)")
     except (ValueError, ProcessLookupError, PermissionError, OSError):
         pass
 
