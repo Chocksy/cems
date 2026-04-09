@@ -668,6 +668,8 @@
           <span class="status-val">${formatBytes(data.last_observed_bytes)}</span>
           <span class="status-key">Session tag</span>
           <span class="status-val">${esc(sessionTag)}</span>
+          ${data.api_url ? `<span class="status-key">API URL</span>
+          <span class="status-val">${esc(data.api_url)}</span>` : ''}
         </div>
       </div>`;
 
