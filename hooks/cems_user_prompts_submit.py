@@ -101,15 +101,24 @@ def _format_agentic_response(data: dict) -> tuple[str | None, list[str], list[bo
 
     if entities:
         parts.append("KNOWLEDGE TOPICS matching your query:\n")
+        entity_ids = []
         for i, e in enumerate(entities, 1):
             sources = f" ({e['sources']} sources)" if e.get("sources") else ""
             parts.append(f"{i}. {e['title']}{sources}")
             if e.get("summary"):
                 parts.append(f"   {e['summary']}")
             short_id = e.get("id", "")[:8]
-            parts.append(f"   \u2192 /recall {short_id} for full details")
+            entity_ids.append(short_id)
             if e.get("id"):
                 memory_ids.append(e["id"])
+        parts.append("")
+
+        # Imperative recall instructions — entities are pre-curated documents
+        # that the LLM MUST read before responding
+        parts.append("REQUIRED: Fetch these knowledge pages before responding:")
+        for short_id in entity_ids:
+            parts.append(f"  /recall {short_id}")
+        parts.append("These are curated documents relevant to your task. Read them first.")
         parts.append("")
 
     if memories:
@@ -122,7 +131,7 @@ def _format_agentic_response(data: dict) -> tuple[str | None, list[str], list[bo
             score = m.get("score", 0.0)
             truncated = m.get("truncated", False)
             full_len = m.get("full_length", 0)
-            suffix = f" [truncated — full doc: {full_len} chars]" if truncated else ""
+            suffix = f" [truncated \u2014 full doc: {full_len} chars]" if truncated else ""
             parts.append(f"{i}. [{category}] (score: {score:.2f}) {content}{suffix} (id: {short_id})")
             truncation_flags.append(truncated)
             if mem_id:
@@ -141,8 +150,7 @@ def _format_agentic_response(data: dict) -> tuple[str | None, list[str], list[bo
         f"\n--- Agentic retrieval: {n_entities} topics, {n_memories} memories "
         f"from {total_candidates} memories + {entity_candidates} entity pages ---"
     )
-    if entities:
-        parts.append("Use /recall <id> to read full topic pages for deeper context.")
+    parts.append("Use /recall <id> to read full topic pages for deeper context.")
 
     return "\n".join(parts), memory_ids, truncation_flags, score_details
 
