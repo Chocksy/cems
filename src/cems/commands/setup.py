@@ -390,9 +390,9 @@ def _discover_team(api_url: str, api_key: str) -> str | None:
         return None
 
 
-def _remove_credential(key: str) -> None:
-    """Remove a key from ~/.cems/credentials."""
-    creds_file = Path.home() / ".cems" / "credentials"
+def _remove_credential(key: str, creds_path: Path | None = None) -> None:
+    """Remove a key from a credentials file (defaults to ~/.cems/credentials)."""
+    creds_file = creds_path or (Path.home() / ".cems" / "credentials")
     if not creds_file.exists():
         return
     lines = [
@@ -403,9 +403,9 @@ def _remove_credential(key: str) -> None:
     creds_file.chmod(stat.S_IRUSR | stat.S_IWUSR)
 
 
-def _append_credential(key: str, value: str) -> None:
-    """Add or update a key in ~/.cems/credentials."""
-    creds_file = Path.home() / ".cems" / "credentials"
+def _append_credential(key: str, value: str, creds_path: Path | None = None) -> None:
+    """Add or update a key in a credentials file (defaults to ~/.cems/credentials)."""
+    creds_file = creds_path or (Path.home() / ".cems" / "credentials")
     lines = []
     replaced = False
 
@@ -1214,6 +1214,8 @@ def setup(install_claude: bool, install_cursor: bool, install_codex: bool, insta
     resolved_key = api_key or creds.get("CEMS_API_KEY", "")
 
     # Search mode selection
+    # Write to project creds when scope is project, global otherwise
+    active_creds_file = project_creds_file if credential_scope == "project" and project_creds_file.exists() else None
     existing_mode = creds.get("CEMS_SEARCH_MODE", "")
     if _is_interactive():
         console.print()
@@ -1227,9 +1229,9 @@ def setup(install_claude: bool, install_cursor: bool, install_codex: bool, insta
             default=default_idx,
         )
         if search_mode == "agentic":
-            _append_credential("CEMS_SEARCH_MODE", "agentic")
+            _append_credential("CEMS_SEARCH_MODE", "agentic", creds_path=active_creds_file)
         elif existing_mode:
-            _remove_credential("CEMS_SEARCH_MODE")
+            _remove_credential("CEMS_SEARCH_MODE", creds_path=active_creds_file)
 
     # Transport selection (interactive or from flag)
     resolved_transport = transport or "stdio"
