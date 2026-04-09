@@ -105,12 +105,12 @@ class CEMSScheduler:
             replace_existing=True,
         )
 
-        # Knowledge Engine jobs (every 10 min)
+        # Knowledge Engine jobs
         self._scheduler.add_job(
             self._run_relations,
-            CronTrigger(minute="*/10"),
+            CronTrigger(hour="*/6", minute=30),
             id="relation_builder",
-            name="Relation Builder (10min)",
+            name="Relation Builder (6h)",
             replace_existing=True,
         )
 

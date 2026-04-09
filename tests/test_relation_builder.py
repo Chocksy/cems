@@ -32,7 +32,22 @@ def _make_doc(doc_id: str, content: str = "test") -> dict:
         "content": content,
         "category": "general",
         "scope": "personal",
+        "source_ref": None,
+        "tags": [],
+        "created_at": None,
     }
+
+
+def _mock_pool_with_rows(rows):
+    """Create a mock pool that returns given rows from conn.fetch."""
+    mock_conn = AsyncMock()
+    mock_conn.fetch = AsyncMock(return_value=rows)
+    mock_conn.fetchrow = AsyncMock(return_value={"embedding": [0.1] * 1536})
+    mock_pool = AsyncMock()
+    mock_pool.acquire = MagicMock()
+    mock_pool.acquire.return_value.__aenter__ = AsyncMock(return_value=mock_conn)
+    mock_pool.acquire.return_value.__aexit__ = AsyncMock(return_value=False)
+    return mock_pool
 
 
 @pytest.fixture
@@ -55,46 +70,43 @@ def mock_memory():
 class TestRelationBuilderJob:
     """Tests for RelationBuilderJob."""
 
-    def test_processes_documents_and_creates_relations(self, mock_memory):
-        """Backfill finds neighbors and creates relations."""
+    def test_processes_unlinked_docs_and_creates_relations(self, mock_memory):
+        """Backfill finds neighbors and creates relations for unlinked docs."""
         from cems.maintenance.relation_builder import RelationBuilderJob
 
         mock, doc_store = mock_memory
-        doc_store.get_all_documents = AsyncMock(return_value=[_make_doc(DOC_A)])
-        doc_store.get_relation_count = AsyncMock(return_value=0)
+
+        # SQL query returns unlinked docs
+        mock_rows = [MagicMock(**{
+            "__getitem__": lambda self, k: {
+                "id": DOC_A, "content": "test", "category": "general",
+                "scope": "personal", "source_ref": None, "tags": [], "created_at": None,
+            }[k],
+        })]
+        doc_store._get_pool = AsyncMock(return_value=_mock_pool_with_rows(mock_rows))
         doc_store.add_relations = AsyncMock(return_value=1)
         doc_store.search_chunks = AsyncMock(return_value=[
             {"document_id": DOC_B, "score": 0.85},
         ])
 
-        # Mock _get_first_chunk_embedding via pool
-        mock_conn = AsyncMock()
-        mock_conn.fetchrow = AsyncMock(return_value={"embedding": [0.1] * 1536})
-        mock_pool = AsyncMock()
-        mock_pool.acquire = MagicMock()
-        mock_pool.acquire.return_value.__aenter__ = AsyncMock(return_value=mock_conn)
-        mock_pool.acquire.return_value.__aexit__ = AsyncMock(return_value=False)
-        doc_store._get_pool = AsyncMock(return_value=mock_pool)
-
         result = _run(RelationBuilderJob(mock).run_async(limit=10))
         assert result["docs_processed"] == 1
         assert result["relations_created"] == 1
 
-    def test_skips_docs_with_existing_relations(self, mock_memory):
-        """Documents with existing relations are skipped unless force=True."""
+    def test_no_unlinked_docs_returns_zeros(self, mock_memory):
+        """When all docs have relations, returns zeros."""
         from cems.maintenance.relation_builder import RelationBuilderJob
 
         mock, doc_store = mock_memory
-        doc_store.get_all_documents = AsyncMock(return_value=[_make_doc(DOC_A)])
-        doc_store.get_relation_count = AsyncMock(return_value=5)  # Already has relations
+        doc_store._get_pool = AsyncMock(return_value=_mock_pool_with_rows([]))
 
         result = _run(RelationBuilderJob(mock).run_async(limit=10))
         assert result["docs_processed"] == 0
-        assert result["docs_skipped"] == 1
-        doc_store.search_chunks.assert_not_called()
+        assert result["relations_created"] == 0
+        assert result["docs_skipped"] == 0
 
-    def test_force_reprocesses_all(self, mock_memory):
-        """With force=True, even docs with relations are reprocessed."""
+    def test_force_uses_get_all_documents(self, mock_memory):
+        """With force=True, uses get_all_documents instead of unlinked query."""
         from cems.maintenance.relation_builder import RelationBuilderJob
 
         mock, doc_store = mock_memory
@@ -113,38 +125,42 @@ class TestRelationBuilderJob:
 
         result = _run(RelationBuilderJob(mock).run_async(limit=10, force=True))
         assert result["docs_processed"] == 1
-        # get_relation_count should NOT be called in force mode
-        doc_store.get_relation_count.assert_not_called()
-
-    def test_empty_corpus_returns_zeros(self, mock_memory):
-        """Empty document list returns all zeros."""
-        from cems.maintenance.relation_builder import RelationBuilderJob
-
-        mock, doc_store = mock_memory
-        doc_store.get_all_documents = AsyncMock(return_value=[])
-
-        result = _run(RelationBuilderJob(mock).run_async())
-        assert result["docs_processed"] == 0
-        assert result["relations_created"] == 0
-        assert result["docs_skipped"] == 0
+        doc_store.get_all_documents.assert_called_once()
 
     def test_skips_doc_without_embedding(self, mock_memory):
         """Documents without chunk embeddings are skipped."""
         from cems.maintenance.relation_builder import RelationBuilderJob
 
         mock, doc_store = mock_memory
-        doc_store.get_all_documents = AsyncMock(return_value=[_make_doc(DOC_A)])
-        doc_store.get_relation_count = AsyncMock(return_value=0)
 
-        # No embedding found
-        mock_conn = AsyncMock()
-        mock_conn.fetchrow = AsyncMock(return_value=None)
-        mock_pool = AsyncMock()
-        mock_pool.acquire = MagicMock()
-        mock_pool.acquire.return_value.__aenter__ = AsyncMock(return_value=mock_conn)
-        mock_pool.acquire.return_value.__aexit__ = AsyncMock(return_value=False)
-        doc_store._get_pool = AsyncMock(return_value=mock_pool)
+        # SQL query returns one unlinked doc
+        mock_rows = [MagicMock(**{
+            "__getitem__": lambda self, k: {
+                "id": DOC_A, "content": "test", "category": "general",
+                "scope": "personal", "source_ref": None, "tags": [], "created_at": None,
+            }[k],
+        })]
+        # Return rows from _get_unlinked_documents, but no embedding
+        pool_for_unlinked = _mock_pool_with_rows(mock_rows)
+        # Override fetchrow to return None (no embedding)
+        mock_conn_no_embed = AsyncMock()
+        mock_conn_no_embed.fetchrow = AsyncMock(return_value=None)
+        mock_conn_no_embed.fetch = AsyncMock(return_value=mock_rows)
+        pool_for_unlinked.acquire.return_value.__aenter__ = AsyncMock(return_value=mock_conn_no_embed)
+        doc_store._get_pool = AsyncMock(return_value=pool_for_unlinked)
 
         result = _run(RelationBuilderJob(mock).run_async(limit=10))
         assert result["docs_processed"] == 0
         assert result["docs_skipped"] == 1
+
+    def test_empty_corpus_returns_zeros(self, mock_memory):
+        """Empty document list returns all zeros."""
+        from cems.maintenance.relation_builder import RelationBuilderJob
+
+        mock, doc_store = mock_memory
+        doc_store._get_pool = AsyncMock(return_value=_mock_pool_with_rows([]))
+
+        result = _run(RelationBuilderJob(mock).run_async())
+        assert result["docs_processed"] == 0
+        assert result["relations_created"] == 0
+        assert result["docs_skipped"] == 0
