@@ -280,16 +280,9 @@ def _setup_credentials(api_url: str | None = None, api_key: str | None = None) -
     cems_dir = Path.home() / ".cems"
     creds_file = cems_dir / "credentials"
 
-    # Already configured — but offer project setup if interactive
+    # Already configured
     if creds_file.exists() and not api_key:
         console.print(f"[green]Credentials:[/green] {creds_file}")
-        if _is_interactive():
-            also_project = click.confirm(
-                "Also set up project-specific credentials in this directory?",
-                default=False,
-            )
-            if also_project:
-                _setup_project_credentials(None, None)
         return True
 
     # Non-interactive with explicit values — preserve existing custom keys
@@ -338,17 +331,6 @@ def _setup_credentials(api_url: str | None = None, api_key: str | None = None) -
     if not api_key:
         console.print("[red]API key is required.[/red]")
         return False
-
-    # Ask where to store credentials
-    location = click.prompt(
-        "Store credentials",
-        type=click.Choice(["global", "project"], case_sensitive=False),
-        default="global",
-        show_default=True,
-    )
-    if location == "project":
-        _setup_project_credentials(api_url, api_key)
-        return True
 
     cems_dir.mkdir(parents=True, exist_ok=True)
     creds_file.write_text(
@@ -967,19 +949,37 @@ def _setup_project_credentials(api_url: str | None, api_key: str | None) -> None
             console.print("Usage: cems setup --project --api-url URL --api-key KEY")
             raise click.Abort()
 
+        # Use existing global credentials as defaults for project setup
+        existing_creds = _read_credentials() if (Path.home() / ".cems" / "credentials").exists() else {}
+        default_url = existing_creds.get("CEMS_API_URL", "http://localhost:8765")
+        default_key = existing_creds.get("CEMS_API_KEY", "")
+
         console.print()
         console.print("[bold]Project Credentials Setup[/bold]")
-        console.print("Get these from your CEMS admin.")
+        if default_key:
+            console.print("Using global credentials as defaults. Press enter to keep, or type new values.")
+        else:
+            console.print("Get these from your CEMS admin.")
         console.print()
 
         if not api_url:
             api_url = click.prompt(
                 "CEMS API URL",
-                default="http://localhost:8765",
+                default=default_url,
                 show_default=True,
             )
         if not api_key:
-            api_key = click.prompt("CEMS API Key", hide_input=True)
+            if default_key:
+                use_same = click.confirm(
+                    f"Use same API key as global ({default_key[:8]}...)?",
+                    default=True,
+                )
+                if use_same:
+                    api_key = default_key
+                else:
+                    api_key = click.prompt("CEMS API Key", hide_input=True)
+            else:
+                api_key = click.prompt("CEMS API Key", hide_input=True)
 
         if not api_key:
             console.print("[red]API key is required.[/red]")
@@ -1100,17 +1100,18 @@ def setup(install_claude: bool, install_cursor: bool, install_codex: bool, insta
         cems setup --claude --api-url URL --api-key KEY  # Non-interactive
         cems setup --project --api-url URL --api-key KEY  # Per-project config
     """
-    # Per-project setup — completely separate flow
-    if install_project:
+    # Non-interactive --project flag — separate flow
+    if install_project and not _is_interactive():
         _setup_project_credentials(api_url, api_key)
         return
+
     console.print()
     console.print("[bold]CEMS Setup[/bold]")
     console.print()
 
     data_path = _get_data_path()
 
-    # Determine what to install
+    # Step 1: Select IDEs
     if not install_claude and not install_cursor and not install_codex and not install_goose:
         if _is_interactive():
             selected = _multiselect(
@@ -1131,14 +1132,84 @@ def setup(install_claude: bool, install_cursor: bool, install_codex: bool, insta
             console.print("[yellow]Non-interactive mode: installing Claude Code hooks (use --cursor/--codex/--goose for others)[/yellow]")
             install_claude = True
 
-    # Credentials
-    if not _setup_credentials(api_url=api_url, api_key=api_key):
-        raise click.Abort()
+    # Step 2: Credential scope
+    credential_scope = "global"
+    if _is_interactive() and not install_project:
+        console.print()
+        credential_scope = _single_select(
+            "Credential scope",
+            [
+                ("global", "Global — CEMS accesses all your projects"),
+                ("project", "Project — CEMS accesses only this project's data"),
+            ],
+            default=0,
+        )
+        install_project = credential_scope == "project"
+    elif install_project:
+        credential_scope = "project"
+
+    # Step 3: Credentials (adapts based on scope + existing state)
+    import os as _os
+    global_creds_file = Path.home() / ".cems" / "credentials"
+    project_creds_file = Path(_os.getcwd()) / ".cems" / "credentials"
+
+    if credential_scope == "project":
+        # Project scope — write to CWD/.cems/credentials
+        if project_creds_file.exists() and _is_interactive() and not api_key:
+            console.print()
+            action = _single_select(
+                f"Project credentials found ({project_creds_file})",
+                [
+                    ("keep", "Keep existing"),
+                    ("overwrite", "Overwrite with new values"),
+                ],
+                default=0,
+            )
+            if action == "overwrite":
+                _setup_project_credentials(api_url, api_key)
+        elif not project_creds_file.exists():
+            _setup_project_credentials(api_url, api_key)
+        else:
+            console.print(f"[green]Project credentials:[/green] {project_creds_file}")
+
+        # Also ensure global creds exist for hooks/MCP that need them
+        if not global_creds_file.exists() and not api_key:
+            # Read the project creds we just wrote to populate global as well
+            pass  # Global is optional in project-only mode
+    else:
+        # Global scope — write to ~/.cems/credentials
+        if global_creds_file.exists() and _is_interactive() and not api_key:
+            console.print()
+            action = _single_select(
+                f"Global credentials found ({global_creds_file})",
+                [
+                    ("keep", "Keep existing"),
+                    ("overwrite", "Overwrite with new values"),
+                ],
+                default=0,
+            )
+            if action == "overwrite":
+                if not _setup_credentials(api_url=None, api_key=None):
+                    raise click.Abort()
+            else:
+                console.print(f"[green]Credentials:[/green] {global_creds_file}")
+        elif not _setup_credentials(api_url=api_url, api_key=api_key):
+            raise click.Abort()
 
     console.print()
 
     # Resolve API URL and key for team discovery
-    creds = _read_credentials()
+    # Read from whichever credential file we just wrote/kept
+    if credential_scope == "project" and project_creds_file.exists():
+        from cems.shared.credentials import parse_credentials_file
+        creds = parse_credentials_file(str(project_creds_file))
+        # Merge with global if project creds are sparse
+        if global_creds_file.exists():
+            global_creds = _read_credentials()
+            for k, v in global_creds.items():
+                creds.setdefault(k, v)
+    else:
+        creds = _read_credentials()
     resolved_url = api_url or creds.get("CEMS_API_URL", "http://localhost:8765")
     resolved_key = api_key or creds.get("CEMS_API_KEY", "")
 
@@ -1212,7 +1283,10 @@ def setup(install_claude: bool, install_cursor: bool, install_codex: bool, insta
     table = Table(show_header=False, box=None, padding=(0, 2))
     table.add_column(style="cyan")
     table.add_column(style="white")
-    table.add_row("Credentials", str(Path.home() / ".cems" / "credentials"))
+    if credential_scope == "project" and project_creds_file.exists():
+        table.add_row("Project creds", str(project_creds_file))
+    if global_creds_file.exists():
+        table.add_row("Global creds", str(global_creds_file))
     if install_claude:
         table.add_row("Claude hooks", str(Path.home() / ".claude" / "hooks"))
         table.add_row("Claude skills", str(Path.home() / ".claude" / "skills" / "cems"))
