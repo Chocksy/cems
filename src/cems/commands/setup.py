@@ -527,7 +527,7 @@ def _install_claude_hooks(data_path: Path, api_url: str, team_id: str | None = N
 
     hook_files = [
         "cems_session_start.py", "cems_user_prompts_submit.py",
-        "cems_post_tool_use.py", "cems_stop.py", "cems_pre_tool_use.py", "cems_pre_compact.py",
+        "cems_stop.py", "cems_pre_tool_use.py", "cems_pre_compact.py",
     ]
     for f in hook_files:
         src = src_hooks / f
@@ -659,6 +659,38 @@ def _migrate_old_hook_names(hooks: dict) -> None:
         ]
 
 
+def _migrate_removed_hooks(hooks: dict) -> bool:
+    """Remove deprecated CEMS hooks from settings.
+
+    Returns True if any hooks were removed (for messaging).
+
+    Removed hooks:
+    - cems_post_tool_use.py: Tool learning superseded by observer daemon.
+      The daemon captures learnings holistically from the full session
+      transcript, producing fewer, higher-quality memories.
+    """
+    removed_scripts = {"cems_post_tool_use.py"}
+    changed = False
+
+    for event_name in list(hooks.keys()):
+        original = hooks[event_name]
+        hooks[event_name] = [
+            entry for entry in original
+            if not any(
+                any(script in hook.get("command", "")
+                    for script in removed_scripts)
+                for hook in entry.get("hooks", [])
+            )
+        ]
+        if len(hooks[event_name]) != len(original):
+            changed = True
+        # Remove empty event arrays
+        if not hooks[event_name]:
+            del hooks[event_name]
+
+    return changed
+
+
 def _merge_settings(claude_dir: Path, template_path: Path) -> None:
     """Merge CEMS hook config into existing ~/.claude/settings.json.
 
@@ -685,6 +717,10 @@ def _merge_settings(claude_dir: Path, template_path: Path) -> None:
     # Migrate old hook names → new cems_ prefix names
     existing_hooks = existing.setdefault("hooks", {})
     _migrate_old_hook_names(existing_hooks)
+
+    # Remove deprecated hooks (tool learning superseded by observer daemon)
+    if _migrate_removed_hooks(existing_hooks):
+        console.print("  Removed tool learning hook (superseded by observer daemon)")
 
     # Merge hooks: for each hook event, add CEMS hooks if not already present
     for event_name, cems_entries in cems_hooks.items():

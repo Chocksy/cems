@@ -946,3 +946,51 @@ class TestSchedulerIntegration:
 
         with pytest.raises(ValueError, match="Unknown job type"):
             scheduler.run_now("invalid_job", memory)
+
+
+class TestEntityPageProtection:
+    """Entity pages must never be merged, deleted, or condensed by maintenance."""
+
+    def test_consolidation_skips_entity_page_as_source(self, mock_memory):
+        """ConsolidationJob skips entity-page docs when iterating source docs."""
+        from cems.maintenance.consolidation import ConsolidationJob
+
+        memory, doc_store, _ = mock_memory
+        entity_doc = _make_doc("entity-1", "# Wiki Page\nLong content here...")
+        entity_doc["category"] = "entity-page"
+
+        doc_store.get_recent_documents = AsyncMock(return_value=[entity_doc])
+        memory._async_embedder = AsyncMock()
+        memory._async_embedder.embed_batch = AsyncMock(return_value=[[0.1] * 1536])
+
+        result = _run(ConsolidationJob(memory).run_async())
+
+        # Entity page should be skipped — no search_chunks calls
+        doc_store.search_chunks.assert_not_awaited()
+        assert result["duplicates_merged"] == 0
+
+    def test_consolidation_skips_entity_page_as_merge_target(self, mock_memory):
+        """ConsolidationJob never deletes an entity-page found as merge candidate."""
+        from cems.maintenance.consolidation import ConsolidationJob
+
+        memory, doc_store, _ = mock_memory
+
+        normal_doc = _make_doc("normal-1", "Some content about deployment")
+        entity_doc = _make_doc("entity-1", "# Deployment Guide\nDetailed wiki...")
+        entity_doc["category"] = "entity-page"
+
+        doc_store.get_recent_documents = AsyncMock(return_value=[normal_doc])
+        memory._async_embedder = AsyncMock()
+        memory._async_embedder.embed_batch = AsyncMock(return_value=[[0.1] * 1536])
+
+        # search_chunks returns the entity page as a near-duplicate
+        doc_store.search_chunks = AsyncMock(return_value=[
+            {"document_id": "entity-1", "score": 0.99},
+        ])
+        doc_store.get_document = AsyncMock(return_value=entity_doc)
+
+        result = _run(ConsolidationJob(memory).run_async())
+
+        # Entity page should NOT be deleted despite 0.99 similarity
+        doc_store.delete_document.assert_not_awaited()
+        assert result["duplicates_merged"] == 0

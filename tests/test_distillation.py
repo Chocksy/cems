@@ -81,8 +81,8 @@ class TestDistillationJob:
         doc_store.distill_document.assert_not_awaited()
 
     @patch("cems.maintenance.distillation.get_client")
-    def test_distills_all_categories(self, mock_get_client, mock_memory):
-        """All categories are eligible for distillation — only pinned tag protects."""
+    def test_distills_most_categories_but_skips_entity_pages(self, mock_get_client, mock_memory):
+        """Most categories are eligible — pinned tag and entity-page category are protected."""
         from cems.maintenance.distillation import DistillationJob
 
         memory, doc_store = mock_memory
@@ -96,8 +96,9 @@ class TestDistillationJob:
             _make_doc("pref-1", "B" * 1000, category="preferences"),
             _make_doc("session-1", "C" * 1000, category="session-summary"),
             _make_doc("pinned-1", "D" * 1000, category="general"),
+            _make_doc("entity-1", "E" * 2000, category="entity-page"),
         ]
-        # Mark last one as pinned
+        # Mark one as pinned
         docs[3]["tags"] = ["pinned"]
 
         doc_store.get_all_documents = AsyncMock(return_value=docs)
@@ -106,7 +107,8 @@ class TestDistillationJob:
         job = DistillationJob(memory)
         result = _run(job.run_async())
 
-        # 3 candidates (gate-rules, preferences, session-summary), pinned skipped
+        # 3 candidates (gate-rules, preferences, session-summary)
+        # pinned skipped, entity-page skipped
         assert result["candidates"] == 3
         assert result["distilled"] == 3
         assert doc_store.distill_document.await_count == 3

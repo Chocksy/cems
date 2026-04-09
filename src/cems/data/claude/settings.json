@@ -22,17 +22,6 @@
         ]
       }
     ],
-    "PostToolUse": [
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "$HOME/.claude/hooks/run_with_uv.sh $HOME/.claude/hooks/cems_post_tool_use.py"
-          }
-        ]
-      }
-    ],
     "PreToolUse": [
       {
         "matcher": "",

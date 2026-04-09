@@ -1139,14 +1139,14 @@ class TestStopRelevanceFeedback:
 
 
 class TestPostToolUse:
-    """Tests for cems_post_tool_use.py"""
+    """Tests for cems_post_tool_use.py (disabled — now a no-op).
 
-    def test_sends_learnable_bash_command(self, cems_server: RecordingServer, tmp_path):
-        """Git commit should be sent to CEMS for learning."""
-        cems_server.set_response("/api/tool/learning", CannedResponse(
-            body={"success": True, "stored": True}
-        ))
+    Tool learning was superseded by the observer daemon.
+    The hook exits immediately without making any API calls.
+    """
 
+    def test_noop_exits_cleanly(self, cems_server: RecordingServer, tmp_path):
+        """Disabled hook exits 0 without making any API calls."""
         result = run_hook(
             "cems_post_tool_use.py",
             make_post_tool_use_input(
@@ -1158,76 +1158,7 @@ class TestPostToolUse:
         )
 
         assert result.exit_code == 0
-        learn_reqs = cems_server.get_requests("/api/tool/learning")
-        assert len(learn_reqs) == 1
-        body = learn_reqs[0].body
-        assert body["tool_name"] == "Bash"
-        assert "git commit" in body["tool_input"]["command"]
-
-    def test_skips_read_only_tools(self, cems_server: RecordingServer):
-        """Read/Glob/Grep should not trigger learning."""
-        for tool in ["Read", "Glob", "Grep"]:
-            cems_server.clear()
-            result = run_hook(
-                "cems_post_tool_use.py",
-                {
-                    "session_id": "test-001",
-                    "tool_name": tool,
-                    "tool_input": {"file_path": "/some/file.py"},
-                    "tool_response": {},
-                    "cwd": "/tmp",
-                    "transcript_path": "",
-                    "is_background_agent": False,
-                },
-                server=cems_server,
-            )
-
-            assert result.exit_code == 0
-            assert len(cems_server.requests) == 0, f"{tool} should not trigger API call"
-
-    def test_skips_non_learnable_bash(self, cems_server: RecordingServer):
-        """Simple bash commands (ls, cd, cat) should not trigger learning."""
-        result = run_hook(
-            "cems_post_tool_use.py",
-            make_post_tool_use_input(
-                tool_name="Bash",
-                tool_input={"command": "ls -la /tmp"},
-            ),
-            server=cems_server,
-        )
-
-        assert result.exit_code == 0
         assert len(cems_server.requests) == 0
-
-    def test_skips_background_agents(self, cems_server: RecordingServer):
-        """Background agents should not trigger learning."""
-        input_data = make_post_tool_use_input()
-        input_data["is_background_agent"] = True
-
-        result = run_hook("cems_post_tool_use.py", input_data, server=cems_server)
-
-        assert result.exit_code == 0
-        assert len(cems_server.requests) == 0
-
-    def test_write_tool_triggers_learning(self, cems_server: RecordingServer, tmp_path):
-        """Write tool should trigger learning."""
-        cems_server.set_response("/api/tool/learning", CannedResponse(
-            body={"success": True, "stored": False}
-        ))
-
-        result = run_hook(
-            "cems_post_tool_use.py",
-            make_post_tool_use_input(
-                tool_name="Write",
-                tool_input={"file_path": "/src/app.py", "content": "print('hello')"},
-                cwd=str(tmp_path),
-            ),
-            server=cems_server,
-        )
-
-        assert result.exit_code == 0
-        learn_reqs = cems_server.get_requests("/api/tool/learning")
-        assert len(learn_reqs) == 1
 
 
 # ============================================================================
@@ -1393,7 +1324,7 @@ class TestHookIntegration:
         assert "/api/memory/search" in all_paths
         assert "/api/memory/log-shown" in all_paths
         assert "/api/memory/gate-rules" in all_paths
-        assert "/api/tool/learning" in all_paths
+        # Note: /api/tool/learning removed — observer daemon handles learnings
         # Note: /api/session/analyze removed — observer daemon handles summaries
 
 

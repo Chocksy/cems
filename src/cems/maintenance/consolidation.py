@@ -131,6 +131,10 @@ class ConsolidationJob:
             if "pinned" in (doc.get("tags") or []):
                 continue
 
+            # Skip entity pages — compiled wiki documents must never be merged/deleted
+            if doc.get("category") == "entity-page":
+                continue
+
             # Use content_detailed (full text) if available (distilled docs have terse content)
             content = doc.get("content_detailed") or doc.get("content", "")
             if not content:
@@ -168,6 +172,10 @@ class ConsolidationJob:
                 # Fetch the candidate document
                 dup_doc = await doc_store.get_document(chunk_doc_id, user_id=self.config.user_id)
                 if not dup_doc:
+                    continue
+
+                # Never merge/delete entity pages
+                if dup_doc.get("category") == "entity-page":
                     continue
 
                 # Tier 1: Auto-merge near-identical
