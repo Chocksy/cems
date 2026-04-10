@@ -24,15 +24,58 @@ from mcp.server.fastmcp import FastMCP
 # Credentials
 # ---------------------------------------------------------------------------
 
+def _detect_project_cwd() -> str:
+    """Detect the actual project CWD for credential resolution.
+
+    IDE-spawned MCP processes (Cursor, Codex Desktop) often have CWD=$HOME,
+    not the project directory. This resolves the real project CWD from:
+    1. os.getcwd() if it's not $HOME
+    2. Claude Code PPID session file (~/.claude/sessions/{ppid}.json → cwd)
+    3. WORKSPACE_FOLDER_PATHS env var (Cursor)
+    4. Fallback: os.getcwd()
+    """
+    from pathlib import Path
+
+    cwd = os.getcwd()
+    home = str(Path.home())
+
+    # If CWD is already a project dir (not $HOME), use it
+    if cwd != home:
+        return cwd
+
+    # Try Claude Code session file (has project CWD)
+    session_file = Path.home() / ".claude" / "sessions" / f"{os.getppid()}.json"
+    try:
+        if session_file.exists():
+            data = json.loads(session_file.read_text())
+            session_cwd = data.get("cwd", "")
+            if session_cwd:
+                return session_cwd
+    except (json.JSONDecodeError, OSError):
+        pass
+
+    # Try Cursor workspace paths
+    workspace_paths = os.environ.get("WORKSPACE_FOLDER_PATHS", "")
+    if workspace_paths:
+        # Take first path (comma or colon separated)
+        first_path = workspace_paths.split(",")[0].split(":")[0].strip()
+        if first_path and first_path != home:
+            return first_path
+
+    return cwd
+
+
 def _get_config() -> tuple[str, str, str, str]:
     """Return (api_url, api_key, search_mode, team_id) using the shared credential resolver.
     Precedence: env vars > per-project .cems/credentials > global ~/.cems/credentials.
     """
-    creds = resolve_credentials(os.getcwd())
+    project_cwd = _detect_project_cwd()
+    creds = resolve_credentials(project_cwd)
     api_url = creds.get("CEMS_API_URL", "")
     api_key = creds.get("CEMS_API_KEY", "")
     search_mode = creds.get("CEMS_SEARCH_MODE", "")
     team_id = creds.get("CEMS_TEAM_ID", "")
+    logger.info(f"MCP config: CWD={project_cwd}, API={api_url.rstrip('/')}")
     return api_url.rstrip("/"), api_key, search_mode, team_id
 
 
