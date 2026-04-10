@@ -124,6 +124,8 @@ def _format_agentic_response(data: dict) -> tuple[str | None, list[str], list[bo
             full_len = m.get("full_length", 0)
             suffix = f" [truncated — full doc: {full_len} chars]" if truncated else ""
             parts.append(f"{i}. [{category}] (score: {score:.2f}) {content}{suffix} (id: {short_id})")
+            if truncated:
+                parts.append(f"   Use /recall {short_id} to read the full document.")
             truncation_flags.append(truncated)
             if mem_id:
                 memory_ids.append(mem_id)
