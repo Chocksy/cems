@@ -173,13 +173,46 @@ def _restart_daemon() -> None:
         if not pid_file.exists():
             return
         pid = int(pid_file.read_text().strip())
-        # SIGKILL is safe here: daemon state is all on disk.
-        # SIGTERM can take 30-60s if daemon is mid-API-call.
         os.kill(pid, signal.SIGKILL)
         time.sleep(0.5)
         pid_file.unlink(missing_ok=True)
         console.print("  Observer daemon stopped (will auto-restart)")
     except (ValueError, ProcessLookupError, PermissionError, OSError):
+        pass
+
+
+def _restart_mcp_processes() -> None:
+    """Kill all running cems-mcp processes so they restart with updated code.
+
+    MCP processes are spawned by IDEs (Claude Code, Cursor, Codex) and persist
+    across sessions. After an update, they run old code until killed.
+    The IDE will respawn them on the next MCP tool call.
+    """
+    import subprocess as sp
+
+    try:
+        result = sp.run(
+            ["pgrep", "-f", "cems-mcp"],
+            capture_output=True, text=True, timeout=3,
+        )
+        if result.returncode != 0:
+            return
+
+        pids = [int(p.strip()) for p in result.stdout.strip().splitlines() if p.strip()]
+        my_pid = os.getpid()
+        killed = 0
+        for pid in pids:
+            if pid == my_pid:
+                continue
+            try:
+                os.kill(pid, signal.SIGKILL)
+                killed += 1
+            except (ProcessLookupError, PermissionError):
+                pass
+
+        if killed:
+            console.print(f"  Stopped {killed} MCP process(es) (will auto-restart)")
+    except (sp.TimeoutExpired, FileNotFoundError, OSError):
         pass
 
 
@@ -228,9 +261,10 @@ def update_cmd(hooks_only: bool) -> None:
     else:
         console.print("[dim]Hooks up to date, skipping re-deploy[/dim]")
 
-    # Restart observer daemon so it picks up updated code
+    # Restart observer daemon and MCP processes so they pick up updated code
     if hooks_only or version_changed:
         _restart_daemon()
+        _restart_mcp_processes()
 
     console.print()
-    console.print("[bold green]Update complete![/bold green] Restart your IDE to pick up changes.")
+    console.print("[bold green]Update complete![/bold green]")

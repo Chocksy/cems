@@ -861,33 +861,39 @@ def _register_codex_mcp(codex_dir: Path, api_url: str) -> None:
     if config_file.exists():
         existing = config_file.read_text()
 
-    # Check if already configured
-    if "mcp_servers.cems" in existing:
-        console.print("  MCP server already registered in config.toml")
-        return
-
-    # Prefer stdio (local binary) for project credential resolution
+    # Determine desired config
     cems_mcp = shutil.which("cems-mcp")
     if cems_mcp:
-        cems_block = f"""
-[mcp_servers.cems]
-command = "{cems_mcp}"
-"""
-        console.print(f"  MCP server registered: {cems_mcp} (stdio)")
+        new_block = f'[mcp_servers.cems]\ncommand = "{cems_mcp}"\n'
+        label = f"{cems_mcp} (stdio)"
     else:
-        # Fallback to HTTP MCP
         mcp_url = _discover_mcp_url(api_url)
-        cems_block = f"""
-[mcp_servers.cems]
-url = "{mcp_url}"
-bearer_token_env_var = "CEMS_API_KEY"
-"""
-        console.print(f"  MCP server registered: {mcp_url} (http)")
+        new_block = f'[mcp_servers.cems]\nurl = "{mcp_url}"\nbearer_token_env_var = "CEMS_API_KEY"\n'
+        label = f"{mcp_url} (http)"
 
+    # Replace existing config if present (handles HTTP→stdio migration)
+    if "[mcp_servers.cems]" in existing:
+        import re
+        # Remove old [mcp_servers.cems] block (everything until next section or EOF)
+        updated = re.sub(
+            r'\[mcp_servers\.cems\]\n(?:[^\[]*?)(?=\n\[|\Z)',
+            new_block,
+            existing,
+            count=1,
+        )
+        if updated != existing:
+            config_file.write_text(updated)
+            console.print(f"  Replacing MCP config → {label}")
+        else:
+            console.print(f"  MCP server already registered: {label}")
+        return
+
+    # Append new config
     codex_dir.mkdir(parents=True, exist_ok=True)
     if existing and not existing.endswith("\n"):
         existing += "\n"
-    config_file.write_text(existing + cems_block)
+    config_file.write_text(existing + "\n" + new_block)
+    console.print(f"  MCP server registered: {label}")
 
 
 def _install_cursor_hooks(data_path: Path, api_url: str, team_id: str | None = None, transport: str = "stdio", api_key: str | None = None) -> None:
