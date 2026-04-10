@@ -282,6 +282,35 @@ class TestLoadContextMemories:
         ids = [d["id"] for d in result]
         assert ids.index("high-1") < ids.index("low-1"), "High-relevance should come first"
 
+    @pytest.mark.asyncio
+    async def test_excludes_entity_pages_from_buckets(self):
+        """Entity-page documents should be filtered out — they're handled by entity picker."""
+        from cems.agentic.search import PROFILE_CATEGORIES, _load_context_memories
+
+        entity_doc = {
+            "id": "entity-1", "content": "# Big Entity Page\nLots of content...",
+            "category": "entity-page",
+            "source_ref": "project:chocksy/pos", "created_at": "2026-03-22",
+        }
+        regular_doc = {
+            "id": "regular-1", "content": "Regular memory",
+            "category": "general",
+            "source_ref": "project:chocksy/pos", "created_at": "2026-03-22",
+        }
+
+        # Bucket 1 returns both entity-page and regular docs
+        responses = [[entity_doc, regular_doc]]
+        for _ in PROFILE_CATEGORIES:
+            responses.append([])
+        responses.append([])  # recent
+        mock_store = self._make_mock_store(responses)
+
+        result = await _load_context_memories(mock_store, user_id="u1", project="chocksy/pos")
+
+        ids = [d["id"] for d in result]
+        assert "entity-1" not in ids, "Entity-page docs should be excluded from memory buckets"
+        assert "regular-1" in ids, "Regular docs should still be included"
+
 
 class TestAgenticSearchAsync:
     """Tests for agentic_search_async with mocked LLM."""
@@ -388,3 +417,122 @@ class TestAgenticSearchAsync:
         assert result["entities"][0]["title"] == "Stripe Integration"
         assert len(result["memories"]) >= 1
         assert result["entity_candidates"] == 1
+
+    @pytest.mark.asyncio
+    @patch("cems.agentic.search._load_entity_summaries", new_callable=AsyncMock, return_value=[])
+    @patch("cems.agentic.search.get_client")
+    async def test_memory_content_is_truncated(self, mock_get_client, _mock_entities):
+        """Agentic search should return snippet content, not full documents."""
+        from cems.agentic.search import agentic_search_async
+
+        mock_client = MagicMock()
+        mock_get_client.return_value = mock_client
+        mock_client.complete.return_value = '["abc12345"]'
+
+        long_content = "This is a long memory. " * 100  # ~2300 chars
+
+        mock_store = AsyncMock()
+        mock_store.get_all_documents = AsyncMock(return_value=[
+            {
+                "id": "abc12345-full-uuid-here",
+                "content": long_content,
+                "category": "general",
+                "source_ref": "project:test",
+                "created_at": "2026-03-22",
+                "scope": "personal",
+                "tags": [],
+            }
+        ])
+
+        result = await agentic_search_async(
+            document_store=mock_store,
+            user_id="user-1",
+            query="What is this about?",
+            project="test",
+        )
+
+        assert len(result["memories"]) >= 1
+        mem = result["memories"][0]
+        assert len(mem["content"]) <= 600, f"Content should be truncated, got {len(mem['content'])} chars"
+        assert mem.get("truncated") is True
+        assert mem.get("full_length") == len(long_content)
+
+    @pytest.mark.asyncio
+    @patch("cems.agentic.search._load_entity_summaries", new_callable=AsyncMock, return_value=[])
+    @patch("cems.agentic.search.get_client")
+    async def test_short_memory_not_truncated(self, mock_get_client, _mock_entities):
+        """Short memories should not be marked as truncated."""
+        from cems.agentic.search import agentic_search_async
+
+        mock_client = MagicMock()
+        mock_get_client.return_value = mock_client
+        mock_client.complete.return_value = '["abc12345"]'
+
+        mock_store = AsyncMock()
+        mock_store.get_all_documents = AsyncMock(return_value=[
+            {
+                "id": "abc12345-full-uuid-here",
+                "content": "Short memory content",
+                "category": "general",
+                "source_ref": "project:test",
+                "created_at": "2026-03-22",
+                "scope": "personal",
+                "tags": [],
+            }
+        ])
+
+        result = await agentic_search_async(
+            document_store=mock_store,
+            user_id="user-1",
+            query="Short query",
+            project="test",
+        )
+
+        if result["memories"]:
+            mem = result["memories"][0]
+            assert mem["content"] == "Short memory content"
+            assert "truncated" not in mem or mem.get("truncated") is not True
+
+    @pytest.mark.asyncio
+    @patch("cems.agentic.search.get_client")
+    async def test_count_includes_entities(self, mock_get_client):
+        """count field should include both entities and memories."""
+        from cems.agentic.search import agentic_search_async
+
+        mock_client = MagicMock()
+        mock_get_client.return_value = mock_client
+        mock_client.complete.side_effect = [
+            '["ent12345"]',
+            '["mem12345"]',
+            '["mem12345"]',
+            '["mem12345"]',
+        ]
+
+        entity_summaries = [
+            {"id": "ent12345-full-uuid", "title": "Test Entity",
+             "summary": "Summary", "sources": "5"},
+        ]
+
+        mock_store = AsyncMock()
+        mock_store.get_all_documents = AsyncMock(return_value=[
+            {
+                "id": "mem12345-full-uuid",
+                "content": "Memory content",
+                "category": "general",
+                "source_ref": "project:test",
+                "created_at": "2026-03-22",
+                "scope": "personal",
+                "tags": [],
+            }
+        ])
+
+        with patch("cems.agentic.search._load_entity_summaries",
+                    new_callable=AsyncMock, return_value=entity_summaries):
+            result = await agentic_search_async(
+                document_store=mock_store,
+                user_id="user-1",
+                query="test",
+                project="test",
+            )
+
+        assert result["count"] == len(result["entities"]) + len(result["memories"])

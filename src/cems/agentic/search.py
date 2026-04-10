@@ -20,6 +20,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from cems.lib.json_parsing import parse_json_list
 from cems.llm.client import get_client
+from cems.memory.retrieval import _make_snippet
 
 logger = logging.getLogger(__name__)
 
@@ -323,6 +324,9 @@ def _run_single_agent(
 # Categories that are always relevant regardless of project
 PROFILE_CATEGORIES = {"preferences", "guidelines", "gate-rules", "category-summary"}
 
+# Categories handled separately (entity picker) — exclude from memory buckets
+EXCLUDED_MEMORY_CATEGORIES = {"entity-page"}
+
 # How far back "recent" memories go
 RECENT_DAYS = 14
 
@@ -403,6 +407,7 @@ async def _load_context_memories(
             limit=1000,
             order="desc",
         )
+        project_docs = [d for d in project_docs if d.get("category") not in EXCLUDED_MEMORY_CATEGORIES]
         project_docs.sort(key=_relevance_score, reverse=True)
         b1 = _add_unique(project_docs)
         logger.debug(f"Agentic context bucket 1 (project={project}): {b1} memories")
@@ -435,11 +440,11 @@ async def _load_context_memories(
     )
     recent_filtered = []
     for d in recent_docs:
-        # Only include: same project, no project, or profile categories
         src = d.get("source_ref") or ""
         cat = d.get("category") or ""
+        if cat in EXCLUDED_MEMORY_CATEGORIES:
+            continue
         if project and src and f"project:{project}".lower() not in src.lower():
-            # Different project — skip unless it's a profile category
             if cat not in PROFILE_CATEGORIES:
                 continue
         recent_filtered.append(d)
@@ -610,9 +615,11 @@ async def agentic_search_async(
         for i, short_id in enumerate(merged_short_ids):
             mem = mem_by_id.get(short_id, {})
             score = 1.0 - (i * 0.5 / max(len(merged_short_ids), 1))
+            raw_content = mem.get("content", "")
+            snippet, truncated = _make_snippet(raw_content)
             entry = {
                 "memory_id": str(mem.get("id", "")),
-                "content": mem.get("content", ""),
+                "content": snippet,
                 "category": mem.get("category", ""),
                 "scope": mem.get("scope", "personal"),
                 "source_ref": mem.get("source_ref", ""),
@@ -620,7 +627,10 @@ async def agentic_search_async(
                 "score": round(score, 3),
                 "created_at": str(mem.get("created_at", "")),
             }
-            if mem.get("content_detailed"):
+            if truncated:
+                entry["truncated"] = True
+                entry["full_length"] = len(raw_content)
+            elif mem.get("content_detailed"):
                 entry["has_detailed"] = True
                 entry["full_length"] = len(mem["content_detailed"])
             top_memories.append(entry)
@@ -637,7 +647,7 @@ async def agentic_search_async(
         "entities": top_entities,
         "memories": top_memories,
         "results": top_memories,  # backward compat
-        "count": len(top_memories),
+        "count": len(top_memories) + len(top_entities),
         "mode": "agentic",
         "tokens_used": 0,
         "queries_used": queries_used,
