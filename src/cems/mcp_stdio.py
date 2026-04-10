@@ -27,20 +27,23 @@ from mcp.server.fastmcp import FastMCP
 def _detect_project_cwd() -> str:
     """Detect the actual project CWD for credential resolution.
 
-    IDE-spawned MCP processes (Cursor, Codex Desktop) often have CWD=$HOME,
-    not the project directory. This resolves the real project CWD from:
-    1. os.getcwd() if it's not $HOME
+    IDE-spawned MCP processes often have CWD=$HOME or CWD=/.
+    Resolution order:
+    1. os.getcwd() if it's a real project dir (not $HOME or /)
     2. Claude Code PPID session file (~/.claude/sessions/{ppid}.json → cwd)
     3. WORKSPACE_FOLDER_PATHS env var (Cursor)
-    4. Fallback: os.getcwd()
+    4. Parent process name workspace hint (Cursor: "extension-host (user) <project>")
+    5. Fallback: os.getcwd()
     """
+    import re
+    import subprocess as sp
     from pathlib import Path
 
     cwd = os.getcwd()
     home = str(Path.home())
 
-    # If CWD is already a project dir (not $HOME), use it
-    if cwd != home:
+    # If CWD is already a project dir (not $HOME or /), use it
+    if cwd not in (home, "/"):
         return cwd
 
     # Try Claude Code session file (has project CWD)
@@ -54,23 +57,54 @@ def _detect_project_cwd() -> str:
     except (json.JSONDecodeError, OSError):
         pass
 
-    # Try Cursor workspace paths
+    # Try Cursor workspace paths env var
     workspace_paths = os.environ.get("WORKSPACE_FOLDER_PATHS", "")
     if workspace_paths:
-        # Take first path (comma or colon separated)
         first_path = workspace_paths.split(",")[0].split(":")[0].strip()
-        if first_path and first_path != home:
+        if first_path and first_path not in (home, "/"):
             return first_path
+
+    # Try extracting workspace name from parent process
+    # Cursor: "extension-host (user) hubstaff-server [1-2]"
+    try:
+        ppid = os.getppid()
+        result = sp.run(
+            ["ps", "-o", "command=", "-p", str(ppid)],
+            capture_output=True, text=True, timeout=2,
+        )
+        parent_cmd = result.stdout.strip()
+        match = re.search(r'extension-host.*?\)\s+(.+?)\s+\[', parent_cmd)
+        if match:
+            workspace_name = match.group(1).strip()
+            # Search common project directories
+            for base in [Path.home() / "Development", Path.home() / "Projects", Path.home()]:
+                candidate = base / workspace_name
+                if candidate.is_dir():
+                    return str(candidate)
+    except (sp.TimeoutExpired, OSError):
+        pass
 
     return cwd
 
 
 def _get_config() -> tuple[str, str, str, str]:
     """Return (api_url, api_key, search_mode, team_id) using the shared credential resolver.
-    Precedence: env vars > per-project .cems/credentials > global ~/.cems/credentials.
+
+    For MCP servers, we strip CEMS env vars from the process so file-based
+    credentials win. This prevents stale shell env vars (from eval "$(cems env)")
+    from overriding project-specific credentials.
     """
+    # Strip env vars so resolve_credentials reads from files, not stale shell env
+    saved_env = {}
+    for key in ("CEMS_API_URL", "CEMS_API_KEY", "CEMS_SEARCH_MODE", "CEMS_TEAM_ID"):
+        if key in os.environ:
+            saved_env[key] = os.environ.pop(key)
+
     project_cwd = _detect_project_cwd()
     creds = resolve_credentials(project_cwd)
+
+    # Restore env vars (other code might need them)
+    os.environ.update(saved_env)
     api_url = creds.get("CEMS_API_URL", "")
     api_key = creds.get("CEMS_API_KEY", "")
     search_mode = creds.get("CEMS_SEARCH_MODE", "")
