@@ -44,6 +44,15 @@ _NOT_CONFIGURED_MSG = (
 )
 
 # ---------------------------------------------------------------------------
+# Session auto-detection (for search context enrichment)
+# ---------------------------------------------------------------------------
+
+from cems.shared.session_detect import detect_session_id
+
+# Cache at module init — stdio MCP = 1 session per process
+_SESSION_ID = detect_session_id()
+
+# ---------------------------------------------------------------------------
 # HTTP helpers (stdlib only — no extra deps)
 # ---------------------------------------------------------------------------
 
@@ -152,6 +161,9 @@ def memory_search(
     }
     if project:
         payload["project"] = project
+    # Pass session_id for search context enrichment (auto-detected at startup)
+    if _SESSION_ID:
+        payload["session_id"] = _SESSION_ID
     # Pass search mode resolved at startup (project creds > env > global creds)
     search_mode = SEARCH_MODE
     if search_mode:

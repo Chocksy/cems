@@ -157,7 +157,7 @@ def _format_agentic_response(data: dict) -> tuple[str | None, list[str], list[bo
     return "\n".join(parts), memory_ids, truncation_flags, score_details
 
 
-def search_cems(client: CEMSClient, query: str, project: str | None = None) -> tuple[str | None, list[str], list[bool], list[dict]]:
+def search_cems(client: CEMSClient, query: str, project: str | None = None, session_id: str = "") -> tuple[str | None, list[str], list[bool], list[dict]]:
     """Search CEMS for relevant memories.
 
     Returns (formatted_string, memory_ids, truncation_flags, score_details) tuple.
@@ -167,6 +167,8 @@ def search_cems(client: CEMSClient, query: str, project: str | None = None) -> t
 
     try:
         payload = {"query": query, "scope": "both", "limit": 5}
+        if session_id:
+            payload["session_id"] = session_id
         if project:
             payload["project"] = project  # Boosts same-project memories via source_ref scoring
 
@@ -572,7 +574,7 @@ def main():
                 if assistant_text and len(assistant_text.strip()) >= 3:
                     project = get_project_id(cwd) if cwd else None
                     clean_assistant = _clean_search_query(assistant_text.strip())
-                    memories, memory_ids, _, _ = search_cems(client, clean_assistant, project=project)
+                    memories, memory_ids, _, _ = search_cems(client, clean_assistant, project=project, session_id=session_id)
                     if memories:
                         output_parts.append(f"""<memory-recall>
 CONTEXT for confirmed action:
@@ -617,7 +619,7 @@ Review these memories before proceeding.
         # 1. Memory awareness - search CEMS (clean query for better embedding match)
         if len(user_text) >= 3:
             search_query = _clean_search_query(user_text)
-            memories, memory_ids, truncation_flags, score_details = search_cems(client, search_query, project=project)
+            memories, memory_ids, truncation_flags, score_details = search_cems(client, search_query, project=project, session_id=session_id)
             if memories:
                 memory_context = f"""<memory-recall>
 RELEVANT MEMORIES found for "{search_query}":

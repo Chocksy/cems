@@ -187,6 +187,7 @@ class CEMSClient:
         enable_query_synthesis: bool = True,
         raw: bool = False,
         mode: str | None = None,
+        session_id: str | None = None,
     ) -> dict[str, Any]:
         """Search memories using unified retrieval pipeline.
 
@@ -221,6 +222,8 @@ class CEMSClient:
         }
         if mode:
             payload["mode"] = mode
+        if session_id:
+            payload["session_id"] = session_id
         return self._request("POST", "/api/memory/search", json=payload)
 
     def delete(self, memory_id: str, hard: bool = False) -> dict[str, Any]:

@@ -67,6 +67,7 @@ def add(
 @click.option("--raw", is_flag=True, help="Debug mode: bypass filtering to see all results")
 @click.option("--verbose", "-v", is_flag=True, help="Show full content without truncation")
 @click.option("--mode", "-m", default=None, type=click.Choice(["vector", "agentic", "hybrid"]), help="Search mode")
+@click.option("--session-id", default=None, help="Session ID for context enrichment (auto-detected)")
 @click.pass_context
 def search(
     ctx: click.Context,
@@ -79,6 +80,7 @@ def search(
     raw: bool,
     verbose: bool,
     mode: str | None,
+    session_id: str | None,
 ) -> None:
     """Search memories using unified retrieval pipeline.
 
@@ -93,6 +95,11 @@ def search(
     try:
         client = get_client(ctx)
 
+        # Auto-detect session_id if not explicitly provided
+        if not session_id:
+            from cems.shared.session_detect import detect_session_id
+            session_id = detect_session_id()
+
         with console.status("Searching..."):
             result = client.search(
                 query,
@@ -103,6 +110,7 @@ def search(
                 enable_query_synthesis=not no_synthesis,
                 raw=raw,
                 mode=mode,
+                session_id=session_id,
             )
 
         entities = result.get("entities", [])

@@ -312,6 +312,35 @@ async def api_memory_add_batch(request: Request):
         return JSONResponse({"error": "Internal server error"}, status_code=500)
 
 
+async def _get_session_context(memory, session_id: str) -> str:
+    """Fetch the latest session summary's Context line for search enrichment.
+
+    Returns the "Context: ..." line from the most recent session summary,
+    which is a 1-2 sentence overview ideal for anchoring semantic search.
+    Falls back to the document title if no Context line is found.
+    """
+    try:
+        doc_store = await memory._ensure_document_store()
+        short_id = session_id[:12]
+        tag = f"session:{short_id}"
+        doc = await doc_store.find_document_by_tag(
+            tag, user_id=memory.config.user_id, category="session-summary"
+        )
+        if not doc:
+            return ""
+        content = doc.get("content", "")
+        # Extract just the Context line (~100-200 chars) — ideal for query enrichment
+        for line in content.splitlines():
+            if line.startswith("Context:"):
+                return line
+        # Fallback: use title (e.g., "Session: 2026-04-09 - org/repo - Topic")
+        title = doc.get("title", "")
+        return title[:200] if title else ""
+    except Exception as e:
+        logger.debug(f"Could not fetch session context for {session_id[:8]}: {e}")
+        return ""
+
+
 async def api_memory_search(request: Request):
     """REST API endpoint to search memories using enhanced retrieval pipeline.
 
@@ -369,9 +398,18 @@ async def api_memory_search(request: Request):
         enable_hyde = body.get("enable_hyde", False)
         enable_decomposition = body.get("enable_decomposition", True)
 
+        session_id = body.get("session_id", "")
+
         logger.info(f"[API] Search request: query='{query[:50]}...', mode={mode}, raw={raw_mode}")
 
         memory = get_memory()
+
+        # Enrich query with session context when session_id is provided
+        if session_id:
+            session_context = await _get_session_context(memory, session_id)
+            if session_context:
+                query = f"{session_context}\n{query}"
+                logger.info(f"[API] Enriched query with session context ({len(session_context)} chars)")
 
         # Agentic mode: LLM agents replace embeddings for retrieval
         if mode == "agentic":
