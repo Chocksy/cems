@@ -18,6 +18,7 @@ Credentials file format (dotenv):
 from __future__ import annotations
 
 import os
+import subprocess
 from pathlib import Path
 
 _HOME = str(Path.home().resolve())  # Resolve symlinks for consistent walk-up comparison
@@ -72,10 +73,30 @@ def _find_project_credentials(cwd: str) -> str | None:
     return None
 
 
+def _resolve_main_worktree(cwd: str) -> str | None:
+    """If CWD is inside a git worktree, return the main worktree path."""
+    try:
+        result = subprocess.run(
+            ["git", "-C", cwd, "worktree", "list", "--porcelain"],
+            capture_output=True, text=True, timeout=3,
+        )
+        if result.returncode == 0:
+            for line in result.stdout.splitlines():
+                if line.startswith("worktree "):
+                    main_path = line[9:]
+                    if main_path != cwd:
+                        return main_path
+                    break
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        pass
+    return None
+
+
 def resolve_credentials(cwd: str | None = None) -> dict[str, str]:
     """Resolve CEMS credentials with full precedence chain.
 
     1. Per-project .cems/credentials (walk up from CWD, stop before $HOME)
+    1b. If CWD is a git worktree, try the main worktree path
     2. Environment variables (both CEMS_API_URL and CEMS_API_KEY must be set)
     3. Global ~/.cems/credentials (fallback)
 
@@ -86,6 +107,13 @@ def resolve_credentials(cwd: str | None = None) -> dict[str, str]:
         project_path = _find_project_credentials(cwd)
         if project_path:
             return _parse_credentials_file(project_path)
+
+        # 1b. Git worktree fallback (e.g., Codex worktrees)
+        main_wt = _resolve_main_worktree(cwd)
+        if main_wt:
+            project_path = _find_project_credentials(main_wt)
+            if project_path:
+                return _parse_credentials_file(project_path)
 
     # 2. Check env vars — require BOTH URL and key to be set.
     # Partial env (e.g., URL in env, key in file) is intentionally not supported
