@@ -72,6 +72,7 @@ def _serialize_results(selected: list[SearchResult]) -> list[dict[str, Any]]:
             "category": r.metadata.category if r.metadata else None,
             "source_ref": r.metadata.source_ref if r.metadata else None,
             "tags": r.metadata.tags if r.metadata else [],
+            "created_at": str(r.metadata.created_at) if r.metadata and r.metadata.created_at else None,
         }
         if truncated:
             entry["truncated"] = True

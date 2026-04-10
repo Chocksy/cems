@@ -969,6 +969,34 @@ class TestSnippetTruncation:
         assert serialized[1]["full_length"] == 800
         assert len(serialized[1]["content"]) < 800
 
+    def test_serialize_includes_created_at(self):
+        """_serialize_results should include created_at from metadata."""
+        from cems.memory.retrieval import _serialize_results
+        from cems.models import MemoryMetadata, MemoryScope, SearchResult
+        from datetime import datetime, UTC
+
+        ts = datetime(2026, 3, 22, 12, 0, 0, tzinfo=UTC)
+        result = SearchResult(
+            memory_id="test-id",
+            content="Short content",
+            score=0.9,
+            scope=MemoryScope.PERSONAL,
+            metadata=MemoryMetadata(
+                memory_id="test-id",
+                user_id="user-1",
+                scope=MemoryScope.PERSONAL,
+                category="general",
+                source_ref="project:test",
+                tags=[],
+                created_at=ts,
+            ),
+        )
+
+        serialized = _serialize_results([result])
+        assert len(serialized) == 1
+        assert "created_at" in serialized[0]
+        assert "2026" in serialized[0]["created_at"]
+
     def test_strips_segment_separators(self):
         """Session summary segment separators (---) are removed."""
         from cems.memory.retrieval import _make_snippet
