@@ -146,10 +146,13 @@ def search(
 
             for r in results:
                 content = r.get("content", r.get("memory", ""))
+                truncated = r.get("truncated", False)
                 if verbose:
                     display_content = content
                 else:
-                    display_content = content[:120] + "..." if len(content) > 120 else content
+                    display_content = content
+                    if truncated:
+                        display_content += " [truncated]"
                 table.add_row(
                     (r.get("memory_id") or r.get("id", "?"))[:12],
                     display_content,
@@ -160,23 +163,23 @@ def search(
             console.print(table)
 
             # Show pipeline stats
-            if result_mode == "unified":
-                console.print(
-                    f"[dim]Pipeline: {result.get('total_candidates', '?')} candidates → "
-                    f"{result.get('filtered_count', '?')} after filtering → "
-                    f"{len(results)} returned | "
-                    f"Tokens: {result.get('tokens_used', '?')} | "
-                    f"Queries: {len(result.get('queries_used', []))}[/dim]"
-                )
-            elif result_mode == "agentic":
+            if result_mode == "agentic":
                 console.print(
                     f"[dim]Agentic: {result.get('total_candidates', '?')} memories + "
                     f"{result.get('entity_candidates', '?')} entity pages | "
                     f"{len(entities)} topics + {len(results)} memories returned[/dim]"
                 )
+            elif result_mode != "raw":
+                console.print(
+                    f"[dim]Pipeline: {result.get('total_candidates', '?')} candidates → "
+                    f"{result.get('filtered_count', '?')} after filtering → "
+                    f"{len(results)} returned | "
+                    f"Tokens: {result.get('tokens_used', '?')} | "
+                    f"Queries: {result.get('queries_used', '?')}[/dim]"
+                )
         elif not entities:
             console.print("[yellow]No relevant results found[/yellow]")
-            if result_mode == "unified" and not raw:
+            if not raw:
                 console.print("[dim]Tip: Use --raw to see unfiltered results[/dim]")
 
     except CEMSClientError as e:
