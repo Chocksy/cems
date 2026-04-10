@@ -847,10 +847,14 @@ def _install_codex_config(data_path: Path, api_url: str) -> None:
 
 
 def _register_codex_mcp(codex_dir: Path, api_url: str) -> None:
-    """Register CEMS MCP server in Codex config.toml."""
-    config_file = codex_dir / "config.toml"
+    """Register CEMS MCP server in Codex config.toml.
 
-    mcp_url = _discover_mcp_url(api_url)
+    Uses stdio transport (local cems-mcp binary) so project credential
+    resolution works correctly. Falls back to HTTP if cems-mcp is not found.
+    """
+    import shutil
+
+    config_file = codex_dir / "config.toml"
 
     # Read existing config
     existing = ""
@@ -862,17 +866,28 @@ def _register_codex_mcp(codex_dir: Path, api_url: str) -> None:
         console.print("  MCP server already registered in config.toml")
         return
 
-    # Append CEMS MCP config
-    cems_block = f"""
+    # Prefer stdio (local binary) for project credential resolution
+    cems_mcp = shutil.which("cems-mcp")
+    if cems_mcp:
+        cems_block = f"""
+[mcp_servers.cems]
+command = "{cems_mcp}"
+"""
+        console.print(f"  MCP server registered: {cems_mcp} (stdio)")
+    else:
+        # Fallback to HTTP MCP
+        mcp_url = _discover_mcp_url(api_url)
+        cems_block = f"""
 [mcp_servers.cems]
 url = "{mcp_url}"
 bearer_token_env_var = "CEMS_API_KEY"
 """
+        console.print(f"  MCP server registered: {mcp_url} (http)")
+
     codex_dir.mkdir(parents=True, exist_ok=True)
     if existing and not existing.endswith("\n"):
         existing += "\n"
     config_file.write_text(existing + cems_block)
-    console.print(f"  MCP server registered: {mcp_url}")
 
 
 def _install_cursor_hooks(data_path: Path, api_url: str, team_id: str | None = None, transport: str = "stdio", api_key: str | None = None) -> None:
