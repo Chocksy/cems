@@ -18,6 +18,7 @@ import { z } from "zod";
 
 const PYTHON_API_URL = process.env.PYTHON_API_URL || "http://cems-server:8765";
 const PORT = parseInt(process.env.PORT || "8766", 10);
+const CEMS_SEARCH_MODE = process.env.CEMS_SEARCH_MODE || "";
 
 const app = express();
 
@@ -149,6 +150,7 @@ function createMcpServer(authHeaders: { authorization?: string; teamId?: string 
             enable_query_synthesis: args.enable_query_synthesis,
             raw: args.raw,
             project: args.project,
+            ...(CEMS_SEARCH_MODE && { mode: CEMS_SEARCH_MODE }),
           }),
         });
 
