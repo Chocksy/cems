@@ -136,6 +136,25 @@ The SessionStart profile already instructs Claude (line ~723 in memory.py):
 - 3 memory search agents — still search full content internally (needed for ranking), output truncated after ranking
 - `_make_snippet()` function — reused as-is (500 chars, sentence-boundary aware)
 
+### Additional Fixes (from Codex review)
+
+These are related inconsistencies discovered during code review that should be fixed alongside the main design:
+
+| # | Issue | Severity | Fix |
+|---|-------|----------|-----|
+| 1 | `queries_used` type mismatch: int (agentic) vs list[str] (non-agentic) | Medium | Normalize to int count in both paths |
+| 2 | CLI pipeline stats check `"unified"` mode — dead code, API never returns "unified" | Low | Change condition to `result_mode not in ("agentic", "raw")` |
+| 3 | Agentic `count` excludes entity results | Low | Change to `len(top_memories) + len(top_entities)` |
+| 4 | MCP stdio (`mcp_stdio.py`) also needs mode propagation check | Medium | Verify it reads `CEMS_SEARCH_MODE` (Codex found it does — confirm) |
+| 5 | Non-agentic results missing `created_at` field in `_serialize_results` | Low | Add `created_at` to serialization |
+
+### Out of Scope (noted for future)
+
+- `enable_query_synthesis` default mismatch (API=False, MCP/CLI=True) — needs design decision on whether hook search should use synthesis
+- `enable_hyde` not exposed to MCP/CLI — feature gap, not blocking
+- Entity pages appearing in non-agentic vector search — they're valid semantic matches; only the agentic double-inclusion is a bug
+- Hook agentic detection via `entities is not None` — code smell but not breaking
+
 ### Testing
 
 - Verify agentic search response has truncated memory content
