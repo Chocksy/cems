@@ -41,6 +41,9 @@ services:
       CEMS_EMBEDDING_BACKEND: openrouter
       CEMS_EMBEDDING_DIMENSION: 1536
       CEMS_RERANKER_BACKEND: disabled
+      # LLM models (OpenRouter format) — override to control costs
+      # CEMS_LLM_MODEL: qwen/qwen3-32b              # Maintenance jobs (lint, consolidation)
+      # CEMS_AGENTIC_MODEL: google/gemini-2.5-flash-lite  # Agentic search (needs 1M+ context)
     ports:
       - "8765:8765"
     depends_on:

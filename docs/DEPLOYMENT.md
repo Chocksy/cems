@@ -390,6 +390,8 @@ Then create users the same way as Docker Compose (port-forward or use ingress UR
 |----------|---------|-------------|
 | `CEMS_DATABASE_URL` | auto | PostgreSQL connection string |
 | `CEMS_SERVER_PORT` | `8765` | Server port |
+| `CEMS_LLM_MODEL` | `qwen/qwen3-32b` | LLM for maintenance jobs (lint, consolidation, compilation). Any [OpenRouter model](https://openrouter.ai/models) |
+| `CEMS_AGENTIC_MODEL` | `google/gemini-2.5-flash-lite` | LLM for agentic search agents. Needs 1M+ context — agents receive the full memory dump |
 | `CEMS_EMBEDDING_BACKEND` | `openrouter` | Embedding provider |
 | `CEMS_EMBEDDING_DIMENSION` | `1536` | Vector dimension |
 | `CEMS_RERANKER_BACKEND` | `disabled` | Reranker (keep disabled) |

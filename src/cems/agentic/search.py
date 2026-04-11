@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import re
 from concurrent.futures import ThreadPoolExecutor
 
@@ -26,7 +27,9 @@ logger = logging.getLogger(__name__)
 
 from cems.agentic.rrf import RRF_K, reciprocal_rank_fusion
 
-DEFAULT_MODEL = "google/gemini-2.5-flash-lite"  # 1M context, $0.10/M input, $0.40/M output
+DEFAULT_MODEL = os.environ.get(
+    "CEMS_AGENTIC_MODEL", "google/gemini-2.5-flash-lite"
+)  # 1M context recommended — agents receive full memory dump
 
 # ---------------------------------------------------------------------------
 # Search Agent Prompts

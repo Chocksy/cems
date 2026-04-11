@@ -85,6 +85,9 @@ services:
       CEMS_DATABASE_URL: postgresql://cems:${POSTGRES_PASSWORD:-cems_secure_password}@postgres:5432/cems
       # LLM (via OpenRouter)
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
+      # LLM models — override to control costs (OpenRouter format)
+      # CEMS_LLM_MODEL: qwen/qwen3-32b              # Maintenance jobs (lint, consolidation)
+      # CEMS_AGENTIC_MODEL: google/gemini-2.5-flash-lite  # Agentic search (needs 1M+ context)
       # Server mode
       CEMS_MODE: server
       CEMS_SERVER_HOST: 0.0.0.0

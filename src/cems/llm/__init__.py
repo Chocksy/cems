@@ -6,7 +6,9 @@ OpenAI SDK interface.
 
 Environment Variables:
     OPENROUTER_API_KEY: Required. Your OpenRouter API key.
-    CEMS_LLM_MODEL: Optional. Model in OpenRouter format (default: qwen/qwen3-32b)
+    CEMS_LLM_MODEL: Optional. Model for maintenance jobs (default: qwen/qwen3-32b)
+    CEMS_AGENTIC_MODEL: Optional. Model for agentic search agents (default: google/gemini-2.5-flash-lite).
+        Needs 1M+ context — agents receive the full memory dump.
     CEMS_OPENROUTER_SITE_URL: Optional. Attribution URL for OpenRouter dashboard.
     CEMS_OPENROUTER_SITE_NAME: Optional. Attribution name for OpenRouter dashboard.
 
