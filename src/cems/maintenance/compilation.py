@@ -76,10 +76,14 @@ class CompilationJob:
             except Exception as e:
                 logger.warning(f"Failed to compile cluster: {e}")
 
+        # Step 3: Merge any duplicate entity pages that already exist
+        pages_merged = await self._merge_duplicate_entities(doc_store, user_id)
+
         report = {
             "clusters_found": len(clusters),
             "pages_created": pages_created,
             "pages_updated": pages_updated,
+            "pages_merged": pages_merged,
         }
         logger.info(f"CompilationJob completed: {report}")
         return report
@@ -165,35 +169,36 @@ class CompilationJob:
     ) -> str | None:
         """Compile a cluster of memories into an entity page.
 
+        Dedup strategy (checked in order):
+        1. Tag match — exact cluster hash → skip
+        2. Synthesize content to get a stable title
+        3. Title embedding similarity — find existing entity page about same topic
+        4. Content embedding fallback — lower threshold, synthesized content as probe
+
         Returns: "created", "updated", "skipped", or None on error.
         """
-        # Generate a stable cluster tag from sorted member IDs
-        doc_ids = sorted([d["id"] for d in cluster_docs])
-        # Use hash of all member IDs for stable identification
         import hashlib
+
+        # Step 1: Tag-based check (fast, exact match)
+        doc_ids = sorted([d["id"] for d in cluster_docs])
         cluster_hash = hashlib.md5("".join(doc_ids).encode()).hexdigest()[:12]
         cluster_tag = f"entity-cluster:{cluster_hash}"
 
-        # Check if entity page already exists for this cluster
         existing = await doc_store.get_documents_by_tag(
-            user_id=user_id,
-            tag=cluster_tag,
-            limit=1,
+            user_id=user_id, tag=cluster_tag, limit=1,
         )
-
         if existing and not force:
             return "skipped"
 
-        # Extract content from cluster docs (needed for both dedup recompile and fresh compile)
+        # Step 2: Extract content from cluster docs
         contents = []
         categories = set()
         source_refs = set()
         for doc in cluster_docs:
             content = doc.get("content_detailed") or doc.get("content", "")
             if content:
-                contents.append(content)  # Full content — no truncation
-            cat = doc.get("category", "general")
-            categories.add(cat)
+                contents.append(content)
+            categories.add(doc.get("category", "general"))
             ref = doc.get("source_ref")
             if ref:
                 source_refs.add(ref)
@@ -201,92 +206,42 @@ class CompilationJob:
         if not contents:
             return None
 
-        # Dedup: check if a similar entity page already exists (cosine similarity)
-        # This prevents near-duplicate entity pages about the same concept
-        await self.memory._ensure_initialized_async()
-        if self.memory._async_embedder and not force:
-            # Use the first source doc's content as a proxy for the topic
-            sample = (cluster_docs[0].get("content", "") or "")[:500]
-            if sample:
-                probe_emb = await self.memory._async_embedder.embed_batch([sample])
-                if probe_emb:
-                    existing_entities = await doc_store.search_chunks(
-                        query_embedding=probe_emb[0],
-                        user_id=user_id,
-                        category="entity-page",
-                        limit=3,
-                    )
-                    for ent in existing_entities:
-                        if ent.get("score", 0) > 0.85:
-                            existing_entity_id = ent.get("document_id")
-                            # Check if cluster has new members not in existing entity's sources
-                            existing_sources = await doc_store.get_related_documents(
-                                existing_entity_id, user_id=user_id,
-                                relation_type="compiled_from", limit=100,
-                            )
-                            existing_source_ids = {str(s["id"]) for s in existing_sources}
-                            cluster_ids = {str(d["id"]) for d in cluster_docs}
-                            new_members = [d for d in cluster_docs
-                                           if str(d["id"]) not in existing_source_ids]
-                            if not new_members:
-                                return "skipped"  # No new content
-                            # Require source overlap: at least 30% of existing sources
-                            # must be in current cluster to confirm same topic
-                            overlap = existing_source_ids & cluster_ids
-                            if existing_source_ids and len(overlap) / len(existing_source_ids) < 0.3:
-                                continue  # Different topic, check next entity
-                            # Recompile: update existing entity page with full cluster
-                            entity_content = await self._synthesize_entity(contents, categories)
-                            if entity_content:
-                                lines = entity_content.strip().split("\n")
-                                title = lines[0].lstrip("# ").strip()[:100]
-                                await self.memory.update_async(
-                                    existing_entity_id, entity_content,
-                                )
-                                await self._update_title(doc_store, existing_entity_id, title)
-                                # Add relations for new members (both directions)
-                                for d in new_members:
-                                    await doc_store.add_relations(
-                                        existing_entity_id,
-                                        [{"target_id": d["id"], "relation_type": "compiled_from",
-                                          "similarity": 1.0}],
-                                    )
-                                    await doc_store.add_relations(
-                                        d["id"],
-                                        [{"target_id": existing_entity_id,
-                                          "relation_type": "compiled_from",
-                                          "similarity": 1.0}],
-                                    )
-                                logger.info(
-                                    f"Updated entity page {existing_entity_id[:8]} "
-                                    f"with {len(new_members)} new members"
-                                )
-                                return "updated"
-                            return "skipped"
-
-        # LLM synthesis
+        # Step 3: Synthesize — we need the title for reliable dedup
         entity_content = await self._synthesize_entity(contents, categories)
         if not entity_content:
             return None
 
-        # Determine the dominant category
+        lines = entity_content.strip().split("\n")
         category_counts: dict[str, int] = defaultdict(int)
         for doc in cluster_docs:
             category_counts[doc.get("category", "general")] += 1
         dominant_cat = max(category_counts, key=category_counts.get)
-
-        # Build title from LLM content (first line)
-        lines = entity_content.strip().split("\n")
         title = lines[0].lstrip("# ").strip()[:100] if lines else f"Entity: {dominant_cat}"
 
-        # Store or update the entity page
+        # Step 4: Title + content dedup against existing entity pages
+        if not force:
+            match = await self._find_existing_entity(
+                doc_store, user_id, title, entity_content, cluster_docs,
+            )
+            if match:
+                entity_id, action = match
+                if action == "skipped":
+                    return "skipped"
+                # Update existing entity page with new synthesis
+                await self.memory.update_async(entity_id, entity_content)
+                await self._update_title(doc_store, entity_id, title)
+                await self._link_new_sources(doc_store, entity_id, cluster_docs, user_id)
+                logger.info(f"Updated entity page {entity_id[:8]} via dedup")
+                return "updated"
+
+        # Step 5: Force-update existing tag match
         if existing and force:
             doc_id = existing[0]["id"]
             await self.memory.update_async(doc_id, entity_content)
             await self._update_title(doc_store, doc_id, title)
             return "updated"
 
-        # Create new entity page
+        # Step 6: Create new entity page
         tags = [
             "entity-page",
             cluster_tag,
@@ -314,7 +269,6 @@ class CompilationJob:
             ]
             if relations:
                 await doc_store.add_relations(entity_doc_id, relations)
-                # Reverse: source → entity
                 for rel in relations:
                     await doc_store.add_relations(
                         rel["target_id"],
@@ -322,6 +276,186 @@ class CompilationJob:
                     )
 
         return "created"
+
+    async def _find_existing_entity(
+        self, doc_store, user_id: str, title: str, content: str,
+        cluster_docs: list[dict],
+    ) -> tuple[str, str] | None:
+        """Find an existing entity page covering the same topic.
+
+        Two-phase search:
+          Phase A: Embed the synthesized title, search entity-page chunks (>0.80)
+          Phase B: Embed first 1000 chars of synthesized content (>0.78)
+
+        Returns (entity_id, "update"|"skipped") or None.
+        """
+        await self.memory._ensure_initialized_async()
+        if not self.memory._async_embedder:
+            return None
+
+        # Phase A: Title-based similarity
+        title_embs = await self.memory._async_embedder.embed_batch([title])
+        if title_embs:
+            candidates = await doc_store.search_chunks(
+                query_embedding=title_embs[0],
+                user_id=user_id,
+                category="entity-page",
+                limit=5,
+            )
+            for cand in candidates:
+                if cand.get("score", 0) > 0.80:
+                    entity_id = cand.get("document_id")
+                    has_new = await self._has_new_sources(
+                        doc_store, entity_id, cluster_docs, user_id,
+                    )
+                    return (entity_id, "update" if has_new else "skipped")
+
+        # Phase B: Content-based similarity (synthesized content, not raw source)
+        content_sample = content[:1000]
+        content_embs = await self.memory._async_embedder.embed_batch([content_sample])
+        if content_embs:
+            candidates = await doc_store.search_chunks(
+                query_embedding=content_embs[0],
+                user_id=user_id,
+                category="entity-page",
+                limit=3,
+            )
+            for cand in candidates:
+                if cand.get("score", 0) > 0.78:
+                    entity_id = cand.get("document_id")
+                    has_new = await self._has_new_sources(
+                        doc_store, entity_id, cluster_docs, user_id,
+                    )
+                    return (entity_id, "update" if has_new else "skipped")
+
+        return None
+
+    async def _has_new_sources(
+        self, doc_store, entity_id: str, cluster_docs: list[dict], user_id: str,
+    ) -> bool:
+        """Check if cluster has source memories not yet linked to the entity page."""
+        existing_sources = await doc_store.get_related_documents(
+            entity_id, user_id=user_id,
+            relation_type="compiled_from", limit=200,
+        )
+        existing_ids = {str(s["id"]) for s in existing_sources}
+        return any(str(d["id"]) not in existing_ids for d in cluster_docs)
+
+    async def _link_new_sources(
+        self, doc_store, entity_id: str, cluster_docs: list[dict], user_id: str,
+    ) -> int:
+        """Link new source memories to an existing entity page. Returns count linked."""
+        existing_sources = await doc_store.get_related_documents(
+            entity_id, user_id=user_id,
+            relation_type="compiled_from", limit=200,
+        )
+        existing_ids = {str(s["id"]) for s in existing_sources}
+        linked = 0
+        for d in cluster_docs:
+            if str(d["id"]) not in existing_ids:
+                await doc_store.add_relations(
+                    entity_id,
+                    [{"target_id": d["id"], "relation_type": "compiled_from", "similarity": 1.0}],
+                )
+                await doc_store.add_relations(
+                    d["id"],
+                    [{"target_id": entity_id, "relation_type": "compiled_from", "similarity": 1.0}],
+                )
+                linked += 1
+        return linked
+
+    async def _merge_duplicate_entities(
+        self, doc_store, user_id: str, limit: int = 50,
+    ) -> int:
+        """Find and merge duplicate entity pages about the same topic.
+
+        Compares entity page titles via embedding similarity. When two pages
+        are >0.80 similar, keeps the one with higher shown_count and
+        soft-deletes the other, transferring its compiled_from relations.
+
+        Returns count of pages merged (soft-deleted).
+        """
+        await self.memory._ensure_initialized_async()
+        if not self.memory._async_embedder:
+            return 0
+
+        entities = await doc_store.get_documents_by_category(
+            user_id=user_id, category="entity-page", limit=200,
+        )
+        if len(entities) < 2:
+            return 0
+
+        # Embed all titles
+        titles = [e.get("title") or (e.get("content", "")[:80]) for e in entities]
+        embeddings = await self.memory._async_embedder.embed_batch(titles)
+        if not embeddings or len(embeddings) != len(entities):
+            return 0
+
+        # Find duplicate pairs (greedy: first match wins)
+        merged_ids: set[str] = set()
+        merged_count = 0
+
+        for i in range(len(entities)):
+            if str(entities[i]["id"]) in merged_ids or merged_count >= limit:
+                break
+            for j in range(i + 1, len(entities)):
+                if str(entities[j]["id"]) in merged_ids:
+                    continue
+                # Cosine similarity
+                dot = sum(a * b for a, b in zip(embeddings[i], embeddings[j]))
+                norm_i = sum(a * a for a in embeddings[i]) ** 0.5
+                norm_j = sum(a * a for a in embeddings[j]) ** 0.5
+                if norm_i == 0 or norm_j == 0:
+                    continue
+                sim = dot / (norm_i * norm_j)
+                if sim > 0.80:
+                    # Keep the one with higher shown_count
+                    shown_i = entities[i].get("shown_count", 0) or 0
+                    shown_j = entities[j].get("shown_count", 0) or 0
+                    if shown_i >= shown_j:
+                        keep, discard = entities[i], entities[j]
+                    else:
+                        keep, discard = entities[j], entities[i]
+
+                    keep_id = str(keep["id"])
+                    discard_id = str(discard["id"])
+
+                    # Transfer compiled_from relations from discard → keep
+                    discard_sources = await doc_store.get_related_documents(
+                        discard_id, user_id=user_id,
+                        relation_type="compiled_from", limit=200,
+                    )
+                    keep_sources = await doc_store.get_related_documents(
+                        keep_id, user_id=user_id,
+                        relation_type="compiled_from", limit=200,
+                    )
+                    keep_source_ids = {str(s["id"]) for s in keep_sources}
+
+                    for src in discard_sources:
+                        src_id = str(src["id"])
+                        if src_id not in keep_source_ids:
+                            await doc_store.add_relations(
+                                keep_id,
+                                [{"target_id": src_id, "relation_type": "compiled_from",
+                                  "similarity": 1.0}],
+                            )
+                            await doc_store.add_relations(
+                                src_id,
+                                [{"target_id": keep_id, "relation_type": "compiled_from",
+                                  "similarity": 1.0}],
+                            )
+
+                    # Soft-delete the duplicate
+                    await doc_store.delete_document(discard_id, hard=False, user_id=user_id)
+                    merged_ids.add(discard_id)
+                    merged_count += 1
+                    logger.info(
+                        f"Merged entity page {discard_id[:8]} into {keep_id[:8]} "
+                        f"(title sim={sim:.2f})"
+                    )
+                    break  # Move to next i
+
+        return merged_count
 
     @staticmethod
     async def _update_title(doc_store, document_id: str, title: str) -> None:

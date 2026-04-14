@@ -64,7 +64,15 @@ class CEMSClient:
         """
         self.api_url = (api_url or os.environ.get("CEMS_API_URL", "")).rstrip("/")
         self.api_key = api_key or os.environ.get("CEMS_API_KEY", "")
-        self.team_id = team_id or os.environ.get("CEMS_TEAM_ID")
+        # Only fall back to env CEMS_TEAM_ID when no api_url was explicitly passed
+        # (i.e., env-var-only mode). When api_url is explicit, team_id must also be
+        # explicit — prevents leaking a global team_id into a project-specific client.
+        if team_id is not None:
+            self.team_id = team_id
+        elif api_url:
+            self.team_id = None  # explicit URL = don't inherit env team
+        else:
+            self.team_id = os.environ.get("CEMS_TEAM_ID")
         self.timeout = timeout
 
         if not self.api_url:

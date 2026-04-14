@@ -65,6 +65,7 @@ class LintJob:
             "connected_memories": 0,
             "entity_page_count": 0,
             "stale_entity_pages": 0,
+            "duplicate_entity_pages": [],
             "knowledge_gaps": [],
             "top_orphans": [],
             "health_score": 100,
@@ -154,12 +155,18 @@ class LintJob:
             report["contradictions_found"] = contradictions["found"]
             report["contradictions_checked"] = contradictions["checked"]
 
+        # Detect duplicate entity pages
+        report["duplicate_entity_pages"] = await self._detect_duplicate_entities(
+            doc_store, user_id,
+        )
+
         # Compute health score
         health = 100
         open_conflicts = await self._count_open_conflicts(doc_store, user_id)
         health -= min(open_conflicts * 5, 25)
         health -= min(report["orphan_count"] * 0.1, 15)  # Less penalty per orphan (many are normal)
         health -= min(len(report["knowledge_gaps"]) * 2, 10)
+        health -= min(len(report["duplicate_entity_pages"]) * 3, 15)
         report["health_score"] = max(round(health), 0)
         report["open_conflicts"] = open_conflicts
 
@@ -263,6 +270,59 @@ Answer:"""
         except Exception as e:
             logger.warning(f"LLM contradiction check failed: {e}")
             return False
+
+    async def _detect_duplicate_entities(
+        self, doc_store, user_id: str, limit: int = 200,
+    ) -> list[dict]:
+        """Detect entity pages with highly similar titles (potential duplicates).
+
+        Embeds all entity page titles and finds pairs with cosine > 0.80.
+        Returns list of duplicate pairs with IDs and titles.
+        """
+        entities = await doc_store.get_documents_by_category(
+            user_id=user_id, category="entity-page", limit=limit,
+        )
+        if len(entities) < 2:
+            return []
+
+        await self.memory._ensure_initialized_async()
+        if not self.memory._async_embedder:
+            return []
+
+        titles = [e.get("title") or (e.get("content", "")[:80]) for e in entities]
+        embeddings = await self.memory._async_embedder.embed_batch(titles)
+        if not embeddings or len(embeddings) != len(entities):
+            return []
+
+        duplicates = []
+        seen: set[str] = set()
+
+        for i in range(len(entities)):
+            eid_i = str(entities[i]["id"])
+            if eid_i in seen:
+                continue
+            for j in range(i + 1, len(entities)):
+                eid_j = str(entities[j]["id"])
+                if eid_j in seen:
+                    continue
+                dot = sum(a * b for a, b in zip(embeddings[i], embeddings[j]))
+                norm_i = sum(a * a for a in embeddings[i]) ** 0.5
+                norm_j = sum(a * a for a in embeddings[j]) ** 0.5
+                if norm_i == 0 or norm_j == 0:
+                    continue
+                sim = dot / (norm_i * norm_j)
+                if sim > 0.80:
+                    duplicates.append({
+                        "entity_a": eid_i,
+                        "title_a": titles[i],
+                        "entity_b": eid_j,
+                        "title_b": titles[j],
+                        "similarity": round(sim, 3),
+                    })
+                    seen.add(eid_j)
+                    break  # Only flag first match per entity
+
+        return duplicates
 
     async def _count_open_conflicts(self, doc_store, user_id: str) -> int:
         """Count open (unresolved) conflicts for this user."""

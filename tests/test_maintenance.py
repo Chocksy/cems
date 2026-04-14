@@ -784,6 +784,253 @@ class TestCompilationJob:
         assert result["pages_updated"] == 0
 
 
+class TestCompilationDedup:
+    """Tests for CompilationJob title-based dedup and merge logic."""
+
+    @patch("cems.maintenance.compilation.CompilationJob._synthesize_entity")
+    def test_title_dedup_skips_when_existing_entity_matches(self, mock_synth, mock_memory):
+        """When a cluster's synthesized title matches an existing entity page,
+        and no new sources exist, return 'skipped' instead of creating a dupe."""
+        from cems.maintenance.compilation import CompilationJob
+
+        memory, doc_store, embedder = mock_memory
+        mock_synth.return_value = "# Fiscal Printer Integration\n\nOverview..."
+
+        # Embedder returns identical vectors for title match
+        embedder.embed_batch = AsyncMock(return_value=[[1.0, 0.0, 0.0]])
+
+        # search_chunks returns a high-score match
+        doc_store.search_chunks = AsyncMock(return_value=[
+            {"document_id": "existing-entity-1", "score": 0.90, "content": "..."},
+        ])
+
+        # Existing entity already has all the same sources
+        doc_store.get_related_documents = AsyncMock(return_value=[
+            {"id": "doc-a"}, {"id": "doc-b"},
+        ])
+
+        doc_store.get_documents_by_tag = AsyncMock(return_value=[])
+
+        cluster_docs = [
+            _make_doc("doc-a", "Fiscal printer setup"),
+            _make_doc("doc-b", "Z-Report reprint flow"),
+        ]
+
+        job = CompilationJob(memory)
+        result = _run(job._compile_cluster(doc_store, TEST_UUID, cluster_docs, force=False))
+
+        assert result == "skipped"
+        # Should NOT have called add_async (no new page created)
+        memory.add_async.assert_not_awaited()
+
+    @patch("cems.maintenance.compilation.CompilationJob._synthesize_entity")
+    def test_title_dedup_updates_when_new_sources(self, mock_synth, mock_memory):
+        """When title matches an existing entity but cluster has new sources,
+        update the existing entity page."""
+        from cems.maintenance.compilation import CompilationJob
+
+        memory, doc_store, embedder = mock_memory
+        mock_synth.return_value = "# Fiscal Printer Integration\n\nOverview with new info..."
+
+        embedder.embed_batch = AsyncMock(return_value=[[1.0, 0.0, 0.0]])
+
+        doc_store.search_chunks = AsyncMock(return_value=[
+            {"document_id": "existing-entity-1", "score": 0.90, "content": "..."},
+        ])
+
+        # Existing entity has only doc-a, but cluster has doc-a + doc-c (new)
+        doc_store.get_related_documents = AsyncMock(return_value=[
+            {"id": "doc-a"},
+        ])
+
+        doc_store.get_documents_by_tag = AsyncMock(return_value=[])
+        doc_store.add_relations = AsyncMock(return_value=1)
+
+        pool = AsyncMock()
+        pool.execute = AsyncMock()
+        pool.acquire = MagicMock()
+        pool.acquire.return_value.__aenter__ = AsyncMock(return_value=pool)
+        pool.acquire.return_value.__aexit__ = AsyncMock()
+        doc_store._get_pool = AsyncMock(return_value=pool)
+
+        cluster_docs = [
+            _make_doc("doc-a", "Fiscal printer setup"),
+            _make_doc("doc-c", "New Z-Report edge case"),
+        ]
+
+        job = CompilationJob(memory)
+        result = _run(job._compile_cluster(doc_store, TEST_UUID, cluster_docs, force=False))
+
+        assert result == "updated"
+        memory.update_async.assert_awaited_once()  # Updated existing
+        memory.add_async.assert_not_awaited()  # Did NOT create new
+        # Should have added relations for the new source (doc-c)
+        assert doc_store.add_relations.await_count >= 2  # forward + reverse
+
+    @patch("cems.maintenance.compilation.CompilationJob._synthesize_entity")
+    def test_content_fallback_dedup(self, mock_synth, mock_memory):
+        """When title doesn't match but content does (>0.78), dedup via content."""
+        from cems.maintenance.compilation import CompilationJob
+
+        memory, doc_store, embedder = mock_memory
+        mock_synth.return_value = "# Docker Build Troubleshooting\n\nContent..."
+
+        # Title embedding returns low score, content embedding returns high score
+        call_count = 0
+        async def fake_embed(texts):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:  # Title
+                return [[1.0, 0.0, 0.0]]
+            else:  # Content
+                return [[0.0, 1.0, 0.0]]
+
+        embedder.embed_batch = fake_embed
+
+        # Title search: no match above 0.80
+        # Content search: match above 0.78
+        search_call_count = 0
+        async def fake_search(**kwargs):
+            nonlocal search_call_count
+            search_call_count += 1
+            if search_call_count == 1:  # Title search
+                return [{"document_id": "ent-1", "score": 0.60, "content": "..."}]
+            else:  # Content search
+                return [{"document_id": "ent-2", "score": 0.82, "content": "..."}]
+
+        doc_store.search_chunks = fake_search
+        doc_store.get_related_documents = AsyncMock(return_value=[])
+        doc_store.get_documents_by_tag = AsyncMock(return_value=[])
+        doc_store.add_relations = AsyncMock(return_value=1)
+
+        pool = AsyncMock()
+        pool.execute = AsyncMock()
+        pool.acquire = MagicMock()
+        pool.acquire.return_value.__aenter__ = AsyncMock(return_value=pool)
+        pool.acquire.return_value.__aexit__ = AsyncMock()
+        doc_store._get_pool = AsyncMock(return_value=pool)
+
+        cluster_docs = [_make_doc("doc-x", "Docker build failed")]
+
+        job = CompilationJob(memory)
+        result = _run(job._compile_cluster(doc_store, TEST_UUID, cluster_docs, force=False))
+
+        assert result == "updated"
+        memory.update_async.assert_awaited_once()
+
+    def test_merge_duplicate_entities(self, mock_memory):
+        """_merge_duplicate_entities soft-deletes lower-shown duplicates."""
+        from cems.maintenance.compilation import CompilationJob
+
+        memory, doc_store, embedder = mock_memory
+
+        # Two entity pages with very similar titles
+        entities = [
+            {**_make_doc("ent-1", "Fiscal Printer Integration", category="entity-page", shown_count=10),
+             "title": "Fiscal Printer Integration"},
+            {**_make_doc("ent-2", "Fiscal Printer Integration in POS", category="entity-page", shown_count=3),
+             "title": "Fiscal Printer Integration in POS"},
+        ]
+
+        doc_store.get_documents_by_category = AsyncMock(return_value=entities)
+
+        # Embeddings: nearly identical vectors
+        embedder.embed_batch = AsyncMock(return_value=[
+            [0.9, 0.1, 0.0], [0.88, 0.12, 0.0],
+        ])
+
+        doc_store.get_related_documents = AsyncMock(return_value=[])
+        doc_store.add_relations = AsyncMock(return_value=1)
+        doc_store.delete_document = AsyncMock(return_value=True)
+
+        job = CompilationJob(memory)
+        merged = _run(job._merge_duplicate_entities(doc_store, TEST_UUID, limit=10))
+
+        # Cosine of [0.9,0.1,0] and [0.88,0.12,0] = 0.9998... > 0.80
+        assert merged == 1
+        # Should soft-delete ent-2 (lower shown_count)
+        doc_store.delete_document.assert_awaited_once_with("ent-2", hard=False, user_id=TEST_UUID)
+
+    def test_merge_skips_dissimilar_entities(self, mock_memory):
+        """Entities with different topics should not be merged."""
+        from cems.maintenance.compilation import CompilationJob
+
+        memory, doc_store, embedder = mock_memory
+
+        entities = [
+            {**_make_doc("ent-1", "Docker troubleshooting", category="entity-page"),
+             "title": "Docker troubleshooting"},
+            {**_make_doc("ent-2", "Pay rate guardrails", category="entity-page"),
+             "title": "Pay rate guardrails"},
+        ]
+
+        doc_store.get_documents_by_category = AsyncMock(return_value=entities)
+
+        # Embeddings: very different vectors
+        embedder.embed_batch = AsyncMock(return_value=[
+            [1.0, 0.0, 0.0], [0.0, 1.0, 0.0],
+        ])
+
+        job = CompilationJob(memory)
+        merged = _run(job._merge_duplicate_entities(doc_store, TEST_UUID, limit=10))
+
+        assert merged == 0
+        doc_store.delete_document.assert_not_awaited()
+
+
+class TestLintDuplicateEntities:
+    """Tests for LintJob duplicate entity page detection."""
+
+    def test_lint_detects_duplicate_entities(self, mock_memory):
+        """LintJob detects entity pages with similar titles."""
+        from cems.maintenance.lint import LintJob
+
+        memory, doc_store, embedder = mock_memory
+
+        entities = [
+            {**_make_doc("ent-1", "Fiscal Printer Integration", category="entity-page"),
+             "title": "Fiscal Printer Integration"},
+            {**_make_doc("ent-2", "Fiscal Printer Integration in POS", category="entity-page"),
+             "title": "Fiscal Printer Integration in POS"},
+        ]
+
+        doc_store.get_documents_by_category = AsyncMock(return_value=entities)
+        embedder.embed_batch = AsyncMock(return_value=[
+            [0.9, 0.1, 0.0], [0.88, 0.12, 0.0],
+        ])
+
+        job = LintJob(memory)
+        dupes = _run(job._detect_duplicate_entities(doc_store, TEST_UUID))
+
+        assert len(dupes) == 1
+        assert dupes[0]["entity_a"] == "ent-1"
+        assert dupes[0]["entity_b"] == "ent-2"
+        assert dupes[0]["similarity"] > 0.80
+
+    def test_lint_no_duplicates_when_different(self, mock_memory):
+        """No duplicates detected when entity titles are different."""
+        from cems.maintenance.lint import LintJob
+
+        memory, doc_store, embedder = mock_memory
+
+        entities = [
+            {**_make_doc("ent-1", "Docker setup", category="entity-page"),
+             "title": "Docker setup"},
+            {**_make_doc("ent-2", "Pay rate guardrails", category="entity-page"),
+             "title": "Pay rate guardrails"},
+        ]
+
+        doc_store.get_documents_by_category = AsyncMock(return_value=entities)
+        embedder.embed_batch = AsyncMock(return_value=[
+            [1.0, 0.0, 0.0], [0.0, 1.0, 0.0],
+        ])
+
+        job = LintJob(memory)
+        dupes = _run(job._detect_duplicate_entities(doc_store, TEST_UUID))
+
+        assert len(dupes) == 0
+
+
 class TestReindexJob:
     """Tests for the async ReindexJob."""
 

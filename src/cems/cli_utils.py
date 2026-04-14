@@ -46,6 +46,7 @@ def get_client(ctx: click.Context) -> CEMSClient:
     return CEMSClient(
         api_url=ctx.obj.get("api_url"),
         api_key=ctx.obj.get("api_key"),
+        team_id=ctx.obj.get("team_id"),
     )
 
 

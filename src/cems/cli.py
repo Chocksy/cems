@@ -4,8 +4,8 @@ This CLI communicates with a CEMS server via HTTP API.
 Reads credentials from env vars, CLI flags, or ~/.cems/credentials.
 """
 
+import os
 from importlib.metadata import version
-from pathlib import Path
 
 import click
 
@@ -22,31 +22,14 @@ from cems.commands.setup import setup
 from cems.commands.status import status
 from cems.commands.uninstall import uninstall
 from cems.commands.update import update_cmd
-
-
-def _read_credentials_file() -> dict[str, str]:
-    """Read ~/.cems/credentials as fallback for env vars."""
-    creds_file = Path.home() / ".cems" / "credentials"
-    result = {}
-    try:
-        if creds_file.exists():
-            for line in creds_file.read_text().splitlines():
-                line = line.strip()
-                if not line or line.startswith("#"):
-                    continue
-                if "=" in line:
-                    key, _, value = line.partition("=")
-                    result[key.strip()] = value.strip().strip("'\"")
-    except OSError:
-        pass
-    return result
+from cems.shared.credentials import resolve_credentials
 
 
 @click.group()
 @click.version_option(version=version("cems"), prog_name="cems")
 @click.option("-v", "--verbose", is_flag=True, help="Enable verbose output")
-@click.option("--api-url", envvar="CEMS_API_URL", help="CEMS server URL")
-@click.option("--api-key", envvar="CEMS_API_KEY", help="API key for authentication")
+@click.option("--api-url", help="CEMS server URL")
+@click.option("--api-key", help="API key for authentication")
 @click.pass_context
 def main(ctx: click.Context, verbose: bool, api_url: str | None, api_key: str | None) -> None:
     """CEMS - Continuous Evolving Memory System.
@@ -55,21 +38,25 @@ def main(ctx: click.Context, verbose: bool, api_url: str | None, api_key: str | 
 
     Configuration (checked in order):
       1. CLI flags: --api-url, --api-key
-      2. Environment: CEMS_API_URL, CEMS_API_KEY
-      3. Credentials file: ~/.cems/credentials
+      2. Per-project: .cems/credentials (walk up from CWD)
+      3. Environment: CEMS_API_URL, CEMS_API_KEY
+      4. Global: ~/.cems/credentials
     """
-    # Fall back to ~/.cems/credentials if no env vars or flags
-    if not api_url or not api_key:
-        creds = _read_credentials_file()
-        if not api_url:
-            api_url = creds.get("CEMS_API_URL")
-        if not api_key:
-            api_key = creds.get("CEMS_API_KEY")
+    # resolve_credentials handles the full chain:
+    # project .cems/credentials (walk-up) → env vars → global ~/.cems/credentials
+    # CLI flags (api_url/api_key) override everything when explicitly passed.
+    creds = resolve_credentials(cwd=os.getcwd())
+    if not api_url:
+        api_url = creds.get("CEMS_API_URL")
+    if not api_key:
+        api_key = creds.get("CEMS_API_KEY")
+    team_id = creds.get("CEMS_TEAM_ID")
 
     ctx.ensure_object(dict)
     ctx.obj["verbose"] = verbose
     ctx.obj["api_url"] = api_url
     ctx.obj["api_key"] = api_key
+    ctx.obj["team_id"] = team_id
     setup_logging(verbose)
 
 
