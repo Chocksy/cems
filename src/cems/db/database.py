@@ -483,6 +483,33 @@ def run_migrations() -> None:
                 ON memory_conflicts(user_id, status);
             """,
         ),
+        # Remove team_id concept — shared memories are now visible to all users
+        (
+            "remove_team_id_v1",
+            """
+            -- Drop team_id from memory_documents
+            DROP INDEX IF EXISTS memory_documents_team_id_idx;
+            ALTER TABLE memory_documents DROP COLUMN IF EXISTS team_id;
+
+            -- Drop team_id from index tables
+            ALTER TABLE index_jobs DROP COLUMN IF EXISTS team_id;
+            ALTER TABLE index_patterns DROP CONSTRAINT IF EXISTS index_patterns_team_id_name_key;
+            ALTER TABLE index_patterns DROP COLUMN IF EXISTS team_id;
+
+            -- Tighten scope constraint (remove unused 'team' and 'company' values)
+            ALTER TABLE memory_documents DROP CONSTRAINT IF EXISTS valid_doc_scope;
+            ALTER TABLE memory_documents ADD CONSTRAINT valid_doc_scope
+                CHECK (scope IN ('personal', 'shared'));
+
+            -- Change default scope to 'shared'
+            ALTER TABLE memory_documents ALTER COLUMN scope SET DEFAULT 'shared';
+
+            -- Drop team-related tables (FK constraints cascade)
+            DROP TABLE IF EXISTS api_keys CASCADE;
+            DROP TABLE IF EXISTS team_members CASCADE;
+            DROP TABLE IF EXISTS teams CASCADE;
+            """,
+        ),
     ]
 
     # --- Migration runner with tracking, advisory lock, and checksums ---
