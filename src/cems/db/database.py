@@ -193,8 +193,7 @@ def run_migrations() -> None:
             CREATE TABLE IF NOT EXISTS memory_documents (
                 id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
                 user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-                team_id UUID REFERENCES teams(id) ON DELETE SET NULL,
-                scope TEXT NOT NULL DEFAULT 'personal',
+                scope TEXT NOT NULL DEFAULT 'shared',
                 category TEXT NOT NULL DEFAULT 'document',
                 title TEXT,
                 source TEXT,
@@ -205,14 +204,13 @@ def run_migrations() -> None:
                 content_bytes INT NOT NULL,
                 created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
                 updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-                CONSTRAINT valid_doc_scope CHECK (scope IN ('personal', 'shared', 'team', 'company'))
+                CONSTRAINT valid_doc_scope CHECK (scope IN ('personal', 'shared'))
             );
 
             -- Indexes for memory_documents
             CREATE UNIQUE INDEX IF NOT EXISTS memory_documents_hash_user_idx
                 ON memory_documents (content_hash, user_id);
             CREATE INDEX IF NOT EXISTS memory_documents_user_id_idx ON memory_documents(user_id);
-            CREATE INDEX IF NOT EXISTS memory_documents_team_id_idx ON memory_documents(team_id);
             CREATE INDEX IF NOT EXISTS memory_documents_scope_idx ON memory_documents(scope);
             CREATE INDEX IF NOT EXISTS memory_documents_category_idx ON memory_documents(category);
             CREATE INDEX IF NOT EXISTS memory_documents_tags_idx ON memory_documents USING gin(tags);
@@ -487,14 +485,20 @@ def run_migrations() -> None:
         (
             "remove_team_id_v1",
             """
-            -- Drop team_id from memory_documents
+            -- Drop team_id from memory_documents (safe if column already absent)
             DROP INDEX IF EXISTS memory_documents_team_id_idx;
             ALTER TABLE memory_documents DROP COLUMN IF EXISTS team_id;
 
-            -- Drop team_id from index tables
-            ALTER TABLE index_jobs DROP COLUMN IF EXISTS team_id;
-            ALTER TABLE index_patterns DROP CONSTRAINT IF EXISTS index_patterns_team_id_name_key;
-            ALTER TABLE index_patterns DROP COLUMN IF EXISTS team_id;
+            -- Drop team_id from index tables (guarded for fresh installs where tables may not exist)
+            DO $$ BEGIN
+                IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'index_jobs') THEN
+                    ALTER TABLE index_jobs DROP COLUMN IF EXISTS team_id;
+                END IF;
+                IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'index_patterns') THEN
+                    ALTER TABLE index_patterns DROP CONSTRAINT IF EXISTS index_patterns_team_id_name_key;
+                    ALTER TABLE index_patterns DROP COLUMN IF EXISTS team_id;
+                END IF;
+            END $$;
 
             -- Tighten scope constraint (remove unused 'team' and 'company' values)
             ALTER TABLE memory_documents DROP CONSTRAINT IF EXISTS valid_doc_scope;

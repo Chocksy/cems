@@ -250,7 +250,7 @@ def memory_search(
 
 
 _VALID_SCOPES = {"personal", "shared"}
-_SCOPE_ALIASES = {"project": "personal", "private": "personal", "global": "shared", "org": "company"}
+_SCOPE_ALIASES = {"project": "personal", "private": "personal", "global": "shared", "org": "shared", "team": "shared", "company": "shared"}
 
 
 def _normalize_scope(scope: str) -> str:
@@ -281,7 +281,7 @@ def memory_add(
     infer: bool = True,
     source_ref: str | None = None,
 ) -> str:
-    """Store a memory. Scope must be personal/shared/team/company. Set infer=false for bulk imports (faster)."""
+    """Store a memory. Scope must be personal or shared. Set infer=false for bulk imports (faster)."""
     if not API_URL:
         return _NOT_CONFIGURED_MSG
     payload: dict = {

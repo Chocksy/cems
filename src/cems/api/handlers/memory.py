@@ -112,8 +112,8 @@ async def api_memory_add(request: Request):
         category = raw_category if raw_category in functional else normalize_category(raw_category)
 
         # Normalize scope — LLMs sometimes send invalid values like "project"
-        valid_scopes = {"personal", "shared", "team", "company"}
-        scope_aliases = {"project": "personal", "private": "personal", "global": "shared", "org": "company"}
+        valid_scopes = {"personal", "shared"}
+        scope_aliases = {"project": "personal", "private": "personal", "global": "shared", "org": "shared", "team": "shared", "company": "shared"}
         raw_scope = body.get("scope", "personal").lower().strip()
         scope = raw_scope if raw_scope in valid_scopes else scope_aliases.get(raw_scope, "personal")
 
