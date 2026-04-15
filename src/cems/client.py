@@ -48,7 +48,6 @@ class CEMSClient:
         self,
         api_url: str | None = None,
         api_key: str | None = None,
-        team_id: str | None = None,
         timeout: float = 30.0,
     ):
         """Initialize CEMS client.
@@ -56,7 +55,6 @@ class CEMSClient:
         Args:
             api_url: CEMS server URL. Falls back to CEMS_API_URL env var.
             api_key: API key for authentication. Falls back to CEMS_API_KEY env var.
-            team_id: Optional team ID for shared memory operations.
             timeout: Request timeout in seconds.
 
         Raises:
@@ -64,15 +62,6 @@ class CEMSClient:
         """
         self.api_url = (api_url or os.environ.get("CEMS_API_URL", "")).rstrip("/")
         self.api_key = api_key or os.environ.get("CEMS_API_KEY", "")
-        # Only fall back to env CEMS_TEAM_ID when no api_url was explicitly passed
-        # (i.e., env-var-only mode). When api_url is explicit, team_id must also be
-        # explicit — prevents leaking a global team_id into a project-specific client.
-        if team_id is not None:
-            self.team_id = team_id
-        elif api_url:
-            self.team_id = None  # explicit URL = don't inherit env team
-        else:
-            self.team_id = os.environ.get("CEMS_TEAM_ID")
         self.timeout = timeout
 
         if not self.api_url:
@@ -88,8 +77,6 @@ class CEMSClient:
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
         }
-        if self.team_id:
-            self._headers["X-Team-ID"] = self.team_id
 
     def _request(
         self,
@@ -619,94 +606,3 @@ class CEMSAdminClient:
         """
         return self._request("POST", f"/admin/users/{user_id}/reset-key")
 
-    # =========================================================================
-    # Team Management
-    # =========================================================================
-
-    def list_teams(self, limit: int = 100, offset: int = 0) -> dict[str, Any]:
-        """List all teams.
-
-        Args:
-            limit: Maximum teams to return
-            offset: Pagination offset
-
-        Returns:
-            Dict with teams list and count
-        """
-        params = {"limit": str(limit), "offset": str(offset)}
-        return self._request("GET", "/admin/teams", params=params)
-
-    def create_team(
-        self,
-        name: str,
-        company_id: str,
-        settings: dict | None = None,
-    ) -> dict[str, Any]:
-        """Create a new team.
-
-        Args:
-            name: Unique team name
-            company_id: Company identifier
-            settings: Optional team settings
-
-        Returns:
-            Created team info
-        """
-        data: dict[str, Any] = {"name": name, "company_id": company_id}
-        if settings:
-            data["settings"] = settings
-
-        return self._request("POST", "/admin/teams", json=data)
-
-    def get_team(self, team_id_or_name: str) -> dict[str, Any]:
-        """Get team details with members.
-
-        Args:
-            team_id_or_name: Team ID (UUID) or name
-
-        Returns:
-            Team details with member list
-        """
-        return self._request("GET", f"/admin/teams/{team_id_or_name}")
-
-    def delete_team(self, team_id_or_name: str) -> dict[str, Any]:
-        """Delete a team.
-
-        Args:
-            team_id_or_name: Team ID (UUID) or name
-
-        Returns:
-            Deletion confirmation
-        """
-        return self._request("DELETE", f"/admin/teams/{team_id_or_name}")
-
-    def add_team_member(
-        self, team_id_or_name: str, user_id_or_name: str, role: str = "member"
-    ) -> dict[str, Any]:
-        """Add a user to a team.
-
-        Args:
-            team_id_or_name: Team ID (UUID) or name
-            user_id_or_name: User ID (UUID) or username
-            role: Role ('admin', 'member', 'viewer')
-
-        Returns:
-            Membership info
-        """
-        return self._request(
-            "POST",
-            f"/admin/teams/{team_id_or_name}/members",
-            json={"user_id": user_id_or_name, "role": role},
-        )
-
-    def remove_team_member(self, team_id_or_name: str, user_id_or_name: str) -> dict[str, Any]:
-        """Remove a user from a team.
-
-        Args:
-            team_id_or_name: Team ID (UUID) or name
-            user_id_or_name: User ID (UUID) or username
-
-        Returns:
-            Removal confirmation
-        """
-        return self._request("DELETE", f"/admin/teams/{team_id_or_name}/members/{user_id_or_name}")

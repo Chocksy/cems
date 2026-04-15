@@ -290,7 +290,7 @@ def _setup_credentials(api_url: str | None = None, api_key: str | None = None) -
         url = api_url or "http://localhost:8765"
         cems_dir.mkdir(parents=True, exist_ok=True)
 
-        # Preserve existing keys like CEMS_SEARCH_MODE, CEMS_TEAM_ID
+        # Preserve existing keys like CEMS_SEARCH_MODE
         existing_creds = _read_credentials() if creds_file.exists() else {}
         existing_creds["CEMS_API_URL"] = url
         existing_creds["CEMS_API_KEY"] = api_key
@@ -342,52 +342,6 @@ def _setup_credentials(api_url: str | None = None, api_key: str | None = None) -
     console.print(f"[green]Saved credentials to {creds_file} (mode 600)[/green]")
     return True
 
-
-def _discover_team(api_url: str, api_key: str) -> str | None:
-    """Query the CEMS server for the user's team memberships.
-
-    If exactly 1 team → auto-select it.
-    If multiple teams → prompt interactively, or skip in non-interactive mode.
-    """
-    import urllib.error
-    import urllib.request
-
-    url = api_url.rstrip("/") + "/api/me/teams"
-    try:
-        req = urllib.request.Request(url, method="GET")
-        req.add_header("Authorization", f"Bearer {api_key}")
-        req.add_header("User-Agent", "CEMS-CLI/1.0")
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            data = json.loads(resp.read().decode())
-            teams = data.get("teams", [])
-    except (urllib.error.URLError, json.JSONDecodeError, OSError) as e:
-        console.print(f"  [yellow]Could not discover teams: {e}[/yellow]")
-        return None
-
-    if not teams:
-        console.print("  [dim]No team membership found (personal memories only)[/dim]")
-        return None
-
-    if len(teams) == 1:
-        team = teams[0]
-        console.print(f"  [green]Auto-selected team:[/green] {team['name']} ({team['id'][:8]}…)")
-        _append_credential("CEMS_TEAM_ID", team["id"])
-        return team["id"]
-
-    # Multiple teams — prompt if interactive
-    if _is_interactive():
-        console.print()
-        console.print("[bold]Multiple teams found:[/bold]")
-        for i, team in enumerate(teams, 1):
-            console.print(f"  {i}) {team['name']}")
-        choice = click.prompt("Select default team", type=click.IntRange(1, len(teams)))
-        selected = teams[choice - 1]
-        console.print(f"  [green]Selected team:[/green] {selected['name']}")
-        _append_credential("CEMS_TEAM_ID", selected["id"])
-        return selected["id"]
-    else:
-        console.print(f"  [yellow]Multiple teams found ({len(teams)}). Set CEMS_TEAM_ID manually.[/yellow]")
-        return None
 
 
 def _remove_credential(key: str, creds_path: Path | None = None) -> None:
@@ -507,7 +461,7 @@ def _discover_mcp_url(api_url: str) -> str:
     return f"{parsed.scheme}://mcp-{parsed.hostname}/mcp"
 
 
-def _install_claude_hooks(data_path: Path, api_url: str, team_id: str | None = None, transport: str = "stdio", api_key: str | None = None) -> None:
+def _install_claude_hooks(data_path: Path, api_url: str, transport: str = "stdio", api_key: str | None = None) -> None:
     """Install Claude Code hooks, skills, settings, and MCP config."""
     claude_dir = Path.home() / ".claude"
     hooks_dir = claude_dir / "hooks"
@@ -572,13 +526,13 @@ def _install_claude_hooks(data_path: Path, api_url: str, team_id: str | None = N
     _merge_settings(claude_dir, data_path / "claude" / "settings.json")
 
     # Register MCP server
-    _register_claude_mcp_server(api_url, team_id=team_id, transport=transport, api_key=api_key)
+    _register_claude_mcp_server(api_url, transport=transport, api_key=api_key)
 
     # Add CEMS instructions to CLAUDE.md
     _append_cems_instructions(claude_dir / "CLAUDE.md")
 
 
-def _register_claude_mcp_server(api_url: str, team_id: str | None = None, transport: str = "stdio", api_key: str | None = None) -> None:
+def _register_claude_mcp_server(api_url: str, transport: str = "stdio", api_key: str | None = None) -> None:
     """Register CEMS MCP server in Claude Code config (~/.claude.json).
 
     Supports two transports:
@@ -608,8 +562,6 @@ def _register_claude_mcp_server(api_url: str, team_id: str | None = None, transp
         mcp_url = _discover_mcp_url(api_url)
         resolved_key = api_key or _read_credentials().get("CEMS_API_KEY", "")
         headers: dict[str, str] = {"Authorization": f"Bearer {resolved_key}"}
-        if team_id:
-            headers["X-Team-Id"] = team_id
         mcp_servers["cems"] = {
             "type": "http",
             "url": mcp_url,
@@ -896,7 +848,7 @@ def _register_codex_mcp(codex_dir: Path, api_url: str) -> None:
     console.print(f"  MCP server registered: {label}")
 
 
-def _install_cursor_hooks(data_path: Path, api_url: str, team_id: str | None = None, transport: str = "stdio", api_key: str | None = None) -> None:
+def _install_cursor_hooks(data_path: Path, api_url: str, transport: str = "stdio", api_key: str | None = None) -> None:
     """Install Cursor hooks, skills, and MCP config."""
     cursor_dir = Path.home() / ".cursor"
     hooks_dir = cursor_dir / "hooks"
@@ -937,7 +889,7 @@ def _install_cursor_hooks(data_path: Path, api_url: str, team_id: str | None = N
         console.print(f"  Skills installed to {skills_dir}")
 
     # Register MCP server in mcp.json
-    _register_cursor_mcp(cursor_dir, api_url, team_id=team_id, transport=transport, api_key=api_key)
+    _register_cursor_mcp(cursor_dir, api_url, transport=transport, api_key=api_key)
 
     # Add CEMS instructions to Cursor rules
     rules_dir = cursor_dir / "rules"
@@ -945,7 +897,7 @@ def _install_cursor_hooks(data_path: Path, api_url: str, team_id: str | None = N
     _append_cems_instructions(rules_dir / "cems.md")
 
 
-def _register_cursor_mcp(cursor_dir: Path, api_url: str, team_id: str | None = None, transport: str = "stdio", api_key: str | None = None) -> None:
+def _register_cursor_mcp(cursor_dir: Path, api_url: str, transport: str = "stdio", api_key: str | None = None) -> None:
     """Register CEMS MCP server in Cursor mcp.json."""
     mcp_file = cursor_dir / "mcp.json"
 
@@ -962,8 +914,6 @@ def _register_cursor_mcp(cursor_dir: Path, api_url: str, team_id: str | None = N
         mcp_url = _discover_mcp_url(api_url)
         resolved_key = api_key or _read_credentials().get("CEMS_API_KEY", "")
         headers: dict[str, str] = {"Authorization": f"Bearer {resolved_key}"}
-        if team_id:
-            headers["X-Team-Id"] = team_id
         mcp_servers["cems"] = {
             "type": "http",
             "url": mcp_url,
@@ -1057,11 +1007,6 @@ def _setup_project_credentials(api_url: str | None, api_key: str | None) -> None
         f"CEMS_API_URL={api_url}",
         f"CEMS_API_KEY={api_key}",
     ]
-
-    # Team discovery against the project server
-    team_id = _discover_team(api_url, api_key)
-    if team_id:
-        lines.append(f"CEMS_TEAM_ID={team_id}")
 
     creds_file.write_text("\n".join(lines) + "\n")
     creds_file.chmod(stat.S_IRUSR | stat.S_IWUSR)  # 600
@@ -1303,20 +1248,15 @@ def setup(install_claude: bool, install_cursor: bool, install_codex: bool, insta
             default=0,
         )
 
-    # Discover user's team membership
-    team_id = creds.get("CEMS_TEAM_ID")  # Preserve existing if set
-    if not team_id and resolved_key:
-        team_id = _discover_team(resolved_url, resolved_key)
-
     # Install
     if install_claude:
         console.print("[bold blue]Claude Code[/bold blue]")
-        _install_claude_hooks(data_path, resolved_url, team_id=team_id, transport=resolved_transport, api_key=resolved_key)
+        _install_claude_hooks(data_path, resolved_url, transport=resolved_transport, api_key=resolved_key)
         console.print()
 
     if install_cursor:
         console.print("[bold blue]Cursor[/bold blue]")
-        _install_cursor_hooks(data_path, resolved_url, team_id=team_id, transport=resolved_transport, api_key=resolved_key)
+        _install_cursor_hooks(data_path, resolved_url, transport=resolved_transport, api_key=resolved_key)
         console.print()
 
     if install_codex:

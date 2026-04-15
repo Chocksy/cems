@@ -102,31 +102,15 @@ class TestRegisterClaudeMcpServer:
         with patch("cems.commands.setup.Path.home", return_value=tmp_path), \
              patch("cems.commands.setup._discover_mcp_url", return_value="https://mcp-cems.example.com/mcp"), \
              patch("cems.commands.setup._read_credentials", return_value={"CEMS_API_KEY": "test-key"}):
-            _register_claude_mcp_server("https://cems.example.com", transport="http", api_key="test-key", team_id="team-123")
+            _register_claude_mcp_server("https://cems.example.com", transport="http", api_key="test-key")
 
         config = json.loads(claude_json.read_text())
         cems = config["mcpServers"]["cems"]
         assert cems["type"] == "http"
         assert cems["url"] == "https://mcp-cems.example.com/mcp"
         assert cems["headers"]["Authorization"] == "Bearer test-key"
-        assert cems["headers"]["X-Team-Id"] == "team-123"
+        assert "X-Team-Id" not in cems.get("headers", {}), "No team headers should exist"
         assert "command" not in cems, "HTTP mode should not have command"
-
-    def test_http_without_team_id(self, tmp_path):
-        """HTTP transport without team_id should not include X-Team-Id header."""
-        from cems.commands.setup import _register_claude_mcp_server
-
-        claude_json = tmp_path / ".claude.json"
-        claude_json.write_text("{}")
-
-        with patch("cems.commands.setup.Path.home", return_value=tmp_path), \
-             patch("cems.commands.setup._discover_mcp_url", return_value="https://mcp.test/mcp"), \
-             patch("cems.commands.setup._read_credentials", return_value={}):
-            _register_claude_mcp_server("https://test.com", transport="http", api_key="key123")
-
-        config = json.loads(claude_json.read_text())
-        cems = config["mcpServers"]["cems"]
-        assert "X-Team-Id" not in cems["headers"]
 
 
 class TestDiscoverMcpUrl:

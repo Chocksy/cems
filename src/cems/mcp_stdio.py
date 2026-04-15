@@ -87,8 +87,8 @@ def _detect_project_cwd() -> str:
     return cwd
 
 
-def _get_config() -> tuple[str, str, str, str]:
-    """Return (api_url, api_key, search_mode, team_id) using the shared credential resolver.
+def _get_config() -> tuple[str, str, str]:
+    """Return (api_url, api_key, search_mode) using the shared credential resolver.
 
     For MCP servers, we strip CEMS env vars from the process so file-based
     credentials win. This prevents stale shell env vars (from eval "$(cems env)")
@@ -96,7 +96,7 @@ def _get_config() -> tuple[str, str, str, str]:
     """
     # Strip env vars so resolve_credentials reads from files, not stale shell env
     saved_env = {}
-    for key in ("CEMS_API_URL", "CEMS_API_KEY", "CEMS_SEARCH_MODE", "CEMS_TEAM_ID"):
+    for key in ("CEMS_API_URL", "CEMS_API_KEY", "CEMS_SEARCH_MODE"):
         if key in os.environ:
             saved_env[key] = os.environ.pop(key)
 
@@ -108,12 +108,11 @@ def _get_config() -> tuple[str, str, str, str]:
     api_url = creds.get("CEMS_API_URL", "")
     api_key = creds.get("CEMS_API_KEY", "")
     search_mode = creds.get("CEMS_SEARCH_MODE", "")
-    team_id = creds.get("CEMS_TEAM_ID", "")
     logger.info(f"MCP config: CWD={project_cwd}, API={api_url.rstrip('/')}")
-    return api_url.rstrip("/"), api_key, search_mode, team_id
+    return api_url.rstrip("/"), api_key, search_mode
 
 
-API_URL, API_KEY, SEARCH_MODE, TEAM_ID = _get_config()
+API_URL, API_KEY, SEARCH_MODE = _get_config()
 
 _NOT_CONFIGURED_MSG = (
     "CEMS is not configured for this project. "
@@ -140,8 +139,6 @@ def _request(method: str, path: str, body: dict | None = None) -> dict:
     req = urllib.request.Request(url, data=data, method=method)
     req.add_header("Authorization", f"Bearer {API_KEY}")
     req.add_header("User-Agent", "CEMS-MCP/1.0")
-    if TEAM_ID:
-        req.add_header("X-Team-Id", TEAM_ID)
     if data:
         req.add_header("Content-Type", "application/json")
     with urllib.request.urlopen(req, timeout=30) as resp:
@@ -252,7 +249,7 @@ def memory_search(
     return json.dumps(result)
 
 
-_VALID_SCOPES = {"personal", "shared", "team", "company"}
+_VALID_SCOPES = {"personal", "shared"}
 _SCOPE_ALIASES = {"project": "personal", "private": "personal", "global": "shared", "org": "company"}
 
 
