@@ -228,7 +228,7 @@ class TestAutoLinkRelations:
         mock_doc_store.add_relations = AsyncMock(return_value=2)
 
         result = _run(_auto_link_relations(
-            mock_doc_store, DOC_A, [0.1] * 1536, USER_ID, None, "personal",
+            mock_doc_store, DOC_A, [0.1] * 1536, USER_ID, "personal",
         ))
         assert result == 2
 
@@ -250,7 +250,7 @@ class TestAutoLinkRelations:
         mock_doc_store.add_relations = AsyncMock(return_value=1)
 
         result = _run(_auto_link_relations(
-            mock_doc_store, DOC_A, [0.1] * 1536, USER_ID, None, "personal",
+            mock_doc_store, DOC_A, [0.1] * 1536, USER_ID, "personal",
         ))
         assert result == 1
 
@@ -267,7 +267,7 @@ class TestAutoLinkRelations:
         mock_doc_store.add_relations = AsyncMock(return_value=1)
 
         result = _run(_auto_link_relations(
-            mock_doc_store, DOC_A, [0.1] * 1536, USER_ID, None, "personal",
+            mock_doc_store, DOC_A, [0.1] * 1536, USER_ID, "personal",
         ))
         assert result == 1
 
@@ -282,7 +282,7 @@ class TestAutoLinkRelations:
         mock_doc_store.add_relations = AsyncMock(return_value=2)
 
         result = _run(_auto_link_relations(
-            mock_doc_store, DOC_A, [0.1] * 1536, USER_ID, None, "personal",
+            mock_doc_store, DOC_A, [0.1] * 1536, USER_ID, "personal",
         ))
         assert result == 2
 
@@ -296,7 +296,7 @@ class TestAutoLinkRelations:
         mock_doc_store.search_chunks = AsyncMock(return_value=[])
 
         result = _run(_auto_link_relations(
-            mock_doc_store, DOC_A, [0.1] * 1536, USER_ID, None, "personal",
+            mock_doc_store, DOC_A, [0.1] * 1536, USER_ID, "personal",
         ))
         assert result == 0
         mock_doc_store.add_relations.assert_not_called()
@@ -310,7 +310,7 @@ class TestAutoLinkRelations:
         mock_doc_store.add_relations = AsyncMock(return_value=1)
 
         _run(_auto_link_relations(
-            mock_doc_store, DOC_A, [0.1] * 1536, USER_ID, None, "personal",
+            mock_doc_store, DOC_A, [0.1] * 1536, USER_ID, "personal",
         ))
 
         # First call: forward (DOC_A → DOC_B)
