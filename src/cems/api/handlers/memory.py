@@ -284,7 +284,6 @@ async def api_memory_add_batch(request: Request):
 
         # Step 5: Batch insert into database
         user_id = memory.config.user_id
-        team_id = memory.config.team_id if scope == "shared" else None
 
         if not user_id:
             return JSONResponse({"error": "No user_id configured"}, status_code=500)
@@ -294,7 +293,6 @@ async def api_memory_add_batch(request: Request):
             all_chunks=all_chunks,
             all_embeddings=all_embeddings,
             user_id=user_id,
-            team_id=team_id,
             scope=scope,
         )
 
@@ -1011,8 +1009,7 @@ async def api_memory_promote(request: Request):
     POST /api/memory/promote
     Body: {"memory_id": "..."}
 
-    Changes scope from 'personal' to 'shared' and sets the team_id.
-    Requires the user to belong to a team (auto-resolved or via X-Team-Id header).
+    Changes scope from 'personal' to 'shared', making it visible to all users.
     """
     try:
         body = await request.json()
@@ -1021,12 +1018,6 @@ async def api_memory_promote(request: Request):
             return JSONResponse({"error": "memory_id is required"}, status_code=400)
 
         memory = get_memory()
-        team_id = memory.config.team_id
-        if not team_id:
-            return JSONResponse(
-                {"error": "No team context. Join a team or set X-Team-Id header."},
-                status_code=400,
-            )
 
         resolved_id = await _resolve_memory_id(memory_id, memory)
         if not resolved_id:
@@ -1034,7 +1025,7 @@ async def api_memory_promote(request: Request):
 
         doc_store = await memory._ensure_document_store()
         promoted = await doc_store.promote_document(
-            resolved_id, user_id=memory.config.user_id, team_id=team_id
+            resolved_id, user_id=memory.config.user_id
         )
 
         if not promoted:
@@ -1047,7 +1038,6 @@ async def api_memory_promote(request: Request):
             "success": True,
             "message": f"Memory {resolved_id} promoted to shared",
             "memory_id": resolved_id,
-            "team_id": team_id,
         })
     except Exception as e:
         logger.error(f"API memory_promote error: {e}")
@@ -1093,9 +1083,8 @@ async def api_memory_stats_projects(request: Request):
         memory = get_memory()
         doc_store = await memory._ensure_document_store()
         user_id = memory.config.user_id
-        team_id = memory.config.team_id
 
-        projects = await doc_store.get_project_counts(user_id, team_id)
+        projects = await doc_store.get_project_counts(user_id)
 
         return JSONResponse({
             "success": True,
@@ -1408,7 +1397,7 @@ async def api_memory_status(request: Request):
         status = {
             "status": "healthy",
             "user_id": config.user_id,
-            "team_id": config.team_id,
+            "default_scope": config.default_scope,
             "storage_dir": str(config.storage_dir),  # Convert Path to string for JSON
             "backend": "documentstore",
             "vector_store": "pgvector",  # Using native pgvector
@@ -1600,10 +1589,8 @@ async def api_memory_list(request: Request):
             })
 
         # Browse mode — paginated list
-        team_id = memory.config.team_id
         docs = await doc_store.get_all_documents(
             user_id=user_id,
-            team_id=team_id,
             scope=scope,
             limit=limit,
             offset=offset,
@@ -1612,7 +1599,6 @@ async def api_memory_list(request: Request):
         )
         total = await doc_store.count_documents(
             user_id=user_id,
-            team_id=team_id,
             scope=scope,
             category=category,
             tag_prefix=tag_prefix,
@@ -1652,14 +1638,6 @@ async def api_memory_summary_shared(request: Request):
     try:
         memory = get_memory()
 
-        if not memory.config.team_id:
-            return JSONResponse({
-                "success": True,
-                "total": 0,
-                "categories": {},
-                "message": "No team configured",
-            })
-
         # Use efficient GROUP BY query instead of N+1 queries
         categories = await memory.get_category_counts_async(scope="shared")
         total = sum(categories.values())
@@ -1668,7 +1646,6 @@ async def api_memory_summary_shared(request: Request):
             "success": True,
             "total": total,
             "categories": categories,
-            "team_id": memory.config.team_id,
         })
     except Exception as e:
         logger.error(f"API memory_summary_shared error: {e}")

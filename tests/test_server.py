@@ -21,7 +21,7 @@ def mock_memory():
     mock = MagicMock()
     mock.config = MagicMock()
     mock.config.user_id = "test-user-uuid"
-    mock.config.team_id = "test-team"
+    mock.config.default_scope = "shared"
     mock.config.storage_dir = "/tmp/cems"
     mock.config.enable_graph = True
     mock.config.enable_scheduler = True

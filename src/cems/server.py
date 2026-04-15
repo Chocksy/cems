@@ -25,7 +25,6 @@ import os
 from cems.api.deps import (
     get_base_config,
     get_scheduler,
-    request_team_id,
     request_user_id,
 )
 
@@ -34,7 +33,6 @@ from cems.api.handlers import (
     api_index_patterns,
     api_index_path,
     api_index_repo,
-    api_me_teams,
     api_memory_add,
     api_memory_add_batch,
     api_memory_conflicts,
@@ -157,35 +155,6 @@ def create_http_app():
 
                     # Set user context from database (using UUID for pgvector)
                     user_id = str(user.id)
-                    from cems.admin.services import TeamService
-                    team_service = TeamService(session)
-                    user_teams = team_service.get_user_teams(user.id)
-
-                    # Get team from header (optional, to select team context)
-                    raw_team_id = request.headers.get("x-team-id")
-                    team_id = None
-
-                    if raw_team_id:
-                        # Normalize to UUID string for consistent comparison
-                        from uuid import UUID as _UUID
-                        try:
-                            team_id = str(_UUID(raw_team_id))
-                        except ValueError:
-                            return JSONResponse(
-                                {"error": "Invalid team ID format"},
-                                status_code=400,
-                            )
-                        # Validate membership — reject if user not in this team
-                        valid_team_ids = {str(t.id) for t in user_teams}
-                        if team_id not in valid_team_ids:
-                            return JSONResponse(
-                                {"error": "Not a member of the specified team"},
-                                status_code=403,
-                            )
-                    else:
-                        # Auto-resolve team_id from membership if not provided
-                        if len(user_teams) == 1:
-                            team_id = str(user_teams[0].id)
             except Exception as e:
                 logger.error(f"Auth middleware database error: {e}")
                 return JSONResponse(
@@ -193,16 +162,13 @@ def create_http_app():
                     status_code=503,
                 )
 
-            # Set context variables
+            # Set context variable
             user_token = request_user_id.set(user_id)
-            team_token = request_team_id.set(team_id)
 
             try:
                 return await call_next(request)
             finally:
-                # Reset context variables
                 request_user_id.reset(user_token)
-                request_team_id.reset(team_token)
 
     # Define routes using imported handlers
     routes = [
@@ -242,8 +208,6 @@ def create_http_app():
         Route("/api/session/summarize", api_session_summarize, methods=["POST"]),
         # REST API routes - Tool
         Route("/api/tool/learning", api_tool_learning, methods=["POST"]),
-        # REST API routes - Me (self-service)
-        Route("/api/me/teams", api_me_teams, methods=["GET"]),
         # REST API routes - Wiki (Knowledge Engine)
         Route("/api/wiki/index", api_wiki_index, methods=["GET"]),
         Route("/api/wiki/graph", api_wiki_graph, methods=["GET"]),
