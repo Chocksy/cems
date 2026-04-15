@@ -1004,7 +1004,7 @@ async def api_memory_pin(request: Request):
 
 
 async def api_memory_promote(request: Request):
-    """REST API endpoint to promote a personal memory to shared (team) scope.
+    """REST API endpoint to promote a personal memory to shared scope.
 
     POST /api/memory/promote
     Body: {"memory_id": "..."}

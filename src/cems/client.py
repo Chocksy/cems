@@ -377,7 +377,7 @@ class CEMSClient:
 class CEMSAdminClient:
     """HTTP client for CEMS admin operations.
 
-    This client wraps the CEMS Admin API for user and team management.
+    This client wraps the CEMS Admin API for user management.
     Authentication is via admin key (CEMS_ADMIN_KEY) or admin user API key.
 
     Example:

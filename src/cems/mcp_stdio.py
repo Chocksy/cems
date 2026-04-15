@@ -380,7 +380,7 @@ def memory_personal_summary() -> str:
 
 @mcp.resource("memory://shared/summary")
 def memory_shared_summary() -> str:
-    """Summary of shared team memories."""
+    """Summary of shared memories."""
     if not API_URL:
         return _NOT_CONFIGURED_MSG
     return json.dumps(_request("GET", "/api/memory/summary/shared"), indent=2)

@@ -1,4 +1,4 @@
-"""Admin services for user and team management."""
+"""Admin services for user management."""
 
 import logging
 import uuid

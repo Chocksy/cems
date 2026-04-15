@@ -1200,7 +1200,7 @@ def setup(install_claude: bool, install_cursor: bool, install_codex: bool, insta
 
     console.print()
 
-    # Resolve API URL and key for team discovery
+    # Resolve API URL and key for install
     # Read from whichever credential file we just wrote/kept
     if credential_scope == "project" and project_creds_file.exists():
         from cems.shared.credentials import parse_credentials_file
