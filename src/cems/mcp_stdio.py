@@ -252,6 +252,29 @@ def memory_search(
     return json.dumps(result)
 
 
+_VALID_SCOPES = {"personal", "shared", "team", "company"}
+_SCOPE_ALIASES = {"project": "personal", "private": "personal", "global": "shared", "org": "company"}
+
+
+def _normalize_scope(scope: str) -> str:
+    """Map common LLM-generated scope values to valid DB scopes."""
+    s = scope.lower().strip()
+    if s in _VALID_SCOPES:
+        return s
+    return _SCOPE_ALIASES.get(s, "personal")
+
+
+def _normalize_tags(tags) -> list[str]:
+    """Coerce tags to a list of strings (handles comma-separated strings)."""
+    if tags is None:
+        return []
+    if isinstance(tags, str):
+        return [t.strip() for t in tags.split(",") if t.strip()]
+    if isinstance(tags, list):
+        return [str(t).strip() for t in tags if str(t).strip()]
+    return []
+
+
 @mcp.tool()
 def memory_add(
     content: str,
@@ -261,14 +284,14 @@ def memory_add(
     infer: bool = True,
     source_ref: str | None = None,
 ) -> str:
-    """Store a memory. Set infer=false for bulk imports (faster)."""
+    """Store a memory. Scope must be personal/shared/team/company. Set infer=false for bulk imports (faster)."""
     if not API_URL:
         return _NOT_CONFIGURED_MSG
     payload: dict = {
         "content": content,
-        "scope": scope,
+        "scope": _normalize_scope(scope),
         "category": category,
-        "tags": tags or [],
+        "tags": _normalize_tags(tags),
         "infer": infer,
     }
     if source_ref:

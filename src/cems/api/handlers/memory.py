@@ -104,18 +104,29 @@ async def api_memory_add(request: Request):
         if len(content.encode("utf-8", errors="replace")) > MAX_CONTENT_BYTES:
             return JSONResponse({"error": f"Content exceeds {MAX_CONTENT_BYTES} byte limit"}, status_code=400)
 
-        tags = body.get("tags", [])
-        if isinstance(tags, list) and len(tags) > 50:
-            return JSONResponse({"error": "Maximum 50 tags allowed"}, status_code=400)
-
         from cems.llm import normalize_category
 
         raw_category = body.get("category", "general")
         # Functional categories bypass normalization (exact format required)
         functional = {"gate-rules", "guidelines", "preferences", "category-summary"}
         category = raw_category if raw_category in functional else normalize_category(raw_category)
-        scope = body.get("scope", "personal")
-        tags = body.get("tags", [])  # Optional: tags for organization
+
+        # Normalize scope — LLMs sometimes send invalid values like "project"
+        valid_scopes = {"personal", "shared", "team", "company"}
+        scope_aliases = {"project": "personal", "private": "personal", "global": "shared", "org": "company"}
+        raw_scope = body.get("scope", "personal").lower().strip()
+        scope = raw_scope if raw_scope in valid_scopes else scope_aliases.get(raw_scope, "personal")
+
+        # Normalize tags — handle comma-separated strings from LLMs
+        raw_tags = body.get("tags", [])
+        if isinstance(raw_tags, str):
+            tags = [t.strip() for t in raw_tags.split(",") if t.strip()]
+        elif isinstance(raw_tags, list):
+            tags = [str(t).strip() for t in raw_tags if str(t).strip()]
+        else:
+            tags = []
+        if len(tags) > 50:
+            return JSONResponse({"error": "Maximum 50 tags allowed"}, status_code=400)
         # Gate rules must preserve exact pattern format, so disable LLM inference
         default_infer = category != "gate-rules"
         infer = body.get("infer", default_infer)

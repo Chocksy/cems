@@ -1,6 +1,8 @@
 """Database connection and session management for CEMS."""
 
+import hashlib
 import logging
+import time
 from collections.abc import AsyncGenerator, Generator
 from contextlib import asynccontextmanager, contextmanager
 
@@ -461,12 +463,91 @@ def run_migrations() -> None:
             END $$;
             """,
         ),
+        # Memory conflicts table (detected during consolidation, queried by wiki dashboard)
+        (
+            "memory_conflicts_v1",
+            """
+            CREATE TABLE IF NOT EXISTS memory_conflicts (
+                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                user_id UUID NOT NULL,
+                doc_a_id UUID NOT NULL REFERENCES memory_documents(id) ON DELETE CASCADE,
+                doc_b_id UUID NOT NULL REFERENCES memory_documents(id) ON DELETE CASCADE,
+                explanation TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'open',
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                resolved_at TIMESTAMP WITH TIME ZONE,
+                UNIQUE(doc_a_id, doc_b_id)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_conflicts_user_status
+                ON memory_conflicts(user_id, status);
+            """,
+        ),
     ]
 
-    for migration_id, sql in migrations:
-        try:
-            with db.session() as session:
-                session.execute(text(sql))
-            logger.info(f"Migration applied: {migration_id}")
-        except Exception as e:
-            logger.error(f"Migration {migration_id} failed: {e}")
+    # --- Migration runner with tracking, advisory lock, and checksums ---
+
+    # 1. Ensure schema_migrations tracking table exists
+    with db.session() as session:
+        session.execute(text("""
+            CREATE TABLE IF NOT EXISTS schema_migrations (
+                migration_id VARCHAR(255) PRIMARY KEY,
+                checksum VARCHAR(64) NOT NULL,
+                applied_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                execution_ms INTEGER
+            );
+        """))
+
+    # 2. Acquire advisory lock to prevent concurrent migration runs
+    #    (e.g., two containers starting simultaneously)
+    MIGRATION_LOCK_ID = 728379  # arbitrary constant
+    with db.session() as session:
+        session.execute(text(f"SELECT pg_advisory_lock({MIGRATION_LOCK_ID})"))
+
+    try:
+        # 3. Get already-applied migrations with checksums
+        applied: dict[str, str] = {}
+        with db.session() as session:
+            rows = session.execute(
+                text("SELECT migration_id, checksum FROM schema_migrations")
+            ).all()
+            applied = {row[0]: row[1] for row in rows}
+
+        pending = len(migrations) - len(applied)
+        if applied:
+            logger.info(f"Schema migrations: {len(applied)} applied, {pending} pending")
+
+        for migration_id, sql in migrations:
+            checksum = hashlib.sha256(sql.encode()).hexdigest()[:16]
+
+            if migration_id in applied:
+                # Verify checksum — detect accidental modification of applied migrations
+                if applied[migration_id] != checksum:
+                    logger.warning(
+                        f"Migration {migration_id} checksum mismatch "
+                        f"(applied={applied[migration_id]}, current={checksum}). "
+                        f"Re-running since all migrations are idempotent."
+                    )
+                else:
+                    continue  # Already applied, checksum matches — skip
+
+            try:
+                start = time.monotonic()
+                with db.session() as session:
+                    session.execute(text(sql))
+                    session.execute(
+                        text(
+                            "INSERT INTO schema_migrations (migration_id, checksum, execution_ms) "
+                            "VALUES (:id, :checksum, :ms) "
+                            "ON CONFLICT (migration_id) DO UPDATE SET checksum = :checksum, execution_ms = :ms"
+                        ),
+                        {"id": migration_id, "checksum": checksum, "ms": int((time.monotonic() - start) * 1000)},
+                    )
+                elapsed = int((time.monotonic() - start) * 1000)
+                logger.info(f"Migration applied: {migration_id} ({elapsed}ms)")
+            except Exception as e:
+                logger.error(f"Migration {migration_id} failed: {e}")
+    finally:
+        # 4. Release advisory lock
+        with db.session() as session:
+            session.execute(text(f"SELECT pg_advisory_unlock({MIGRATION_LOCK_ID})"))

@@ -158,6 +158,24 @@ class TestTools:
         assert payload["content"] == "test content"
         assert payload["category"] == "testing"
 
+    def test_memory_add_normalizes_invalid_scope(self):
+        from cems.mcp_stdio import memory_add
+
+        with patch("cems.mcp_stdio._request", return_value={"success": True}) as mock_req:
+            memory_add("content", scope="project")
+
+        payload = mock_req.call_args[0][2]
+        assert payload["scope"] == "personal"
+
+    def test_memory_add_normalizes_tags_from_string(self):
+        from cems.mcp_stdio import memory_add
+
+        with patch("cems.mcp_stdio._request", return_value={"success": True}) as mock_req:
+            memory_add("content", tags="rubocop, rspec, ci")
+
+        payload = mock_req.call_args[0][2]
+        assert payload["tags"] == ["rubocop", "rspec", "ci"]
+
     def test_memory_forget(self):
         from cems.mcp_stdio import memory_forget
 
