@@ -58,7 +58,10 @@ class CEMSConfig(BaseSettings):
 
     # User identification (for server mode)
     user_id: str = Field(default="default", description="Current user ID")
-    team_id: str | None = Field(default=None, description="Team ID for shared memory")
+    default_scope: str = Field(
+        default="shared",
+        description="Default scope for new memories ('shared' or 'personal')",
+    )
 
     # Storage paths
     storage_dir: Path = Field(

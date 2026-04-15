@@ -17,7 +17,7 @@ class TestCEMSConfig:
         config = CEMSConfig()
 
         assert config.user_id == "default"
-        assert config.team_id is None
+        assert config.default_scope == "shared"
         assert config.enable_scheduler is True
         assert config.stale_days == 30
         assert config.archive_days == 60
@@ -27,10 +27,13 @@ class TestCEMSConfig:
         config = CEMSConfig(user_id="test-user")
         assert config.user_id == "test-user"
 
-    def test_team_id(self):
-        """Test team ID configuration."""
-        config = CEMSConfig(user_id="user", team_id="my-team")
-        assert config.team_id == "my-team"
+    def test_default_scope(self):
+        """Test default scope configuration."""
+        config = CEMSConfig(default_scope="personal")
+        assert config.default_scope == "personal"
+
+        config = CEMSConfig(default_scope="shared")
+        assert config.default_scope == "shared"
 
     def test_storage_paths(self):
         """Test storage path generation."""
