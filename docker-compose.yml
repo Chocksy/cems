@@ -88,6 +88,9 @@ services:
       # LLM models — override to control costs (OpenRouter format)
       # CEMS_LLM_MODEL: qwen/qwen3-32b              # Maintenance jobs (lint, consolidation)
       # CEMS_AGENTIC_MODEL: google/gemini-2.5-flash-lite  # Agentic search (needs 1M+ context)
+      # Embeddings: ada-002 works reliably when text-embedding-3-small has provider issues
+      # Both return 1536-dim vectors (schema-compatible)
+      CEMS_EMBEDDING_MODEL: ${CEMS_EMBEDDING_MODEL:-openai/text-embedding-3-small}
       # Server mode
       CEMS_MODE: server
       CEMS_SERVER_HOST: 0.0.0.0
