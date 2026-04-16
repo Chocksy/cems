@@ -186,12 +186,12 @@ class TestCredentialResolver:
     """Tests for the daemon's CredentialResolver."""
 
     def _make_resolver(self, global_url="https://global.cems.io", global_key="gkey"):
-        """Create a resolver that returns fixed global credentials."""
+        """Create a resolver that returns fixed global credentials on every call."""
         from cems.observer.daemon import CredentialResolver
         r = CredentialResolver.__new__(CredentialResolver)
-        r._cache = {}
-        r.default_url = global_url
-        r.default_key = global_key
+        r._source_ref_cache = {}
+        # Stub _read_global so tests don't depend on ~/.cems/credentials
+        r._read_global = lambda: (global_url, global_key)
         return r
 
     def test_resolve_without_cwd_returns_global(self):
@@ -220,14 +220,24 @@ class TestCredentialResolver:
         assert url == "https://hubstaff.cems.io"
         assert key == "hubstaff_key"
 
-    def test_resolve_caches_per_cwd(self):
-        """Same CWD returns cached result without re-walking."""
-        resolver = self._make_resolver()
+    def test_resolve_rereads_global_every_call(self):
+        """Global credentials are re-read on every resolve() call (no caching)."""
+        from cems.observer.daemon import CredentialResolver
+        r = CredentialResolver.__new__(CredentialResolver)
+        r._source_ref_cache = {}
+        # Mutable state so we can verify re-reads
+        state = {"url": "https://first.cems.io", "key": "kfirst"}
+        r._read_global = lambda: (state["url"], state["key"])
 
-        url1, _ = resolver.resolve("/some/path")
-        url2, _ = resolver.resolve("/some/path")
-        assert url1 == url2
-        assert "/some/path" in resolver._cache
+        url1, _ = r.resolve("")
+        assert url1 == "https://first.cems.io"
+
+        # Simulate credentials file change
+        state["url"] = "https://second.cems.io"
+        state["key"] = "ksecond"
+
+        url2, _ = r.resolve("")
+        assert url2 == "https://second.cems.io"
 
     def test_per_url_isolation(self, tmp_path):
         """Different projects resolve to different servers."""
