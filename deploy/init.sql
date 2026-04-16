@@ -24,8 +24,6 @@ CREATE TABLE IF NOT EXISTS users (
 CREATE INDEX IF NOT EXISTS idx_users_api_key_prefix ON users(api_key_prefix);
 CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);
 
--- (teams and team_members tables removed — team_id concept removed from CEMS)
-
 -- =============================================================================
 -- Unified Memories Table (pgvector - replaces Qdrant + memory_metadata)
 -- =============================================================================
