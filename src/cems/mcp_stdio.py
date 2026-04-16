@@ -186,7 +186,7 @@ def _format_agentic_for_mcp(data: dict) -> str:
             if e.get("summary"):
                 parts.append(f"   {e['summary']}")
             short_id = e.get("id", "")[:8]
-            parts.append(f"   \u2192 /recall {short_id} for full details")
+            parts.append(f"   \u2192 call /recall {short_id} to read full document")
         parts.append("")
 
     if memories:

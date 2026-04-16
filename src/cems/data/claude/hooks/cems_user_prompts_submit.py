@@ -100,16 +100,17 @@ def _format_agentic_response(data: dict) -> tuple[str | None, list[str], list[bo
     memories = data.get("memories", data.get("results", []))[:3]
 
     if entities:
-        parts.append("KNOWLEDGE TOPICS matching your query:\n")
+        parts.append("KNOWLEDGE TOPICS (content not loaded \u2014 you must fetch before responding):\n")
         for i, e in enumerate(entities, 1):
             sources = f" ({e['sources']} sources)" if e.get("sources") else ""
             parts.append(f"{i}. {e['title']}{sources}")
-            if e.get("summary"):
-                parts.append(f"   {e['summary']}")
             short_id = e.get("id", "")[:8]
-            parts.append(f"   \u2192 /recall {short_id} for full details")
+            parts.append(f"   \u26a0 PENDING \u2014 call /recall {short_id} to load content")
             if e.get("id"):
                 memory_ids.append(e["id"])
+        parts.append("")
+        parts.append("DO NOT reference these topics without loading them first.")
+        parts.append("Summaries are intentionally withheld \u2014 you must read the full document.")
         parts.append("")
 
     if memories:
