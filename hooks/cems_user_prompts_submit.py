@@ -100,25 +100,17 @@ def _format_agentic_response(data: dict) -> tuple[str | None, list[str], list[bo
     memories = data.get("memories", data.get("results", []))[:3]
 
     if entities:
-        parts.append("KNOWLEDGE TOPICS matching your query:\n")
-        entity_ids = []
+        parts.append("KNOWLEDGE TOPICS (content not loaded \u2014 you must fetch before responding):\n")
         for i, e in enumerate(entities, 1):
             sources = f" ({e['sources']} sources)" if e.get("sources") else ""
             parts.append(f"{i}. {e['title']}{sources}")
-            if e.get("summary"):
-                parts.append(f"   {e['summary']}")
             short_id = e.get("id", "")[:8]
-            entity_ids.append(short_id)
+            parts.append(f"   \u26a0 PENDING \u2014 call /recall {short_id} to load content")
             if e.get("id"):
                 memory_ids.append(e["id"])
         parts.append("")
-
-        # Imperative recall instructions — entities are pre-curated documents
-        # that the LLM MUST read before responding
-        parts.append("REQUIRED: Fetch these knowledge pages before responding:")
-        for short_id in entity_ids:
-            parts.append(f"  /recall {short_id}")
-        parts.append("These are curated documents relevant to your task. Read them first.")
+        parts.append("DO NOT reference these topics without loading them first.")
+        parts.append("Summaries are intentionally withheld \u2014 you must read the full document.")
         parts.append("")
 
     if memories:

@@ -60,36 +60,37 @@ def _resolve_main_worktree(cwd: str) -> str | None:
 
 
 class CredentialResolver:
-    """Resolves CEMS credentials per-session CWD with caching.
+    """Resolves CEMS credentials per-session CWD.
 
     Resolution order per session:
     1. Walk up from session CWD looking for .cems/credentials
     2. If CWD is a git worktree, walk up from the main worktree path
     3. Check source_ref cache (reuses credentials from another session
-       of the same project, e.g., a prior Claude session)
-    4. Global ~/.cems/credentials fallback
+       of the same project, e.g., a Codex worktree that was cleaned up)
+    4. Global ~/.cems/credentials fallback (re-read every call)
 
-    For the daemon, file takes priority over env vars (env may be stale
-    for a long-running process).
+    No CWD caching — credential files are tiny and the daemon polls every
+    30 seconds. Re-reading ensures changes are picked up immediately.
     """
 
+    _GLOBAL_CREDS_PATH = str(Path.home() / ".cems" / "credentials")
+
     def __init__(self):
-        from cems.shared.credentials import parse_credentials_file
-        self._cache: dict[str, tuple[str, str]] = {}  # cwd -> (url, key)
         self._source_ref_cache: dict[str, tuple[str, str]] = {}  # source_ref -> (url, key)
-        # Load global credentials (the default)
-        global_creds = parse_credentials_file(
-            str(Path.home() / ".cems" / "credentials")
-        )
-        self.default_url = (global_creds.get("CEMS_API_URL") or os.getenv("CEMS_API_URL", "")).rstrip("/")
-        self.default_key = global_creds.get("CEMS_API_KEY") or os.getenv("CEMS_API_KEY", "")
+
+    def _read_global(self) -> tuple[str, str]:
+        """Read global ~/.cems/credentials (re-read every call, never cached)."""
+        from cems.shared.credentials import parse_credentials_file
+        creds = parse_credentials_file(self._GLOBAL_CREDS_PATH)
+        url = (creds.get("CEMS_API_URL") or os.getenv("CEMS_API_URL", "")).rstrip("/")
+        key = creds.get("CEMS_API_KEY") or os.getenv("CEMS_API_KEY", "")
+        return url, key
 
     def resolve(self, cwd: str = "", source_ref: str = "") -> tuple[str, str]:
         """Resolve (api_url, api_key) for a session CWD.
 
         Tries CWD walk-up, then git worktree fallback, then source_ref
-        cache, then global credentials.  Caches results per CWD and
-        per source_ref.
+        cache, then global credentials. Re-reads files on every call.
         """
         if not cwd:
             # No CWD — try source_ref cache before global fallback
@@ -99,12 +100,9 @@ class CredentialResolver:
                     f"→ {self._source_ref_cache[source_ref][0]}"
                 )
                 return self._source_ref_cache[source_ref]
-            return self.default_url, self.default_key
+            return self._read_global()
 
-        if cwd in self._cache:
-            return self._cache[cwd]
-
-        from cems.shared.credentials import find_project_credentials, parse_credentials_file
+        from cems.shared.credentials import find_project_credentials
 
         # Step 1: Walk up from CWD
         project_path = find_project_credentials(cwd)
@@ -112,7 +110,6 @@ class CredentialResolver:
             url, key = self._try_creds_file(project_path)
             if url and key:
                 logger.info(f"Project credentials for '{cwd}' → {url} (from {project_path})")
-                self._cache[cwd] = (url, key)
                 if source_ref:
                     self._source_ref_cache[source_ref] = (url, key)
                 return url, key
@@ -128,7 +125,6 @@ class CredentialResolver:
                         f"Project credentials for '{cwd}' via main worktree "
                         f"'{main_wt}' → {url} (from {project_path})"
                     )
-                    self._cache[cwd] = (url, key)
                     if source_ref:
                         self._source_ref_cache[source_ref] = (url, key)
                     return url, key
@@ -140,13 +136,12 @@ class CredentialResolver:
                 f"Credentials for '{cwd}' via source_ref cache "
                 f"({source_ref}) → {result[0]}"
             )
-            self._cache[cwd] = result
             return result
 
-        # Step 4: Global fallback
-        logger.debug(f"No project credentials for '{cwd}', using global → {self.default_url}")
-        self._cache[cwd] = (self.default_url, self.default_key)
-        return self.default_url, self.default_key
+        # Step 4: Global fallback (re-read every time)
+        default_url, default_key = self._read_global()
+        logger.debug(f"No project credentials for '{cwd}', using global → {default_url}")
+        return default_url, default_key
 
     def seed_from_state(self, source_ref: str, api_url: str) -> None:
         """Pre-populate source_ref cache from persisted state.
@@ -168,8 +163,9 @@ class CredentialResolver:
         normalized = api_url.rstrip("/")
 
         # Check if it matches global
-        if normalized == self.default_url.rstrip("/"):
-            return self.default_url, self.default_key
+        global_url, global_key = self._read_global()
+        if normalized == global_url.rstrip("/"):
+            return global_url, global_key
 
         # Scan project credential files
         for creds_file in Path.home().glob("Development/*/.cems/credentials"):
