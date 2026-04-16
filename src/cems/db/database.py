@@ -485,9 +485,9 @@ def run_migrations() -> None:
         (
             "remove_team_id_v1",
             """
-            -- Drop team_id from memory_documents (safe if column already absent)
+            -- Drop team_id from memory_documents (CASCADE drops dependent views)
             DROP INDEX IF EXISTS memory_documents_team_id_idx;
-            ALTER TABLE memory_documents DROP COLUMN IF EXISTS team_id;
+            ALTER TABLE memory_documents DROP COLUMN IF EXISTS team_id CASCADE;
 
             -- Drop team_id from index tables (guarded for fresh installs where tables may not exist)
             DO $$ BEGIN
