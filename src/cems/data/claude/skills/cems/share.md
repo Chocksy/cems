@@ -1,11 +1,11 @@
 # /share
 
-Add a memory to the shared team memory store via CEMS.
+Add a memory to the shared memory store via CEMS.
 
 ## Usage
 
 ```
-/share <fact or information to share with team>
+/share <fact or information to share with all users>
 ```
 
 ## Examples
@@ -37,7 +37,7 @@ Add a memory to the shared team memory store via CEMS.
    cems add "<content>" --category <cat> --scope shared
    ```
 
-Requires `CEMS_TEAM_ID` to be configured for shared memory.
+Shared memories are visible to all users on the CEMS instance.
 
 ## Related Skills
 

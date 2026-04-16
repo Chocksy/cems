@@ -32,7 +32,7 @@ This skill uses the CEMS `memory_add` tool to store information. The memory syst
 ```
 /store --category preferences I like dark mode in all editors
 /store --category decisions We chose PostgreSQL for the main database
-/store --scope shared Team uses pnpm not npm
+/store --scope shared We use pnpm not npm
 /store --tags auth,security Session tokens expire after 1 hour
 ```
 
@@ -61,4 +61,4 @@ This skill uses the CEMS `memory_add` tool to store information. The memory syst
 
 - `/recall` - Search your memories
 - `/forget` - Remove a memory
-- `/share` - Add to shared team memory
+- `/share` - Add to shared memory
