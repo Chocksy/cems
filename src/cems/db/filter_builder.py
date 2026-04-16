@@ -89,46 +89,21 @@ class FilterBuilder:
             self.add_param(condition_template, value)
         return self
 
-    def _add_user_team_or(
-        self,
-        user_id: str,
-        team_id: str,
-        condition_template: str,
-        col_prefix: str = "",
-    ) -> None:
-        """Add a compound (user_id OR team_id) condition with manual indexing.
-
-        Args:
-            user_id: User ID
-            team_id: Team ID
-            condition_template: Format string with {p}, {uid_idx}, {tid_idx} placeholders
-            col_prefix: Column prefix (e.g., "d.")
-        """
-        uid_idx, tid_idx = self.add_raw_values(UUID(user_id), UUID(team_id))
-        self._conditions.append(
-            condition_template.format(p=col_prefix, uid_idx=uid_idx, tid_idx=tid_idx)
-        )
-
     def add_ownership_filter(
         self,
         user_id: str | None,
-        team_id: str | None,
         scope: str | Literal["both"],
         col_prefix: str = "",
     ) -> "FilterBuilder":
-        """Add ownership filter with OR logic for shared visibility.
+        """Add ownership filter for memory visibility.
 
-        Produces correct visibility rules:
+        Produces visibility rules:
         - scope="personal": user_id = X AND scope = 'personal'
-        - scope="shared": (user_id = X OR team_id = Y) AND scope = 'shared'
-        - scope="both": (user_id = X OR (team_id = Y AND scope = 'shared'))
-
-        For shared/both scopes, a user can see docs they own OR docs
-        belonging to their team.
+        - scope="shared": scope = 'shared' (visible to all users)
+        - scope="both": user_id = X OR scope = 'shared'
 
         Args:
             user_id: User ID
-            team_id: Team ID (required for shared/both to enable cross-user visibility)
             scope: Memory scope filter
             col_prefix: Column prefix (e.g., "d." for joined queries)
 
@@ -137,34 +112,19 @@ class FilterBuilder:
         """
         p = col_prefix
 
-        if scope == "personal" or not team_id:
-            # Personal scope or no team: just filter by user_id
+        if scope == "personal":
             if user_id:
                 self.add_param(f"{p}user_id = ${{}}", UUID(user_id))
-            if scope != "both":
-                self.add_param(f"{p}scope = ${{}}", scope)
+            self.add_param(f"{p}scope = ${{}}", "personal")
         elif scope == "shared":
-            # Shared: user sees own docs OR team docs, all with scope='shared'
-            if user_id:
-                self._add_user_team_or(
-                    user_id, team_id,
-                    "({p}user_id = ${uid_idx} OR {p}team_id = ${tid_idx})",
-                    col_prefix=p,
-                )
-            else:
-                self.add_param(f"{p}team_id = ${{}}", UUID(team_id))
             self.add_param(f"{p}scope = ${{}}", "shared")
         elif scope == "both":
-            # Both: user sees all own docs OR shared team docs
             if user_id:
-                self._add_user_team_or(
-                    user_id, team_id,
-                    "({p}user_id = ${uid_idx} OR "
-                    "({p}team_id = ${tid_idx} AND {p}scope = 'shared'))",
-                    col_prefix=p,
+                uid_idx = self.add_raw_values(UUID(user_id))[0]
+                self._conditions.append(
+                    f"({p}user_id = ${uid_idx} OR {p}scope = 'shared')"
                 )
-            else:
-                self.add_param(f"{p}team_id = ${{}}", UUID(team_id))
+            # No user_id + both = no ownership filter (see everything)
 
         return self
 

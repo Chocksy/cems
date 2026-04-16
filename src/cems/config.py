@@ -3,7 +3,7 @@
 Environment Variables for CLI (client mode):
     - CEMS_API_URL: URL of CEMS server (e.g., https://cems.example.com)
     - CEMS_API_KEY: User API key for authentication
-    - CEMS_ADMIN_KEY: Admin key for user/team management (optional)
+    - CEMS_ADMIN_KEY: Admin key for user management (optional)
 
 Environment Variables for Server:
     - OPENROUTER_API_KEY: Required for all LLM and embedding operations
@@ -58,7 +58,10 @@ class CEMSConfig(BaseSettings):
 
     # User identification (for server mode)
     user_id: str = Field(default="default", description="Current user ID")
-    team_id: str | None = Field(default=None, description="Team ID for shared memory")
+    default_scope: str = Field(
+        default="shared",
+        description="Default scope for new memories ('shared' or 'personal')",
+    )
 
     # Storage paths
     storage_dir: Path = Field(
@@ -292,7 +295,7 @@ class CEMSConfig(BaseSettings):
     # =========================================================================
     database_url: str | None = Field(
         default=None,
-        description="PostgreSQL connection URL. If set, uses PostgreSQL for user/team management.",
+        description="PostgreSQL connection URL. If set, uses PostgreSQL for user management.",
     )
     admin_key: str | None = Field(
         default=None,

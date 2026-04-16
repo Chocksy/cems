@@ -15,9 +15,8 @@ from cems.scheduler import CEMSScheduler
 
 logger = logging.getLogger(__name__)
 
-# Context variables for per-request user identification (HTTP mode)
+# Context variable for per-request user identification (HTTP mode)
 request_user_id: ContextVar[str | None] = ContextVar("request_user_id", default=None)
-request_team_id: ContextVar[str | None] = ContextVar("request_team_id", default=None)
 
 # Global memory instances per user (for HTTP mode)
 _memory_cache: dict[str, CEMSMemory] = {}
@@ -35,12 +34,11 @@ def get_base_config() -> CEMSConfig:
     return _base_config
 
 
-def _config_for_user(user_id: str, team_id: str | None = None) -> CEMSConfig:
+def _config_for_user(user_id: str) -> CEMSConfig:
     """Build a CEMSConfig for a specific user, inheriting ALL base settings."""
     base = get_base_config()
     return base.model_copy(update={
         "user_id": user_id,
-        "team_id": team_id,
         "enable_scheduler": False,  # Scheduler runs separately
     })
 
@@ -48,20 +46,19 @@ def _config_for_user(user_id: str, team_id: str | None = None) -> CEMSConfig:
 def get_memory() -> CEMSMemory:
     """Get or create the memory instance for the current request.
 
-    In HTTP mode: Uses user_id/team_id from request headers (contextvars)
-    In stdio mode: Uses user_id/team_id from environment variables
+    In HTTP mode: Uses user_id from request headers (contextvar)
+    In stdio mode: Uses user_id from environment variables
     """
     # Check for request-scoped user context (HTTP mode)
     user_id = request_user_id.get()
-    team_id = request_team_id.get()
 
     if user_id:
         # HTTP mode: Create per-user memory instance
-        cache_key = f"{user_id}:{team_id or 'none'}"
+        cache_key = user_id
         if cache_key not in _memory_cache:
-            config = _config_for_user(user_id, team_id)
+            config = _config_for_user(user_id)
             _memory_cache[cache_key] = CEMSMemory(config)
-            logger.info(f"Created memory instance for user: {user_id}, team: {team_id}")
+            logger.info(f"Created memory instance for user: {user_id}")
         return _memory_cache[cache_key]
     else:
         # stdio mode: Use default config from environment

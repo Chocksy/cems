@@ -15,9 +15,9 @@ You have access to a persistent memory system (CEMS). Use it proactively — don
 - Workflow patterns: "Deployments go through Coolify on the Hetzner server"
 - Debugging insights: "The test suite needs Docker running for integration tests"
 
-**Use `/share` for team knowledge:**
+**Use `/share` for shared knowledge:**
 
-- Team conventions: "API responses always include a `success` boolean"
+- Conventions: "API responses always include a `success` boolean"
 - Shared infrastructure: "Staging environment is at staging.example.com"
 - Common patterns: "All models use soft-delete via `deleted_at` column"
 

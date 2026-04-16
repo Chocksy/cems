@@ -24,24 +24,6 @@ CREATE TABLE IF NOT EXISTS users (
 CREATE INDEX IF NOT EXISTS idx_users_api_key_prefix ON users(api_key_prefix);
 CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);
 
--- Teams table
-CREATE TABLE IF NOT EXISTS teams (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    name VARCHAR(255) UNIQUE NOT NULL,
-    company_id VARCHAR(255) NOT NULL,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    settings JSONB DEFAULT '{}'::jsonb
-);
-
--- Team membership
-CREATE TABLE IF NOT EXISTS team_members (
-    user_id UUID REFERENCES users(id) ON DELETE CASCADE,
-    team_id UUID REFERENCES teams(id) ON DELETE CASCADE,
-    role VARCHAR(50) DEFAULT 'member', -- 'admin', 'member', 'viewer'
-    joined_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    PRIMARY KEY (user_id, team_id)
-);
-
 -- =============================================================================
 -- Unified Memories Table (pgvector - replaces Qdrant + memory_metadata)
 -- =============================================================================

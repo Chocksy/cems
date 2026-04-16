@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 
 # Column definitions for documents
 DOCUMENT_COLUMNS = """
-    id, user_id, team_id, scope, category, title, source, source_ref,
+    id, user_id, scope, category, title, source, source_ref,
     tags, content, content_detailed, content_hash, content_bytes, created_at, updated_at,
     deleted_at, shown_count, last_shown_at, relevant_count, noise_count, noise_snippet_count
 """
@@ -41,7 +41,7 @@ CHUNK_COLUMNS = """
 
 CHUNK_WITH_DOC_COLUMNS = f"""
     {CHUNK_COLUMNS},
-    d.user_id, d.team_id, d.scope, d.category, d.title, d.source, d.source_ref,
+    d.user_id, d.scope, d.category, d.title, d.source, d.source_ref,
     d.tags, d.created_at AS document_created_at,
     d.shown_count, d.last_shown_at, d.relevant_count, d.noise_count, d.noise_snippet_count
 """
@@ -60,7 +60,6 @@ def chunk_row_to_result(row: asyncpg.Record, include_score: bool = False) -> dic
         "bytes": row["bytes"],
         # Document metadata
         "user_id": str(row["user_id"]) if row["user_id"] else None,
-        "team_id": str(row["team_id"]) if row["team_id"] else None,
         "scope": row["scope"],
         "category": row["category"],
         "title": row["title"],
@@ -166,7 +165,6 @@ class DocumentStore:
         chunks: list[Chunk],
         embeddings: list[list[float]],
         user_id: str | UUID,
-        team_id: str | UUID | None = None,
         scope: str = "personal",
         category: str = "document",
         title: str | None = None,
@@ -182,7 +180,6 @@ class DocumentStore:
             chunks: Pre-chunked content
             embeddings: Embedding for each chunk (must match chunks length)
             user_id: User ID
-            team_id: Team ID (for shared documents)
             scope: "personal" or "shared"
             category: Document category
             title: Optional document title
@@ -201,7 +198,6 @@ class DocumentStore:
 
         pool = await self._get_pool()
         user_uuid = UUID(user_id) if isinstance(user_id, str) else user_id
-        team_uuid = UUID(team_id) if isinstance(team_id, str) and team_id else None
         doc_hash = content_hash(content)
         doc_bytes = len(content.encode("utf-8"))
 
@@ -248,14 +244,13 @@ class DocumentStore:
                     await conn.execute(
                         """
                         INSERT INTO memory_documents (
-                            id, user_id, team_id, scope, category, title,
+                            id, user_id, scope, category, title,
                             source, source_ref, tags, content, content_detailed,
                             content_hash, content_bytes
-                        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+                        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
                         """,
                         doc_id,
                         user_uuid,
-                        team_uuid,
                         scope,
                         category,
                         title,
@@ -293,7 +288,6 @@ class DocumentStore:
         return {
             "id": str(row["id"]),
             "user_id": str(row["user_id"]) if row["user_id"] else None,
-            "team_id": str(row["team_id"]) if row["team_id"] else None,
             "scope": row["scope"],
             "category": row["category"],
             "title": row["title"],
@@ -471,11 +465,10 @@ class DocumentStore:
         self,
         document_id: str,
         user_id: str,
-        team_id: str,
     ) -> bool:
         """Promote a personal document to shared scope.
 
-        Changes scope from 'personal' to 'shared' and sets the team_id.
+        Changes scope from 'personal' to 'shared'.
         Only the document owner can promote. Must currently be personal scope.
 
         Returns True if promoted, False if not found or already shared.
@@ -487,11 +480,10 @@ class DocumentStore:
             result = await conn.execute(
                 """
                 UPDATE memory_documents
-                SET scope = 'shared', team_id = $1, updated_at = NOW()
-                WHERE id = $2 AND user_id = $3 AND scope = 'personal'
+                SET scope = 'shared', updated_at = NOW()
+                WHERE id = $1 AND user_id = $2 AND scope = 'personal'
                   AND deleted_at IS NULL
                 """,
-                UUID(team_id),
                 doc_uuid,
                 UUID(user_id),
             )
@@ -574,14 +566,13 @@ class DocumentStore:
     async def get_project_counts(
         self,
         user_id: str,
-        team_id: str | None = None,
     ) -> list[dict]:
         """Get document counts grouped by source_ref (project)."""
         pool = await self._get_pool()
 
         fb = FilterBuilder(start_idx=1)
         fb.add("deleted_at IS NULL")
-        fb.add_ownership_filter(user_id, team_id, "both")
+        fb.add_ownership_filter(user_id, "both")
 
         query = f"""
             SELECT COALESCE(source_ref, '(none)') as project, COUNT(*) as count
@@ -1061,7 +1052,6 @@ class DocumentStore:
     async def get_all_documents(
         self,
         user_id: str,
-        team_id: str | None = None,
         scope: str | None = None,
         limit: int = 1000,
         offset: int = 0,
@@ -1073,12 +1063,8 @@ class DocumentStore:
     ) -> list[dict[str, Any]]:
         """Get all documents for a user with pagination and filtering.
 
-        For shared/both scopes with a team_id, uses OR logic so users can see
-        their own docs plus shared docs from their team.
-
         Args:
             user_id: User ID
-            team_id: Team ID (enables cross-user visibility for shared scope)
             scope: Optional scope filter ("personal", "shared", or None for both)
             limit: Maximum results
             offset: Number of rows to skip (for pagination)
@@ -1096,7 +1082,7 @@ class DocumentStore:
         fb = FilterBuilder(start_idx=1)
         fb.add("deleted_at IS NULL")
         fb.add_ownership_filter(
-            user_id, team_id, scope or "both",
+            user_id, scope or "both",
         )
         if category:
             fb.add_param("category = ${}", category)
@@ -1128,19 +1114,14 @@ class DocumentStore:
     async def count_documents(
         self,
         user_id: str,
-        team_id: str | None = None,
         scope: str | None = None,
         category: str | None = None,
         tag_prefix: str | None = None,
     ) -> int:
         """Count documents for a user with optional filters.
 
-        For shared/both scopes with a team_id, uses OR logic so users can see
-        their own docs plus shared docs from their team.
-
         Args:
             user_id: User ID
-            team_id: Team ID (enables cross-user visibility for shared scope)
             scope: Optional scope filter
             category: Optional category filter
             tag_prefix: Optional tag prefix filter (matches any tag starting with prefix)
@@ -1153,7 +1134,7 @@ class DocumentStore:
         fb = FilterBuilder(start_idx=1)
         fb.add("deleted_at IS NULL")
         fb.add_ownership_filter(
-            user_id, team_id, scope or "both",
+            user_id, scope or "both",
         )
         if category:
             fb.add_param("category = ${}", category)
@@ -1170,17 +1151,12 @@ class DocumentStore:
     async def get_document_category_counts(
         self,
         user_id: str,
-        team_id: str | None = None,
         scope: str | None = None,
     ) -> dict[str, int]:
         """Get document counts grouped by category.
 
-        For shared/both scopes with a team_id, uses OR logic so users can see
-        their own docs plus shared docs from their team.
-
         Args:
             user_id: User ID
-            team_id: Team ID (enables cross-user visibility for shared scope)
             scope: Optional scope filter
 
         Returns:
@@ -1191,7 +1167,7 @@ class DocumentStore:
         fb = FilterBuilder(start_idx=1)
         fb.add("deleted_at IS NULL")
         fb.add_ownership_filter(
-            user_id, team_id, scope or "both",
+            user_id, scope or "both",
         )
 
         query = f"""
@@ -1214,7 +1190,6 @@ class DocumentStore:
         self,
         query_embedding: list[float],
         user_id: str | None = None,
-        team_id: str | None = None,
         scope: str | Literal["both"] = "both",
         category: str | None = None,
         source_ref: str | None = None,
@@ -1229,7 +1204,7 @@ class DocumentStore:
 
         fb = FilterBuilder(start_idx=3)
         fb.add("d.deleted_at IS NULL")
-        fb.add_ownership_filter(user_id, team_id, scope, col_prefix="d.")
+        fb.add_ownership_filter(user_id, scope, col_prefix="d.")
         if category:
             fb.add_param("d.category = ${}", category)
         if source_ref:
@@ -1258,7 +1233,6 @@ class DocumentStore:
         query: str,
         query_embedding: list[float],
         user_id: str | None = None,
-        team_id: str | None = None,
         scope: str | Literal["both"] = "both",
         category: str | None = None,
         source_ref: str | None = None,
@@ -1271,7 +1245,7 @@ class DocumentStore:
 
         fb = FilterBuilder(start_idx=4)
         fb.add("d.deleted_at IS NULL")
-        fb.add_ownership_filter(user_id, team_id, scope, col_prefix="d.")
+        fb.add_ownership_filter(user_id, scope, col_prefix="d.")
         if category:
             fb.add_param("d.category = ${}", category)
         if source_ref:
@@ -1336,7 +1310,6 @@ class DocumentStore:
         self,
         query: str,
         user_id: str | None = None,
-        team_id: str | None = None,
         scope: str | Literal["both"] = "both",
         category: str | None = None,
         limit: int = 10,
@@ -1351,7 +1324,7 @@ class DocumentStore:
 
         fb = FilterBuilder(start_idx=3)
         fb.add("d.deleted_at IS NULL")
-        fb.add_ownership_filter(user_id, team_id, scope, col_prefix="d.")
+        fb.add_ownership_filter(user_id, scope, col_prefix="d.")
         if category:
             fb.add_param("d.category = ${}", category)
 
@@ -1750,7 +1723,6 @@ class DocumentStore:
         all_chunks: list[list[Chunk]],
         all_embeddings: list[list[list[float]]],
         user_id: str | UUID,
-        team_id: str | UUID | None = None,
         scope: str = "personal",
     ) -> list[tuple[str, bool]]:
         """Add multiple documents with their chunks in a single transaction.
@@ -1769,7 +1741,6 @@ class DocumentStore:
             all_chunks: List of chunk lists (one list per document)
             all_embeddings: List of embedding lists (one list per document)
             user_id: User ID
-            team_id: Team ID (for shared documents)
             scope: "personal" or "shared"
 
         Returns:
@@ -1783,7 +1754,6 @@ class DocumentStore:
 
         pool = await self._get_pool()
         user_uuid = UUID(user_id) if isinstance(user_id, str) else user_id
-        team_uuid = UUID(team_id) if isinstance(team_id, str) and team_id else None
 
         results: list[tuple[str, bool]] = []
 
@@ -1821,13 +1791,12 @@ class DocumentStore:
                     await conn.execute(
                         """
                         INSERT INTO memory_documents (
-                            id, user_id, team_id, scope, category, title,
+                            id, user_id, scope, category, title,
                             source, source_ref, tags, content, content_hash, content_bytes
-                        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+                        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
                         """,
                         doc_id,
                         user_uuid,
-                        team_uuid,
                         scope,
                         doc.get("category", "document"),
                         doc.get("title"),

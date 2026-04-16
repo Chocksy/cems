@@ -29,7 +29,6 @@ from cems.api.handlers.memory import (
     api_memory_update,
 )
 from cems.api.handlers.index import api_index_patterns, api_index_path, api_index_repo
-from cems.api.handlers.me import api_me_teams
 from cems.api.handlers.session import api_session_summarize
 from cems.api.handlers.tool import api_tool_learning
 
@@ -65,8 +64,6 @@ __all__ = [
     "api_index_repo",
     "api_index_path",
     "api_index_patterns",
-    # Me (self-service)
-    "api_me_teams",
     # Session
     "api_session_summarize",
     # Tool

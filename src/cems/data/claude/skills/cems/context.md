@@ -20,7 +20,7 @@ Show the current CEMS memory system status.
    cems status
    ```
 
-3. **Present** user ID, team ID, memory counts, category breakdown, and scheduler status.
+3. **Present** user ID, memory counts, category breakdown, and scheduler status.
 
 ## Related Skills
 

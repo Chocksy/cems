@@ -33,7 +33,6 @@ async def _auto_link_relations(
     doc_id: str,
     embedding: list[float],
     user_id: str,
-    team_id: str | None,
     scope: str,
 ) -> int:
     """Find and link related memories for a newly added document.
@@ -189,9 +188,7 @@ class WriteMixin:
         if not content or not content.strip():
             return {"results": [{"event": "ERROR", "error": "Empty content"}]}
 
-        # Get user/team IDs
         user_id = self.config.user_id
-        team_id = self.config.team_id if scope == "shared" else None
 
         if not user_id:
             return {"results": [{"event": "ERROR", "error": "No user_id configured"}]}
@@ -226,7 +223,6 @@ class WriteMixin:
                 chunks=chunks,
                 embeddings=embeddings,
                 user_id=user_id,
-                team_id=team_id,
                 scope=scope,
                 category=category,
                 title=title,
@@ -247,7 +243,7 @@ class WriteMixin:
                 relations_created = 0
                 try:
                     relations_created = await _auto_link_relations(
-                        doc_store, doc_id, embeddings[0], user_id, team_id, scope,
+                        doc_store, doc_id, embeddings[0], user_id, scope,
                     )
                 except Exception as link_err:
                     logger.warning(f"[WRITE] Auto-link failed for {doc_id[:8]}: {link_err}")

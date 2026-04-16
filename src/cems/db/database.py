@@ -193,8 +193,7 @@ def run_migrations() -> None:
             CREATE TABLE IF NOT EXISTS memory_documents (
                 id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
                 user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-                team_id UUID REFERENCES teams(id) ON DELETE SET NULL,
-                scope TEXT NOT NULL DEFAULT 'personal',
+                scope TEXT NOT NULL DEFAULT 'shared',
                 category TEXT NOT NULL DEFAULT 'document',
                 title TEXT,
                 source TEXT,
@@ -205,14 +204,13 @@ def run_migrations() -> None:
                 content_bytes INT NOT NULL,
                 created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
                 updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-                CONSTRAINT valid_doc_scope CHECK (scope IN ('personal', 'shared', 'team', 'company'))
+                CONSTRAINT valid_doc_scope CHECK (scope IN ('personal', 'shared'))
             );
 
             -- Indexes for memory_documents
             CREATE UNIQUE INDEX IF NOT EXISTS memory_documents_hash_user_idx
                 ON memory_documents (content_hash, user_id);
             CREATE INDEX IF NOT EXISTS memory_documents_user_id_idx ON memory_documents(user_id);
-            CREATE INDEX IF NOT EXISTS memory_documents_team_id_idx ON memory_documents(team_id);
             CREATE INDEX IF NOT EXISTS memory_documents_scope_idx ON memory_documents(scope);
             CREATE INDEX IF NOT EXISTS memory_documents_category_idx ON memory_documents(category);
             CREATE INDEX IF NOT EXISTS memory_documents_tags_idx ON memory_documents USING gin(tags);
@@ -481,6 +479,43 @@ def run_migrations() -> None:
 
             CREATE INDEX IF NOT EXISTS idx_conflicts_user_status
                 ON memory_conflicts(user_id, status);
+            """,
+        ),
+        # Remove team_id concept — shared memories are now visible to all users
+        (
+            "remove_team_id_v1",
+            """
+            -- Drop team_id from memory_documents (CASCADE drops dependent views)
+            DROP INDEX IF EXISTS memory_documents_team_id_idx;
+            ALTER TABLE memory_documents DROP COLUMN IF EXISTS team_id CASCADE;
+
+            -- Drop team_id from index tables (guarded for fresh installs where tables may not exist)
+            DO $$ BEGIN
+                IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'index_jobs') THEN
+                    ALTER TABLE index_jobs DROP COLUMN IF EXISTS team_id;
+                END IF;
+                IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'index_patterns') THEN
+                    ALTER TABLE index_patterns DROP CONSTRAINT IF EXISTS index_patterns_team_id_name_key;
+                    ALTER TABLE index_patterns DROP COLUMN IF EXISTS team_id;
+                END IF;
+            END $$;
+
+            -- Migrate any legacy scope values before tightening the constraint
+            UPDATE memory_documents SET scope = 'shared'
+                WHERE scope NOT IN ('personal', 'shared');
+
+            -- Tighten scope constraint (remove unused 'team' and 'company' values)
+            ALTER TABLE memory_documents DROP CONSTRAINT IF EXISTS valid_doc_scope;
+            ALTER TABLE memory_documents ADD CONSTRAINT valid_doc_scope
+                CHECK (scope IN ('personal', 'shared'));
+
+            -- Change default scope to 'shared'
+            ALTER TABLE memory_documents ALTER COLUMN scope SET DEFAULT 'shared';
+
+            -- Drop team-related tables (FK constraints cascade)
+            DROP TABLE IF EXISTS api_keys CASCADE;
+            DROP TABLE IF EXISTS team_members CASCADE;
+            DROP TABLE IF EXISTS teams CASCADE;
             """,
         ),
     ]

@@ -122,7 +122,7 @@ def resolve_credentials(cwd: str | None = None) -> dict[str, str]:
     env_key = os.environ.get("CEMS_API_KEY", "")
     if env_url and env_key:
         result = {"CEMS_API_URL": env_url, "CEMS_API_KEY": env_key}
-        for k in ("CEMS_TEAM_ID", "CEMS_SEARCH_MODE"):
+        for k in ("CEMS_SEARCH_MODE",):
             v = os.environ.get(k, "")
             if v:
                 result[k] = v

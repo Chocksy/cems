@@ -13,7 +13,7 @@ Search your CEMS memories for relevant information.
 ```
 /recall What do I prefer for backend development?
 /recall database conventions
-/recall --scope shared team deployment process
+/recall --scope shared deployment process
 /recall --limit 10 all architecture decisions
 ```
 
@@ -50,7 +50,7 @@ Search your CEMS memories for relevant information.
 
 ```
 /recall --scope personal my coding preferences
-/recall --scope shared team conventions
+/recall --scope shared conventions
 /recall --category decisions database choices
 /recall --limit 10 all architecture decisions
 ```

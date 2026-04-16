@@ -50,13 +50,10 @@ def main(ctx: click.Context, verbose: bool, api_url: str | None, api_key: str | 
         api_url = creds.get("CEMS_API_URL")
     if not api_key:
         api_key = creds.get("CEMS_API_KEY")
-    team_id = creds.get("CEMS_TEAM_ID")
-
     ctx.ensure_object(dict)
     ctx.obj["verbose"] = verbose
     ctx.obj["api_url"] = api_url
     ctx.obj["api_key"] = api_key
-    ctx.obj["team_id"] = team_id
     setup_logging(verbose)
 
 

@@ -49,7 +49,7 @@ app.get("/ping", (_req: Request, res: Response) => {
 });
 
 // Helper function to create and configure MCP server with all tools/resources
-function createMcpServer(authHeaders: { authorization?: string; teamId?: string }) {
+function createMcpServer(authHeaders: { authorization?: string }) {
   const server = new McpServer({
     name: "cems-mcp-wrapper",
     version: "1.0.0",
@@ -80,7 +80,6 @@ function createMcpServer(authHeaders: { authorization?: string; teamId?: string 
         headers: {
           "Content-Type": "application/json",
           ...(auth.authorization && { Authorization: auth.authorization }),
-          ...(auth.teamId && { "x-team-id": auth.teamId }),
         },
         body: JSON.stringify(args),
       });
@@ -139,8 +138,7 @@ function createMcpServer(authHeaders: { authorization?: string; teamId?: string 
           headers: {
             "Content-Type": "application/json",
             ...(auth.authorization && { Authorization: auth.authorization }),
-            ...(auth.teamId && { "x-team-id": auth.teamId }),
-          },
+            },
           body: JSON.stringify({
             query: args.query,
             limit: args.max_results,
@@ -183,8 +181,7 @@ function createMcpServer(authHeaders: { authorization?: string; teamId?: string 
             method: "GET",
             headers: {
               ...(auth.authorization && { Authorization: auth.authorization }),
-              ...(auth.teamId && { "x-team-id": auth.teamId }),
-            },
+                },
           }
         );
 
@@ -217,8 +214,7 @@ function createMcpServer(authHeaders: { authorization?: string; teamId?: string 
           headers: {
             "Content-Type": "application/json",
             ...(auth.authorization && { Authorization: auth.authorization }),
-            ...(auth.teamId && { "x-team-id": auth.teamId }),
-          },
+            },
           body: JSON.stringify(args),
         });
 
@@ -251,8 +247,7 @@ function createMcpServer(authHeaders: { authorization?: string; teamId?: string 
           headers: {
             "Content-Type": "application/json",
             ...(auth.authorization && { Authorization: auth.authorization }),
-            ...(auth.teamId && { "x-team-id": auth.teamId }),
-          },
+            },
           body: JSON.stringify(args),
         });
 
@@ -284,8 +279,7 @@ function createMcpServer(authHeaders: { authorization?: string; teamId?: string 
           headers: {
             "Content-Type": "application/json",
             ...(auth.authorization && { Authorization: auth.authorization }),
-            ...(auth.teamId && { "x-team-id": auth.teamId }),
-          },
+            },
           body: JSON.stringify(args),
         });
 
@@ -304,8 +298,8 @@ function createMcpServer(authHeaders: { authorization?: string; teamId?: string 
   server.registerTool(
     "memory_promote",
       {
-        title: "Promote Memory to Team",
-        description: "Promote a personal memory to shared team scope so all team members can see it",
+        title: "Promote Memory to Shared",
+        description: "Promote a personal memory to shared scope so all users can see it",
         inputSchema: {
           memory_id: z.string().describe("ID of the personal memory to promote"),
         },
@@ -317,8 +311,7 @@ function createMcpServer(authHeaders: { authorization?: string; teamId?: string 
           headers: {
             "Content-Type": "application/json",
             ...(auth.authorization && { Authorization: auth.authorization }),
-            ...(auth.teamId && { "x-team-id": auth.teamId }),
-          },
+            },
           body: JSON.stringify(args),
         });
 
@@ -408,7 +401,7 @@ function createMcpServer(authHeaders: { authorization?: string; teamId?: string 
       "memory://shared/summary",
       {
         title: "Shared Memory Summary",
-        description: "Summary of shared team memories",
+        description: "Summary of shared memories",
         mimeType: "application/json",
       },
       async (uri) => {
@@ -417,8 +410,7 @@ function createMcpServer(authHeaders: { authorization?: string; teamId?: string 
           method: "GET",
           headers: {
             ...(auth.authorization && { Authorization: auth.authorization }),
-            ...(auth.teamId && { "x-team-id": auth.teamId }),
-          },
+            },
         });
 
         if (!response.ok) {
@@ -447,7 +439,6 @@ app.post("/mcp", async (req: Request, res: Response) => {
     // Extract auth headers from request (no session caching)
     const authHeaders = {
       authorization: req.headers.authorization as string | undefined,
-      teamId: req.headers["x-team-id"] as string | undefined,
     };
 
     // Create stateless transport for each request

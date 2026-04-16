@@ -119,13 +119,11 @@ class SearchMixin:
         doc_store = await self._ensure_document_store()
         query_embedding = await self._async_embedder.embed(query)
         user_id = self.config.user_id
-        team_id = self.config.team_id if scope in ("shared", "both") else None
 
         raw_results = await doc_store.hybrid_search_chunks(
             query=query,
             query_embedding=query_embedding,
             user_id=user_id,
-            team_id=team_id,
             scope=scope,
             category=category,
             limit=limit * 3,
@@ -180,13 +178,11 @@ class SearchMixin:
             query_embedding = await self._async_embedder.embed(query)
 
         user_id = self.config.user_id
-        team_id = self.config.team_id if scope in ("shared", "both") else None
 
         raw_results = await doc_store.hybrid_search_chunks(
             query=query,
             query_embedding=query_embedding,
             user_id=user_id,
-            team_id=team_id,
             scope=scope,
             category=category,
             limit=limit * 2,
@@ -212,12 +208,10 @@ class SearchMixin:
 
         doc_store = await self._ensure_document_store()
         user_id = self.config.user_id
-        team_id = self.config.team_id if scope in ("shared", "both") else None
 
         raw_results = await doc_store.full_text_search_chunks(
             query=query,
             user_id=user_id,
-            team_id=team_id,
             scope=scope,
             limit=limit * 2,
         )
