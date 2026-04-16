@@ -500,6 +500,10 @@ def run_migrations() -> None:
                 END IF;
             END $$;
 
+            -- Migrate any legacy scope values before tightening the constraint
+            UPDATE memory_documents SET scope = 'shared'
+                WHERE scope NOT IN ('personal', 'shared');
+
             -- Tighten scope constraint (remove unused 'team' and 'company' values)
             ALTER TABLE memory_documents DROP CONSTRAINT IF EXISTS valid_doc_scope;
             ALTER TABLE memory_documents ADD CONSTRAINT valid_doc_scope
