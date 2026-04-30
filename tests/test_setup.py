@@ -262,3 +262,40 @@ class TestStripCemsHookEntries:
         kept = hooks["SessionStart"][0]["hooks"]
         assert len(kept) == 1
         assert kept[0]["command"] == "$HOME/bin/my_audit_log.sh"
+
+    def test_prunes_empty_entries_and_empty_event_keys(self):
+        """An entry whose only hook was CEMS gets dropped (no orphan
+        ``{"matcher": "", "hooks": []}``). An event whose only entry was
+        pure-CEMS gets removed from the dict entirely.
+        """
+        from cems.commands.setup import _strip_cems_hook_entries
+
+        hooks = {
+            "SessionStart": [
+                {
+                    "matcher": "",
+                    "hooks": [
+                        {
+                            "type": "command",
+                            "command": "$HOME/.claude/hooks/cems_session_start.py",
+                        }
+                    ],
+                }
+            ],
+            "Stop": [
+                {
+                    "matcher": "",
+                    "hooks": [
+                        {"type": "command", "command": "$HOME/bin/my_other_hook.sh"}
+                    ],
+                }
+            ],
+        }
+
+        _strip_cems_hook_entries(hooks)
+
+        # SessionStart event removed entirely (only had a CEMS hook).
+        assert "SessionStart" not in hooks
+        # Stop preserved — non-CEMS hook stays.
+        assert "Stop" in hooks
+        assert len(hooks["Stop"]) == 1
