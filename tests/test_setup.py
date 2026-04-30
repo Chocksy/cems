@@ -471,3 +471,22 @@ class TestMergeSettings:
         assert commands == ["$HOME/.claude/hooks/cems_stop.py"]
         # Defensive: no legacy reference survives.
         assert "/stop.py" not in json.dumps(result["hooks"])
+
+
+class TestClaudeTemplate:
+    """Sanity checks on the shipped src/cems/data/claude/settings.json."""
+
+    def test_no_run_with_uv_wrapper_in_template(self):
+        """The CEMS-shipped template must not reference run_with_uv.sh —
+        we don't ship that script and direct invocation works (verified
+        via probe on 2026-04-30).
+        """
+        from importlib.resources import files
+
+        template_text = (
+            files("cems.data.claude").joinpath("settings.json").read_text()
+        )
+        assert "run_with_uv.sh" not in template_text, (
+            "Template still references run_with_uv.sh — drop it and rely "
+            "on the cems_*.py shebang."
+        )
