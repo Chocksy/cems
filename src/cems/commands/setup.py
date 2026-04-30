@@ -652,43 +652,17 @@ def _strip_cems_hook_entries(hooks: dict) -> None:
             del hooks[event_name]
 
 
-def _migrate_removed_hooks(hooks: dict) -> bool:
-    """Remove deprecated CEMS hooks from settings.
-
-    Returns True if any hooks were removed (for messaging).
-
-    Removed hooks:
-    - cems_post_tool_use.py: Tool learning superseded by observer daemon.
-      The daemon captures learnings holistically from the full session
-      transcript, producing fewer, higher-quality memories.
-    """
-    removed_scripts = {"cems_post_tool_use.py"}
-    changed = False
-
-    for event_name in list(hooks.keys()):
-        original = hooks[event_name]
-        hooks[event_name] = [
-            entry for entry in original
-            if not any(
-                any(script in hook.get("command", "")
-                    for script in removed_scripts)
-                for hook in entry.get("hooks", [])
-            )
-        ]
-        if len(hooks[event_name]) != len(original):
-            changed = True
-        # Remove empty event arrays
-        if not hooks[event_name]:
-            del hooks[event_name]
-
-    return changed
-
-
 def _merge_settings(claude_dir: Path, template_path: Path) -> None:
     """Merge CEMS hook config into existing ~/.claude/settings.json.
 
-    Preserves all existing settings (env, permissions, non-CEMS hooks).
-    Appends CEMS hook entries that are not already registered (idempotent).
+    CEMS owns its hook entries authoritatively: every CEMS-managed hook
+    in the existing file is stripped (regardless of which wrapper or
+    invocation form it uses), then the current template's entries are
+    appended. Non-CEMS hooks the user has registered are preserved.
+
+    This makes future hook-command changes actually reach existing users
+    on the next ``cems update`` — the additive merge it replaces would
+    silently keep stale commands forever.
     """
     settings_file = claude_dir / "settings.json"
 
@@ -707,40 +681,19 @@ def _merge_settings(claude_dir: Path, template_path: Path) -> None:
     template = json.loads(template_path.read_text())
     cems_hooks = template.get("hooks", {})
 
-    # Migrate old hook names → new cems_ prefix names
     existing_hooks = existing.setdefault("hooks", {})
+
+    # Step 1: rename pre-prefix legacy hook commands so the strip detector catches them.
     _migrate_old_hook_names(existing_hooks)
 
-    # Remove deprecated hooks (tool learning superseded by observer daemon)
-    if _migrate_removed_hooks(existing_hooks):
-        console.print("  Removed tool learning hook (superseded by observer daemon)")
+    # Step 2: remove every CEMS-owned hook (any form, any wrapper).
+    _strip_cems_hook_entries(existing_hooks)
 
-    # Merge hooks: for each hook event, add CEMS hooks if not already present
+    # Step 3: append fresh template entries. Strip has already removed any CEMS
+    # hooks, so appending never duplicates. Non-CEMS entries in the same event
+    # are preserved.
     for event_name, cems_entries in cems_hooks.items():
-        if event_name not in existing_hooks:
-            # No existing config for this event — add CEMS entries directly
-            existing_hooks[event_name] = cems_entries
-        else:
-            # Event exists — check if CEMS hooks are already registered
-            # Match on script filename (not full command) to catch different runners
-            # e.g. "uv run ~/.claude/hooks/cems_stop.py" and
-            #      "$HOME/.claude/hooks/run_with_uv.sh $HOME/.claude/hooks/cems_stop.py"
-            # both resolve to cems_stop.py
-            def _script_names(cmd: str) -> set[str]:
-                """Extract cems_*.py script names from a hook command."""
-                return {part.rsplit("/", 1)[-1] for part in cmd.split() if part.endswith(".py") and "cems_" in part}
-
-            existing_scripts: set[str] = set()
-            for entry in existing_hooks[event_name]:
-                for hook in entry.get("hooks", []):
-                    existing_scripts |= _script_names(hook.get("command", ""))
-
-            for cems_entry in cems_entries:
-                entry_scripts: set[str] = set()
-                for h in cems_entry.get("hooks", []):
-                    entry_scripts |= _script_names(h.get("command", ""))
-                if not entry_scripts & existing_scripts:
-                    existing_hooks[event_name].append(cems_entry)
+        existing_hooks.setdefault(event_name, []).extend(cems_entries)
 
     settings_file.write_text(json.dumps(existing, indent=2) + "\n")
     console.print(f"  Settings merged into {settings_file}")

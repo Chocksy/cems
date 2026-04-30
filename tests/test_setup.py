@@ -327,3 +327,68 @@ class TestStripCemsHookEntries:
         _strip_cems_hook_entries(hooks)
 
         assert "PostToolUse" not in hooks
+
+
+class TestMergeSettings:
+    """Integration tests for _merge_settings — full strip-and-replace flow."""
+
+    def _template(self, tmp_path: Path) -> Path:
+        """Write a minimal CEMS template settings.json (W2 form)."""
+        template = {
+            "hooks": {
+                "SessionStart": [
+                    {
+                        "matcher": "",
+                        "hooks": [
+                            {
+                                "type": "command",
+                                "command": "$HOME/.claude/hooks/cems_session_start.py",
+                            }
+                        ],
+                    }
+                ]
+            }
+        }
+        path = tmp_path / "template.json"
+        path.write_text(json.dumps(template))
+        return path
+
+    def test_rewrites_stale_run_with_uv_reference_to_template_form(self, tmp_path):
+        """Given a settings.json with the old run_with_uv.sh wrapper command,
+        _merge_settings must rewrite it to the new bare-path form from the
+        template.
+        """
+        from cems.commands.setup import _merge_settings
+
+        claude_dir = tmp_path
+        settings_file = claude_dir / "settings.json"
+        settings_file.write_text(json.dumps({
+            "hooks": {
+                "SessionStart": [
+                    {
+                        "matcher": "",
+                        "hooks": [
+                            {
+                                "type": "command",
+                                "command": (
+                                    "$HOME/.claude/hooks/run_with_uv.sh "
+                                    "$HOME/.claude/hooks/cems_session_start.py"
+                                ),
+                            }
+                        ],
+                    }
+                ]
+            }
+        }))
+
+        _merge_settings(claude_dir, self._template(tmp_path))
+
+        result = json.loads(settings_file.read_text())
+        commands = [
+            h["command"]
+            for entry in result["hooks"]["SessionStart"]
+            for h in entry["hooks"]
+        ]
+        assert commands == ["$HOME/.claude/hooks/cems_session_start.py"]
+        # Defensive: no surviving wrapper reference anywhere under hooks.
+        assert "run_with_uv.sh" not in json.dumps(result["hooks"])
