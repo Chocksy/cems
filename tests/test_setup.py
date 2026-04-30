@@ -229,3 +229,36 @@ class TestStripCemsHookEntries:
         # the entry is dropped. The event had no surviving entries, so
         # the event key is dropped.
         assert "SessionStart" not in hooks
+
+    def test_preserves_non_cems_hook_in_mixed_entry(self):
+        """A matcher that has both a CEMS hook and a user's custom hook
+        must keep the custom hook; only the CEMS hook is stripped.
+        """
+        from cems.commands.setup import _strip_cems_hook_entries
+
+        hooks = {
+            "SessionStart": [
+                {
+                    "matcher": "",
+                    "hooks": [
+                        {
+                            "type": "command",
+                            "command": "$HOME/.claude/hooks/cems_session_start.py",
+                        },
+                        {
+                            "type": "command",
+                            "command": "$HOME/bin/my_audit_log.sh",
+                        },
+                    ],
+                }
+            ]
+        }
+
+        _strip_cems_hook_entries(hooks)
+
+        # Event survives because the user's custom hook survives.
+        assert list(hooks.keys()) == ["SessionStart"]
+        assert len(hooks["SessionStart"]) == 1
+        kept = hooks["SessionStart"][0]["hooks"]
+        assert len(kept) == 1
+        assert kept[0]["command"] == "$HOME/bin/my_audit_log.sh"
