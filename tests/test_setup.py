@@ -392,3 +392,24 @@ class TestMergeSettings:
         assert commands == ["$HOME/.claude/hooks/cems_session_start.py"]
         # Defensive: no surviving wrapper reference anywhere under hooks.
         assert "run_with_uv.sh" not in json.dumps(result["hooks"])
+
+    def test_merge_settings_is_idempotent(self, tmp_path):
+        """Running _merge_settings twice on the same starting file must
+        produce identical output — the second invocation strips its own
+        prior writes and re-appends, with no growth or duplication.
+        """
+        from cems.commands.setup import _merge_settings
+
+        claude_dir = tmp_path
+        settings_file = claude_dir / "settings.json"
+        settings_file.write_text(json.dumps({"hooks": {}}))
+
+        template_path = self._template(tmp_path)
+
+        _merge_settings(claude_dir, template_path)
+        first = settings_file.read_text()
+
+        _merge_settings(claude_dir, template_path)
+        second = settings_file.read_text()
+
+        assert json.loads(first) == json.loads(second)
