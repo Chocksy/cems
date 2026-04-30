@@ -12,11 +12,15 @@ from cems.observer.daemon import CredentialResolver
 
 
 def _test_resolver() -> CredentialResolver:
-    """Create a resolver that returns fixed test credentials."""
-    r = CredentialResolver.__new__(CredentialResolver)
-    r._cache = {}
-    r.default_url = "http://localhost:8765"
-    r.default_key = "key"
+    """Create a resolver that returns fixed test credentials.
+
+    Uses the real `CredentialResolver` and mocks `resolve()` so the
+    test driver doesn't read the user's real credentials file and any
+    drift in the production interface fails tests loudly.
+    """
+    r = CredentialResolver()
+    r.resolve = MagicMock(return_value=("http://localhost:8765", "key"))
+    r.seed_from_state = MagicMock()
     return r
 
 

@@ -1,6 +1,9 @@
 """Tests for the CEMS Observer Daemon."""
 
 import json
+import os
+import subprocess
+import sys
 import time
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -11,13 +14,79 @@ from cems.observer.daemon import CredentialResolver
 
 
 def _test_resolver() -> CredentialResolver:
-    """Create a resolver that returns fixed test credentials."""
-    r = CredentialResolver.__new__(CredentialResolver)
-    r._cache = {}
-    r._source_ref_cache = {}
-    r.default_url = "http://localhost:8765"
-    r.default_key = "test-key"
+    """Create a resolver that returns fixed test credentials.
+
+    Uses the real `CredentialResolver` and mocks the public methods that
+    touch the filesystem, so any drift in the production interface
+    (renames, removed attributes) breaks tests instead of being masked.
+    """
+    r = CredentialResolver()
+    r.resolve = MagicMock(return_value=("http://localhost:8765", "test-key"))
+    r.seed_from_state = MagicMock()
     return r
+
+
+class TestObserverStartup:
+    """Regression tests for daemon startup paths.
+
+    Covers v0.13.1 → 0.13.2 incident: `CredentialResolver` was refactored
+    to drop cached `default_url`/`default_key` attributes in favor of a
+    `resolve()` method, but two callers still referenced the old attrs.
+    The daemon crashed with `AttributeError` before doing any work.
+    """
+
+    def test_entrypoint_does_not_crash_with_valid_credentials(self, tmp_path):
+        """Running `cems-observer --once` with valid creds must exit 0
+        without raising AttributeError on resolver attribute access.
+        """
+        cems_dir = tmp_path / ".cems"
+        cems_dir.mkdir()
+        (cems_dir / "credentials").write_text(
+            "CEMS_API_URL=http://localhost:65535\nCEMS_API_KEY=test-key\n"
+        )
+
+        env = os.environ.copy()
+        env["HOME"] = str(tmp_path)
+        env.pop("CEMS_API_URL", None)
+        env.pop("CEMS_API_KEY", None)
+
+        result = subprocess.run(
+            [sys.executable, "-m", "cems.observer", "--once"],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=20,
+        )
+
+        assert "AttributeError" not in result.stderr, (
+            f"observer crashed on startup:\n{result.stderr}"
+        )
+        assert result.returncode == 0, (
+            f"observer exited with {result.returncode}:\n"
+            f"stdout: {result.stdout}\nstderr: {result.stderr}"
+        )
+
+    def test_run_daemon_does_not_crash_logging_api_url(self, monkeypatch):
+        """`run_daemon` logs the resolved API URL at startup. It must not
+        raise AttributeError when reading credentials from the resolver.
+        """
+        from cems.observer import daemon
+
+        resolver = CredentialResolver()
+        resolver.resolve = MagicMock(return_value=("http://test", "key"))
+        resolver.seed_from_state = MagicMock()
+
+        # Make the polling loop exit after one iteration: stub run_cycle
+        # to set the shutdown flag instead of doing real work.
+        def fake_run_cycle(_resolver):
+            daemon._shutdown_requested = True
+            return 0
+
+        monkeypatch.setattr(daemon, "run_cycle", fake_run_cycle)
+
+        # Should complete without AttributeError. On broken code, line 627
+        # accesses `resolver.default_url` and raises before the loop runs.
+        daemon.run_daemon(resolver)
 
 
 class TestSessionDiscovery:

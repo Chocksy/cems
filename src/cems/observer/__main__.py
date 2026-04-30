@@ -168,7 +168,8 @@ def main():
 
     resolver = CredentialResolver()
 
-    if not resolver.default_url or not resolver.default_key:
+    url, key = resolver.resolve()
+    if not url or not key:
         print("Error: Set CEMS_API_URL and CEMS_API_KEY in ~/.cems/credentials or environment", file=sys.stderr)
         sys.exit(1)
 

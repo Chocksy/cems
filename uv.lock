@@ -190,7 +190,7 @@ wheels = [
 
 [[package]]
 name = "cems"
-version = "0.9.35"
+version = "0.13.2"
 source = { editable = "." }
 dependencies = [
     { name = "anthropic" },

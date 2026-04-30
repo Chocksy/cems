@@ -624,7 +624,8 @@ def run_daemon(resolver: CredentialResolver) -> None:
 
     logger.info(f"Observer daemon started (PID {os.getpid()}, polling every {POLL_INTERVAL}s)")
     logger.info(f"Adapters: {', '.join(adapter_names)}")
-    logger.info(f"CEMS API: {resolver.default_url}")
+    default_url, _ = resolver.resolve()
+    logger.info(f"CEMS API: {default_url}")
     logger.info(f"Thresholds: raw={MIN_RAW_DELTA_BYTES}B, extracted={MIN_EXTRACTED_CHARS}chars")
     logger.info(f"Staleness threshold: {STALE_THRESHOLD}s")
 
