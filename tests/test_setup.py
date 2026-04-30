@@ -192,3 +192,40 @@ class TestAppendCemsInstructions:
         content = config_file.read_text()
         assert "apigcp" in content.lower() or "Context" in content, \
             "Should warn against using wrong MCP tools"
+
+
+class TestStripCemsHookEntries:
+    """Tests for _strip_cems_hook_entries — removes CEMS-owned hook entries
+    from a settings hooks dict so the caller can re-append fresh template
+    entries.
+    """
+
+    def test_strips_stale_run_with_uv_wrapper(self):
+        """A SessionStart hook using the old run_with_uv.sh wrapper must
+        be removed so the next merge can replace it with the new form.
+        """
+        from cems.commands.setup import _strip_cems_hook_entries
+
+        hooks = {
+            "SessionStart": [
+                {
+                    "matcher": "",
+                    "hooks": [
+                        {
+                            "type": "command",
+                            "command": (
+                                "$HOME/.claude/hooks/run_with_uv.sh "
+                                "$HOME/.claude/hooks/cems_session_start.py"
+                            ),
+                        }
+                    ],
+                }
+            ]
+        }
+
+        _strip_cems_hook_entries(hooks)
+
+        # The CEMS hook is gone. The matcher had no surviving hooks, so
+        # the entry is dropped. The event had no surviving entries, so
+        # the event key is dropped.
+        assert "SessionStart" not in hooks

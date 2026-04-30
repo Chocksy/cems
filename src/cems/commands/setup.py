@@ -611,6 +611,47 @@ def _migrate_old_hook_names(hooks: dict) -> None:
         ]
 
 
+def _strip_cems_hook_entries(hooks: dict) -> None:
+    """Remove CEMS-owned hook entries from a hooks dict.
+
+    A hook command is "owned by CEMS" if any whitespace-separated token
+    ends in a ``cems_*.py`` filename. This catches every form CEMS has
+    ever shipped:
+
+    - ``$HOME/.claude/hooks/run_with_uv.sh $HOME/.claude/hooks/cems_X.py``
+    - ``$HOME/.claude/hooks/cems_X.py``
+    - ``uv run --script $HOME/.claude/hooks/cems_X.py``
+
+    Stripping is hook-level: a single entry with both a CEMS hook and a
+    user's custom hook keeps the custom one. Entries whose ``hooks`` list
+    becomes empty are dropped. Events whose entries array becomes empty
+    are deleted from the dict.
+
+    Mutates ``hooks`` in place.
+    """
+    def _is_cems_command(cmd: str) -> bool:
+        for token in cmd.split():
+            name = token.rsplit("/", 1)[-1]
+            if name.startswith("cems_") and name.endswith(".py"):
+                return True
+        return False
+
+    for event_name in list(hooks.keys()):
+        new_entries = []
+        for entry in hooks[event_name]:
+            kept_hooks = [
+                h for h in entry.get("hooks", [])
+                if not _is_cems_command(h.get("command", ""))
+            ]
+            if kept_hooks:
+                entry["hooks"] = kept_hooks
+                new_entries.append(entry)
+        if new_entries:
+            hooks[event_name] = new_entries
+        else:
+            del hooks[event_name]
+
+
 def _migrate_removed_hooks(hooks: dict) -> bool:
     """Remove deprecated CEMS hooks from settings.
 
