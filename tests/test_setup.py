@@ -490,3 +490,34 @@ class TestClaudeTemplate:
             "Template still references run_with_uv.sh — drop it and rely "
             "on the cems_*.py shebang."
         )
+
+    def test_every_template_command_points_to_a_shipped_script(self):
+        """For every hook command in the template, the referenced .py file
+        must exist in src/cems/data/claude/hooks/. Catches the original
+        bug class: template entries pointing at files we never ship.
+        """
+        from importlib.resources import files
+
+        template = json.loads(
+            files("cems.data.claude").joinpath("settings.json").read_text()
+        )
+
+        hooks_root = files("cems.data.claude.hooks")
+
+        for event_name, entries in template["hooks"].items():
+            for entry in entries:
+                for hook in entry["hooks"]:
+                    cmd = hook["command"]
+                    py_tokens = [
+                        t for t in cmd.split() if t.endswith(".py")
+                    ]
+                    assert py_tokens, (
+                        f"{event_name} command has no .py script: {cmd}"
+                    )
+                    script_name = py_tokens[-1].rsplit("/", 1)[-1]
+                    shipped = hooks_root.joinpath(script_name)
+                    assert shipped.is_file(), (
+                        f"{event_name} references {script_name} but "
+                        f"src/cems/data/claude/hooks/{script_name} does "
+                        f"not exist — this would crash the user's hook."
+                    )
