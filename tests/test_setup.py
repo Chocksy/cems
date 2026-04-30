@@ -299,3 +299,31 @@ class TestStripCemsHookEntries:
         # Stop preserved — non-CEMS hook stays.
         assert "Stop" in hooks
         assert len(hooks["Stop"]) == 1
+
+    def test_strips_deprecated_post_tool_use_hook(self):
+        """The disabled tool-learning hook (cems_post_tool_use.py) must be
+        captured by the detector — it follows the cems_*.py pattern, so
+        no special-case handler is needed.
+        """
+        from cems.commands.setup import _strip_cems_hook_entries
+
+        hooks = {
+            "PostToolUse": [
+                {
+                    "matcher": "",
+                    "hooks": [
+                        {
+                            "type": "command",
+                            "command": (
+                                "$HOME/.claude/hooks/run_with_uv.sh "
+                                "$HOME/.claude/hooks/cems_post_tool_use.py"
+                            ),
+                        }
+                    ],
+                }
+            ]
+        }
+
+        _strip_cems_hook_entries(hooks)
+
+        assert "PostToolUse" not in hooks
