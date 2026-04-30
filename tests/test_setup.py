@@ -413,3 +413,61 @@ class TestMergeSettings:
         second = settings_file.read_text()
 
         assert json.loads(first) == json.loads(second)
+
+    def test_migrates_legacy_unprefixed_names(self, tmp_path):
+        """A user whose settings still reference the pre-rename
+        ~/.claude/hooks/stop.py (no cems_ prefix) must end up with
+        cems_stop.py after merge — _migrate_old_hook_names removes the
+        legacy entry and the template adds the prefixed one.
+        """
+        from cems.commands.setup import _merge_settings
+
+        claude_dir = tmp_path
+        settings_file = claude_dir / "settings.json"
+        settings_file.write_text(json.dumps({
+            "hooks": {
+                "Stop": [
+                    {
+                        "matcher": "",
+                        "hooks": [
+                            {
+                                "type": "command",
+                                "command": (
+                                    "$HOME/.claude/hooks/run_with_uv.sh "
+                                    "$HOME/.claude/hooks/stop.py"
+                                ),
+                            }
+                        ],
+                    }
+                ]
+            }
+        }))
+
+        template_path = tmp_path / "template.json"
+        template_path.write_text(json.dumps({
+            "hooks": {
+                "Stop": [
+                    {
+                        "matcher": "",
+                        "hooks": [
+                            {
+                                "type": "command",
+                                "command": "$HOME/.claude/hooks/cems_stop.py",
+                            }
+                        ],
+                    }
+                ]
+            }
+        }))
+
+        _merge_settings(claude_dir, template_path)
+
+        result = json.loads(settings_file.read_text())
+        commands = [
+            h["command"]
+            for entry in result["hooks"]["Stop"]
+            for h in entry["hooks"]
+        ]
+        assert commands == ["$HOME/.claude/hooks/cems_stop.py"]
+        # Defensive: no legacy reference survives.
+        assert "/stop.py" not in json.dumps(result["hooks"])
