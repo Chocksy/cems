@@ -25,6 +25,14 @@ COPY deploy/ deploy/
 RUN useradd -m -u 1000 cems \
     && mkdir -p /home/cems/.cems \
     && chown -R cems:cems /app /home/cems/.cems
+
+# Bake the tiktoken BPE files into the image so token counting never writes to
+# /tmp at runtime (containers may run with readOnlyRootFilesystem: true)
+ENV TIKTOKEN_CACHE_DIR=/home/cems/.cache/tiktoken
+RUN mkdir -p /home/cems/.cache/tiktoken \
+    && python -c "import tiktoken; tiktoken.get_encoding('cl100k_base')" \
+    && chown -R cems:cems /home/cems/.cache
+
 USER cems
 
 # Expose MCP server port

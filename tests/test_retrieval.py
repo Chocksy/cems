@@ -542,6 +542,22 @@ class TestTokenBudgetAssembly:
         assert tokens > 0
         assert len(selected) == 1
 
+    def test_assemble_context_survives_tiktoken_load_failure(self):
+        """A read-only /tmp makes tiktoken raise; assembly must fall back to chars."""
+        results = [
+            self._create_search_result("1", "some memory content", 0.9),
+            self._create_search_result("2", "another memory content", 0.8),
+        ]
+
+        with patch(
+            "tiktoken.get_encoding",
+            side_effect=FileNotFoundError("No usable temporary directory found"),
+        ):
+            selected, tokens = assemble_context(results, max_tokens=1000)
+
+        assert len(selected) == 2
+        assert tokens > 0
+
 
 class TestContextFormatting:
     """Tests for memory context formatting."""
@@ -910,6 +926,44 @@ class TestMMRDiversity:
         # Both should include #1 (top scorer)
         assert any(r.memory_id == "1" for r in selected_high)
         assert any(r.memory_id == "1" for r in selected_low)
+
+    def test_assemble_context_diverse_survives_tiktoken_load_failure(self):
+        """A read-only /tmp makes tiktoken raise; MMR assembly must fall back to chars."""
+        results = [
+            SearchResult(
+                memory_id="1",
+                content="doctor appointment checkup medical visit",
+                score=0.95,
+                scope=MemoryScope.PERSONAL,
+                metadata=MemoryMetadata(
+                    memory_id="1",
+                    user_id="test",
+                    scope=MemoryScope.PERSONAL,
+                    source_ref="session-1",
+                ),
+            ),
+            SearchResult(
+                memory_id="2",
+                content="grocery shopping supermarket food",
+                score=0.80,
+                scope=MemoryScope.PERSONAL,
+                metadata=MemoryMetadata(
+                    memory_id="2",
+                    user_id="test",
+                    scope=MemoryScope.PERSONAL,
+                    source_ref="session-2",
+                ),
+            ),
+        ]
+
+        with patch(
+            "tiktoken.get_encoding",
+            side_effect=FileNotFoundError("No usable temporary directory found"),
+        ):
+            selected, tokens = assemble_context_diverse(results, max_tokens=2000)
+
+        assert len(selected) == 2
+        assert tokens > 0
 
 
 class TestSnippetTruncation:

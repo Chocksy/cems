@@ -311,6 +311,13 @@ spec:
             - { name: CEMS_EMBEDDING_BACKEND, value: openrouter }
             - { name: CEMS_EMBEDDING_DIMENSION, value: "1536" }
             - { name: CEMS_RERANKER_BACKEND, value: disabled }
+          # Some libraries (tiktoken, matplotlib, huggingface) write to the
+          # directory returned by tempfile.gettempdir(). With
+          # readOnlyRootFilesystem: true they fail unless /tmp is writable.
+          # The image bakes TIKTOKEN_CACHE_DIR=/home/cems/.cache/tiktoken, so
+          # tiktoken is covered, but keep this emptyDir for everything else.
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
           readinessProbe:
             httpGet: { path: /health, port: 8765 }
             initialDelaySeconds: 10
@@ -320,6 +327,8 @@ spec:
           resources:
             requests: { memory: 512Mi, cpu: 250m }
             limits: { memory: 2Gi, cpu: "1" }
+      volumes:
+        - { name: tmp, emptyDir: {} }
 ---
 apiVersion: v1
 kind: Service

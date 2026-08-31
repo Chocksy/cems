@@ -403,7 +403,10 @@ def assemble_context_diverse(
 
         def count_tokens(text: str) -> int:
             return len(enc.encode(text))
-    except ImportError:
+    except Exception as e:
+        # Covers missing tiktoken and load failures such as a read-only /tmp
+        logger.warning(f"Failed to load tiktoken encoding: {e}; using character-based estimation")
+
         def count_tokens(text: str) -> int:
             return len(text) // 4
 
@@ -556,9 +559,10 @@ def assemble_context(
         import tiktoken
 
         enc = tiktoken.get_encoding(DEFAULT_ENCODING)
-    except ImportError:
-        # Fallback: estimate 4 chars per token
-        logger.warning("tiktoken not installed, using character-based estimation")
+    except Exception as e:
+        # Fallback: estimate 4 chars per token.
+        # Covers missing tiktoken and load failures such as a read-only /tmp
+        logger.warning(f"Failed to load tiktoken encoding: {e}; using character-based estimation")
 
         def estimate_tokens(text: str) -> int:
             return len(text) // 4
