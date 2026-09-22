@@ -8,6 +8,7 @@ Uses Gemini 2.5 Flash via OpenRouter for cheap, fast classification.
 
 import logging
 
+from cems.config import CEMSConfig
 from cems.lib.json_parsing import parse_json_dict
 from cems.llm.client import get_client
 
@@ -70,7 +71,7 @@ def classify_memory_pair(
 
     try:
         client = get_client()
-        use_model = model or CLASSIFIER_MODEL
+        use_model = model or CEMSConfig().model_for(CLASSIFIER_MODEL)
 
         response = client.complete(
             prompt=f"Memory A:\n{content_a}\n\nMemory B:\n{content_b}",

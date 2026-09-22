@@ -7,6 +7,7 @@ Provides:
 
 import logging
 
+from cems.config import CEMSConfig
 from cems.lib.json_parsing import extract_json_from_response
 from cems.llm.client import get_client
 
@@ -239,7 +240,7 @@ Return ONLY valid JSON (object or null)."""
             prompt=prompt,
             system=system_prompt,
             temperature=0.2,  # Lower temperature for consistency
-            model=model or "x-ai/grok-4.1-fast",
+            model=model or CEMSConfig().model_for("x-ai/grok-4.1-fast"),
         )
 
         # Parse response
