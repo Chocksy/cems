@@ -1203,3 +1203,38 @@ class TestFoundationEndpoint:
             contents = [g["content"] for g in data["guidelines"]]
             assert "Always write tests" in contents
             assert "Use pytest for this repo" in contents
+
+
+class TestHTTPConfigValidation:
+    """Startup validation for HTTP mode (CEMS_LLM_API_KEY or OPENROUTER_API_KEY)."""
+
+    def test_private_mode_llm_key_passes(self, monkeypatch):
+        """A local-provider key alone is enough — no OpenRouter key needed."""
+        monkeypatch.setenv("CEMS_DATABASE_URL", "postgresql://cems:pw@localhost:5432/cems")
+        monkeypatch.setenv("CEMS_LLM_API_KEY", "ollama")
+        monkeypatch.setenv("CEMS_LLM_BASE_URL", "http://ollama:11434/v1")
+
+        from cems.server import validate_http_config
+
+        validate_http_config(CEMSConfig())  # must not raise
+
+    def test_openrouter_key_still_passes(self, monkeypatch):
+        """Existing OpenRouter installs keep working with only OPENROUTER_API_KEY."""
+        monkeypatch.setenv("CEMS_DATABASE_URL", "postgresql://cems:pw@localhost:5432/cems")
+        monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-test")
+
+        from cems.server import validate_http_config
+
+        validate_http_config(CEMSConfig())  # must not raise
+
+    def test_missing_llm_key_raises_naming_cems_llm_api_key(self, monkeypatch):
+        """With no key at all the error names CEMS_LLM_API_KEY first."""
+        monkeypatch.setenv("CEMS_DATABASE_URL", "postgresql://cems:pw@localhost:5432/cems")
+
+        from cems.server import validate_http_config
+
+        with pytest.raises(RuntimeError) as exc:
+            validate_http_config(CEMSConfig())
+
+        assert "CEMS_LLM_API_KEY" in str(exc.value)
+        assert "OPENROUTER_API_KEY" in str(exc.value)

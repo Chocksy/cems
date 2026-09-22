@@ -21,6 +21,8 @@ REST API endpoints:
 import logging
 import os
 
+from cems.config import CEMSConfig
+
 # Import shared dependencies from api/deps module
 from cems.api.deps import (
     get_base_config,
@@ -260,12 +262,34 @@ def create_http_app():
     return app
 
 
+def validate_http_config(config: CEMSConfig) -> None:
+    """Check that HTTP mode has everything it needs.
+
+    Args:
+        config: The server configuration to validate.
+
+    Raises:
+        RuntimeError: If any required setting is missing.
+    """
+    errors = []
+    if not config.database_url:
+        errors.append("CEMS_DATABASE_URL is required for HTTP mode")
+    if not config.resolved_llm_api_key():
+        errors.append(
+            "No LLM API key: set CEMS_LLM_API_KEY, or OPENROUTER_API_KEY when using OpenRouter"
+        )
+    if errors:
+        for error in errors:
+            logger.error(error)
+        raise RuntimeError("Missing required configuration:\n" + "\n".join(f"  - {e}" for e in errors))
+
+
 def run_http_server(host: str = "0.0.0.0", port: int = 8765) -> None:
     """Run the CEMS MCP server in HTTP mode.
 
     HTTP mode requires:
     - CEMS_DATABASE_URL: PostgreSQL for user management
-    - OPENROUTER_API_KEY: For LLM and embedding operations
+    - An LLM API key: CEMS_LLM_API_KEY, or OPENROUTER_API_KEY when using OpenRouter
 
     Args:
         host: Host to bind to (default: 0.0.0.0 for Docker)
@@ -281,16 +305,7 @@ def run_http_server(host: str = "0.0.0.0", port: int = 8765) -> None:
     # Initialize base config (loads API keys from env)
     config = get_base_config()
 
-    # Validate required configuration for HTTP mode
-    errors = []
-    if not config.database_url:
-        errors.append("CEMS_DATABASE_URL is required for HTTP mode")
-    if not os.environ.get("OPENROUTER_API_KEY"):
-        errors.append("OPENROUTER_API_KEY is required")
-    if errors:
-        for error in errors:
-            logger.error(error)
-        raise RuntimeError("Missing required configuration:\n" + "\n".join(f"  - {e}" for e in errors))
+    validate_http_config(config)
 
     logger.info(f"Starting CEMS HTTP server on {host}:{port}")
     logger.info("Vector store: pgvector (unified PostgreSQL)")
