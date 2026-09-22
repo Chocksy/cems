@@ -1,13 +1,15 @@
 """Embedding clients for CEMS.
 
-Supports two backends:
-1. OpenRouter API - Uses OpenAI text-embedding-3-small via OpenRouter
-2. llama.cpp server - Uses local llama.cpp server via HTTP (see llamacpp_server.py)
+Uses any OpenAI-compatible embeddings endpoint (OpenRouter by default, or
+Ollama, vLLM, LiteLLM). OpenRouter-only extras (attribution headers, the
+``dimensions`` parameter) are sent only when the endpoint is openrouter.ai.
 
 Environment Variables:
-    OPENROUTER_API_KEY: Required for OpenRouter API calls.
-    CEMS_EMBEDDING_MODEL: Override default OpenRouter model (optional).
-    CEMS_EMBEDDING_BACKEND: "openrouter" or "llamacpp_server"
+    CEMS_EMBEDDING_BASE_URL: Embeddings base URL. Defaults to CEMS_LLM_BASE_URL.
+    CEMS_EMBEDDING_API_KEY: API key. Falls back to CEMS_LLM_API_KEY, then OPENROUTER_API_KEY.
+    CEMS_EMBEDDING_MODEL: Override the default embedding model (optional).
+    CEMS_EMBEDDING_DIMENSION: Vector dimension (optional).
+    OPENROUTER_API_KEY: Fallback API key when no CEMS key is set.
 """
 
 from __future__ import annotations
@@ -18,9 +20,11 @@ from typing import Any
 
 import httpx
 
+from cems.config import CEMSConfig, is_openrouter_host
+
 logger = logging.getLogger(__name__)
 
-# OpenRouter configuration
+# Kept for backwards-compatible imports; the endpoint now comes from config.
 OPENROUTER_EMBEDDINGS_URL = "https://openrouter.ai/api/v1/embeddings"
 
 # Default embedding model (1536 dimensions)
@@ -28,8 +32,33 @@ DEFAULT_EMBEDDING_MODEL = "openai/text-embedding-3-small"
 DEFAULT_EMBEDDING_DIM = 1536
 
 
+def _resolve_endpoint(api_key: str | None, base_url: str | None) -> tuple[str, str, bool]:
+    """Return (embeddings_url, api_key, is_openrouter) from args and config."""
+    cfg = CEMSConfig()
+    resolved_base = (base_url or cfg.resolved_embedding_base_url()).rstrip("/")
+    key = api_key or cfg.resolved_embedding_api_key()
+    if not key:
+        raise ValueError(
+            "Embedding API key required. Set CEMS_EMBEDDING_API_KEY, CEMS_LLM_API_KEY "
+            "or OPENROUTER_API_KEY, or pass api_key."
+        )
+    return f"{resolved_base}/embeddings", key, is_openrouter_host(resolved_base)
+
+
+def _headers(api_key: str, is_openrouter: bool) -> dict[str, str]:
+    """Build request headers, adding OpenRouter attribution only for OpenRouter."""
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+    if is_openrouter:
+        headers["HTTP-Referer"] = "https://github.com/cems"
+        headers["X-Title"] = "CEMS Memory Server"
+    return headers
+
+
 class EmbeddingClient:
-    """Client for generating embeddings via OpenRouter API.
+    """Client for generating embeddings via an OpenAI-compatible API.
 
     Supports single and batch embedding generation with automatic
     rate limiting and retries.
@@ -51,35 +80,21 @@ class EmbeddingClient:
         api_key: str | None = None,
         model: str | None = None,
         dimensions: int | None = None,
+        base_url: str | None = None,
     ):
         """Initialize the embedding client.
 
         Args:
-            api_key: OpenRouter API key. Defaults to OPENROUTER_API_KEY env var.
-            model: Embedding model in OpenRouter format.
+            api_key: API key. Defaults to CEMS_EMBEDDING_API_KEY, then the LLM key.
+            model: Embedding model name.
                    Defaults to CEMS_EMBEDDING_MODEL or openai/text-embedding-3-small.
-            dimensions: Output dimensions (optional, model-dependent).
+            dimensions: Output dimensions (OpenRouter only, model-dependent).
+            base_url: OpenAI-compatible base URL. Defaults to the configured endpoint.
         """
-        self.api_key = api_key or os.getenv("OPENROUTER_API_KEY")
-        if not self.api_key:
-            raise ValueError(
-                "OpenRouter API key required. Set OPENROUTER_API_KEY environment variable "
-                "or pass api_key parameter."
-            )
-
+        self.embeddings_url, self.api_key, self.is_openrouter = _resolve_endpoint(api_key, base_url)
         self.model = model or os.getenv("CEMS_EMBEDDING_MODEL", DEFAULT_EMBEDDING_MODEL)
         self.dimensions = dimensions
-
-        # HTTP client with retries
-        self._client = httpx.Client(
-            timeout=30.0,
-            headers={
-                "Authorization": f"Bearer {self.api_key}",
-                "Content-Type": "application/json",
-                "HTTP-Referer": "https://github.com/cems",
-                "X-Title": "CEMS Memory Server",
-            },
-        )
+        self._client = httpx.Client(timeout=30.0, headers=_headers(self.api_key, self.is_openrouter))
 
     def embed(self, text: str) -> list[float]:
         """Generate embedding for a single text.
@@ -123,7 +138,7 @@ class EmbeddingClient:
         return all_embeddings
 
     def _call_api(self, texts: list[str]) -> list[list[float]]:
-        """Make API call to OpenRouter embeddings endpoint.
+        """Make API call to the configured embeddings endpoint.
 
         Args:
             texts: Texts to embed
@@ -139,19 +154,19 @@ class EmbeddingClient:
             "input": texts,
         }
 
-        if self.dimensions:
+        if self.dimensions and self.is_openrouter:
             payload["dimensions"] = self.dimensions
 
         try:
             response = self._client.post(
-                OPENROUTER_EMBEDDINGS_URL,
+                self.embeddings_url,
                 json=payload,
             )
             response.raise_for_status()
             data = response.json()
 
             # Extract embeddings from response
-            # OpenRouter follows OpenAI format: {"data": [{"embedding": [...], "index": 0}, ...]}
+            # OpenAI-compatible format: {"data": [{"embedding": [...], "index": 0}, ...]}
             embeddings = [None] * len(texts)
             for item in data["data"]:
                 embeddings[item["index"]] = item["embedding"]
@@ -184,7 +199,7 @@ class EmbeddingClient:
 
 
 class AsyncEmbeddingClient:
-    """Async client for generating embeddings via OpenRouter API.
+    """Async client for generating embeddings via an OpenAI-compatible API.
 
     Example:
         async with AsyncEmbeddingClient() as client:
@@ -196,21 +211,17 @@ class AsyncEmbeddingClient:
         api_key: str | None = None,
         model: str | None = None,
         dimensions: int | None = None,
+        base_url: str | None = None,
     ):
         """Initialize the async embedding client.
 
         Args:
-            api_key: OpenRouter API key. Defaults to OPENROUTER_API_KEY env var.
-            model: Embedding model in OpenRouter format.
-            dimensions: Output dimensions (optional).
+            api_key: API key. Defaults to CEMS_EMBEDDING_API_KEY, then the LLM key.
+            model: Embedding model name.
+            dimensions: Output dimensions (OpenRouter only, model-dependent).
+            base_url: OpenAI-compatible base URL. Defaults to the configured endpoint.
         """
-        self.api_key = api_key or os.getenv("OPENROUTER_API_KEY")
-        if not self.api_key:
-            raise ValueError(
-                "OpenRouter API key required. Set OPENROUTER_API_KEY environment variable "
-                "or pass api_key parameter."
-            )
-
+        self.embeddings_url, self.api_key, self.is_openrouter = _resolve_endpoint(api_key, base_url)
         self.model = model or os.getenv("CEMS_EMBEDDING_MODEL", DEFAULT_EMBEDDING_MODEL)
         self.dimensions = dimensions
         self._client: httpx.AsyncClient | None = None
@@ -220,12 +231,7 @@ class AsyncEmbeddingClient:
         if self._client is None:
             self._client = httpx.AsyncClient(
                 timeout=30.0,
-                headers={
-                    "Authorization": f"Bearer {self.api_key}",
-                    "Content-Type": "application/json",
-                    "HTTP-Referer": "https://github.com/cems",
-                    "X-Title": "CEMS Memory Server",
-                },
+                headers=_headers(self.api_key, self.is_openrouter),
             )
         return self._client
 
@@ -285,7 +291,7 @@ class AsyncEmbeddingClient:
         return all_embeddings
 
     async def _call_api(self, texts: list[str]) -> list[list[float]]:
-        """Make async API call to OpenRouter embeddings endpoint.
+        """Make async API call to the configured embeddings endpoint.
 
         Note: Mirrors EmbeddingClient._call_api — kept separate to avoid
         mixing sync/async client lifecycle (httpx.Client vs httpx.AsyncClient).
@@ -306,12 +312,12 @@ class AsyncEmbeddingClient:
             "input": texts,
         }
 
-        if self.dimensions:
+        if self.dimensions and self.is_openrouter:
             payload["dimensions"] = self.dimensions
 
         try:
             response = await client.post(
-                OPENROUTER_EMBEDDINGS_URL,
+                self.embeddings_url,
                 json=payload,
             )
             response.raise_for_status()
