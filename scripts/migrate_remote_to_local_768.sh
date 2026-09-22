@@ -24,9 +24,8 @@ psql "$LOCAL_DB_URL" -c "CREATE EXTENSION IF NOT EXISTS vector;"
 echo "[4/5] Migrate embedding column to 768-dim (DESTRUCTIVE)..."
 psql "$LOCAL_DB_URL" -c "ALTER TABLE memories ALTER COLUMN embedding TYPE vector(768);"
 
-echo "[5/5] Re-embed all memories using llama.cpp server..."
+echo "[5/5] Re-embed all memories..."
 CEMS_DATABASE_URL="$LOCAL_DB_URL" \
-CEMS_EMBEDDING_BACKEND=llamacpp_server \
 CEMS_EMBEDDING_DIMENSION=768 \
 uv run python scripts/reembed_all_memories.py
 

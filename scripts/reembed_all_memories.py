@@ -1,13 +1,11 @@
 #!/usr/bin/env python3
-"""Re-embed all memories using the configured embedding backend.
+"""Re-embed all memories using the configured embedding endpoint.
 
 This script is part of the Strategy A migration to 768-dim embeddings.
-It reads all memories and regenerates embeddings via the configured backend
-(llamacpp_server or openrouter).
+It reads all memories and regenerates embeddings via the configured endpoint.
 
 Usage:
     CEMS_DATABASE_URL=postgresql://... \
-    CEMS_EMBEDDING_BACKEND=llamacpp_server \
     CEMS_EMBEDDING_DIMENSION=768 \
     uv run python scripts/reembed_all_memories.py
 """
@@ -25,7 +23,7 @@ async def reembed_all():
     ids = memory.metadata_store.get_all_user_memories(cfg.user_id, include_archived=False)
     total = len(ids)
     print(f"[reembed] Found {total} memories to re-embed")
-    print(f"[reembed] Backend: {cfg.embedding_backend}, Dimension: {cfg.embedding_dimension}")
+    print(f"[reembed] Dimension: {cfg.embedding_dimension}")
 
     for i, mem_id in enumerate(ids, 1):
         mem = memory.get(mem_id)

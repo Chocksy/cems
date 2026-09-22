@@ -5,10 +5,10 @@ This script migrates data from the flat memories table to the new
 document+chunk model:
 - Each memory becomes a document
 - Documents are chunked using QMD-style chunking (800 tokens, 15% overlap)
-- Chunks are embedded using the configured embedding backend
+- Chunks are embedded using the configured embedding endpoint
 
 Usage:
-    # Run with default settings (llamacpp_server embeddings)
+    # Run with default settings
     uv run python scripts/backfill_docs_from_memories.py
 
     # Dry run (no changes)
@@ -22,8 +22,6 @@ Usage:
 
 Environment variables:
     CEMS_DATABASE_URL: PostgreSQL connection URL
-    CEMS_EMBEDDING_BACKEND: "llamacpp_server" or "openrouter"
-    CEMS_LLAMACPP_BASE_URL: llama.cpp server URL (for llamacpp_server backend)
 """
 
 from __future__ import annotations
@@ -175,15 +173,11 @@ async def migrate(
         setup=lambda conn: register_vector(conn),
     )
 
-    # Initialize embedder based on config
-    if config.embedding_backend == "llamacpp_server":
-        from cems.llamacpp_server import AsyncLlamaCppEmbeddingClient
-        embedder = AsyncLlamaCppEmbeddingClient(config)
-        logger.info(f"Using llama.cpp server embeddings at {config.llamacpp_base_url}")
-    else:
-        from cems.embedding import AsyncEmbeddingClient
-        embedder = AsyncEmbeddingClient(model=config.embedding_model)
-        logger.info(f"Using OpenRouter embeddings ({config.embedding_model})")
+    # Initialize embedder
+    from cems.embedding import AsyncEmbeddingClient
+
+    embedder = AsyncEmbeddingClient(model=config.embedding_model)
+    logger.info(f"Using embeddings at {embedder.embeddings_url} ({config.embedding_model})")
 
     try:
         # Get all memories
