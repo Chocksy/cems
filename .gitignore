@@ -3,6 +3,7 @@
 .env.*
 !.env.example
 !deploy/.env.example
+!.env.*.example
 *.secrets
 
 # Binaries

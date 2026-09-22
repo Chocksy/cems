@@ -3,6 +3,10 @@
 # No git clone needed. Save this file and run:
 #   docker compose -f docker-compose.yml up -d
 #
+# Private mode (everything local, no data leaves the box):
+#   cp .env.private-cpu.example .env   # or .env.private-gpu.example
+#   docker compose --profile private up -d
+#
 # Then run migrations:
 #   docker exec -i cems-postgres psql -U cems cems < init.sql is auto-loaded
 #   # Download and apply migrations:
@@ -33,21 +37,32 @@ services:
     container_name: cems-server
     environment:
       CEMS_DATABASE_URL: postgresql://cems:${POSTGRES_PASSWORD:-change_me}@postgres:5432/cems
-      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
       CEMS_ADMIN_KEY: ${CEMS_ADMIN_KEY}
       CEMS_MODE: server
       CEMS_SERVER_HOST: 0.0.0.0
       CEMS_SERVER_PORT: 8765
-      CEMS_EMBEDDING_DIMENSION: 1536
       CEMS_RERANKER_BACKEND: disabled
-      # LLM models (OpenRouter format) — override to control costs
-      # CEMS_LLM_MODEL: qwen/qwen3-32b              # Maintenance jobs (lint, consolidation)
-      # CEMS_AGENTIC_MODEL: google/gemini-2.5-flash-lite  # Agentic search (needs 1M+ context)
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      CEMS_LLM_BASE_URL: ${CEMS_LLM_BASE_URL:-https://openrouter.ai/api/v1}
+      CEMS_LLM_API_KEY: ${CEMS_LLM_API_KEY:-}
+      CEMS_LLM_MODEL: ${CEMS_LLM_MODEL:-qwen/qwen3-32b}
+      CEMS_AGENTIC_MODEL: ${CEMS_AGENTIC_MODEL:-google/gemini-2.5-flash-lite}
+      CEMS_EMBEDDING_BASE_URL: ${CEMS_EMBEDDING_BASE_URL:-}
+      CEMS_EMBEDDING_API_KEY: ${CEMS_EMBEDDING_API_KEY:-}
+      CEMS_EMBEDDING_MODEL: ${CEMS_EMBEDDING_MODEL:-openai/text-embedding-3-small}
+      CEMS_EMBEDDING_DIMENSION: ${CEMS_EMBEDDING_DIMENSION:-1536}
+      CEMS_ENABLE_QUERY_SYNTHESIS: ${CEMS_ENABLE_QUERY_SYNTHESIS:-false}
+      CEMS_ENABLE_PREFERENCE_SYNTHESIS: ${CEMS_ENABLE_PREFERENCE_SYNTHESIS:-true}
+      CEMS_ENABLE_QUERY_DECOMPOSITION: ${CEMS_ENABLE_QUERY_DECOMPOSITION:-true}
+      CEMS_ENABLE_AGENTIC_SEARCH: ${CEMS_ENABLE_AGENTIC_SEARCH:-true}
     ports:
       - "8765:8765"
     depends_on:
       postgres:
         condition: service_healthy
+      ollama-pull:
+        condition: service_completed_successfully
+        required: false
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8765/health"]
       interval: 30s
@@ -55,5 +70,38 @@ services:
       retries: 3
     restart: unless-stopped
 
+  ollama:
+    image: ollama/ollama:latest
+    container_name: cems-ollama
+    profiles: ["private"]
+    volumes:
+      - ollama_data:/root/.ollama
+    expose:
+      - "11434"
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+    restart: unless-stopped
+
+  ollama-pull:
+    image: ollama/ollama:latest
+    container_name: cems-ollama-pull
+    profiles: ["private"]
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >
+        ollama pull ${CEMS_LLM_MODEL:-gemma4:e4b} &&
+        ollama pull ${CEMS_EMBEDDING_MODEL:-embeddinggemma} &&
+        [ -z "${CEMS_AGENTIC_MODEL_PULL:-}" ] || ollama pull ${CEMS_AGENTIC_MODEL_PULL}
+    depends_on:
+      ollama:
+        condition: service_healthy
+    restart: "no"
+
 volumes:
   postgres_data:
+  ollama_data:

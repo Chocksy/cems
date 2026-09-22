@@ -1,0 +1,12 @@
+# GPU override for CEMS private mode. Use together with docker-compose.yml:
+#   docker compose --profile private -f docker-compose.yml -f docker-compose.gpu.yml up -d
+# Needs the NVIDIA Container Toolkit on the host.
+services:
+  ollama:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

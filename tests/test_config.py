@@ -142,6 +142,15 @@ class TestProviderConfig:
         cfg = CEMSConfig()
         assert cfg.resolved_llm_api_key() == "sk-or-x"
 
+    @patch.dict(
+        os.environ,
+        {"CEMS_EMBEDDING_BASE_URL": "", "CEMS_LLM_API_KEY": "", "OPENROUTER_API_KEY": "k"},
+    )
+    def test_empty_env_values_mean_unset(self):
+        cfg = CEMSConfig()
+        assert cfg.resolved_embedding_base_url() == "https://openrouter.ai/api/v1"
+        assert cfg.resolved_llm_api_key() == "k"
+
     def test_llamacpp_fields_are_gone(self):
         assert not hasattr(CEMSConfig(), "embedding_backend")
         assert not hasattr(CEMSConfig(), "llamacpp_base_url")
