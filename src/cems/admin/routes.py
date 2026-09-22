@@ -320,12 +320,20 @@ async def debug_config(request: Request) -> JSONResponse:
     if err := require_admin_auth(request):
         return err
 
-    # Check which LLM-related env vars are set (values masked for security)
-    # Note: Only OPENROUTER_API_KEY is required - it handles both LLM and embeddings
+    # Report whether a key resolved, never the key itself. Any OpenAI-compatible
+    # provider works, so CEMS_LLM_API_KEY and OPENROUTER_API_KEY are both valid.
+    from cems.config import CEMSConfig
+
+    cfg = CEMSConfig()
     env_check = {
-        "OPENROUTER_API_KEY": "set" if os.environ.get("OPENROUTER_API_KEY") else "NOT SET (required)",
-        "CEMS_EMBEDDING_MODEL": os.environ.get("CEMS_EMBEDDING_MODEL", "openai/text-embedding-3-small (default)"),
-        "CEMS_LLM_MODEL": os.environ.get("CEMS_LLM_MODEL", "openai/gpt-4o-mini (default)"),
+        "LLM_API_KEY": (
+            "resolved"
+            if cfg.resolved_llm_api_key()
+            else "NOT SET (set CEMS_LLM_API_KEY, or OPENROUTER_API_KEY when using OpenRouter)"
+        ),
+        "CEMS_LLM_BASE_URL": cfg.llm_base_url,
+        "CEMS_EMBEDDING_MODEL": cfg.embedding_model,
+        "CEMS_LLM_MODEL": cfg.llm_model,
         "VECTOR_STORE": "pgvector (unified PostgreSQL)",
         # Legacy env vars (no longer required)
         "OPENAI_API_KEY": "set (legacy)" if os.environ.get("OPENAI_API_KEY") else "not set (not required)",
