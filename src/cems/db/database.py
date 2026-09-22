@@ -42,6 +42,12 @@ def get_embedding_column_dimension(db: "Database") -> int | None:
     pgvector stores the declared dimension in pg_attribute.atttypmod; -1 means
     the column is unconstrained.
     """
+    # pgvector writes the declared dimension straight into atttypmod — its
+    # vector_typmod_in (pgvector src/vector.c) returns the dimension itself, with
+    # none of the +VARHDRSZ offset that varchar/numeric typmods carry. So
+    # atttypmod IS the N in vector(N), and -1 means no dimension was declared.
+    # The relname lookup is scoped to current_schema() so a same-named table in
+    # another schema on the search_path cannot be picked instead.
     with db.sync_engine.connect() as conn:
         row = conn.execute(
             text(
@@ -49,7 +55,10 @@ def get_embedding_column_dimension(db: "Database") -> int | None:
                 SELECT a.atttypmod
                 FROM pg_attribute a
                 JOIN pg_class c ON c.oid = a.attrelid
-                WHERE c.relname = 'memory_chunks' AND a.attname = 'embedding'
+                JOIN pg_namespace n ON n.oid = c.relnamespace
+                WHERE c.relname = 'memory_chunks'
+                  AND a.attname = 'embedding'
+                  AND n.nspname = current_schema()
                 """
             )
         ).fetchone()
