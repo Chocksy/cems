@@ -96,7 +96,7 @@ services:
       - >
         ollama pull ${CEMS_LLM_MODEL:-gemma4:e4b} &&
         ollama pull ${CEMS_EMBEDDING_MODEL:-embeddinggemma} &&
-        [ -z "${CEMS_AGENTIC_MODEL_PULL:-}" ] || ollama pull ${CEMS_AGENTIC_MODEL_PULL}
+        if [ -n "${CEMS_AGENTIC_MODEL_PULL:-}" ]; then ollama pull "${CEMS_AGENTIC_MODEL_PULL:-}"; fi
     depends_on:
       ollama:
         condition: service_healthy
