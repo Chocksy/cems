@@ -58,14 +58,8 @@ OPENROUTER_API_KEY=sk-or-your-key   # or use --private, see docs
 CEMS_ADMIN_KEY=cems_admin_random_string
 EOF
 
-# Start
+# Start (schema migrations run automatically at server start)
 docker compose up -d
-
-# Run migrations
-for f in migrate_docs_schema.sql migrate_soft_delete_feedback.sql migrate_conflicts.sql; do
-  curl -fsSL "https://raw.githubusercontent.com/chocksy/cems/main/scripts/$f" | \
-    docker exec -i cems-postgres psql -U cems cems
-done
 ```
 
 > Want nothing to leave your network? `bash install-server.sh --private --yes` runs the whole pipeline on local models. See [Private mode](docs/DEPLOYMENT.md#private-mode).

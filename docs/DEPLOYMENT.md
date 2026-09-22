@@ -62,24 +62,11 @@ cp deploy/.env.example .env
 docker compose up -d postgres cems-server
 ```
 
-### Run migrations
+### Migrations
 
-After starting the server (either option), run these once:
-
-**If you cloned the repo:**
-```bash
-docker exec -i cems-postgres psql -U cems cems < scripts/migrate_docs_schema.sql
-docker exec -i cems-postgres psql -U cems cems < scripts/migrate_soft_delete_feedback.sql
-docker exec -i cems-postgres psql -U cems cems < scripts/migrate_conflicts.sql
-```
-
-**If using Docker Hub image (no clone):**
-```bash
-for f in migrate_docs_schema.sql migrate_soft_delete_feedback.sql migrate_conflicts.sql; do
-  curl -fsSL "https://raw.githubusercontent.com/chocksy/cems/main/scripts/$f" | \
-    docker exec -i cems-postgres psql -U cems cems
-done
-```
+Nothing to run. The server applies every schema migration at start, sizing the
+embedding column from `CEMS_EMBEDDING_DIMENSION`. The `scripts/*.sql` files are
+legacy references that hard-code 1536 dimensions. Do not apply them by hand.
 
 ### Create users
 
@@ -452,21 +439,16 @@ spec:
               service: { name: cems-server, port: { number: 8765 } }
 ```
 
-### 6. Apply and run migrations
+### 6. Apply
 
 ```bash
 kubectl apply -f k8s/
 
 # Wait for ready
 kubectl -n cems wait --for=condition=ready pod -l app=postgres --timeout=120s
-
-# Run migrations
-PG=$(kubectl -n cems get pod -l app=postgres -o jsonpath='{.items[0].metadata.name}')
-for f in scripts/migrate_docs_schema.sql scripts/migrate_soft_delete_feedback.sql scripts/migrate_conflicts.sql; do
-  kubectl -n cems cp $f $PG:/tmp/$(basename $f)
-  kubectl -n cems exec $PG -- psql -U cems cems -f /tmp/$(basename $f)
-done
 ```
+
+The cems-server pod runs schema migrations itself at start. No psql step.
 
 Then create users the same way as Docker Compose (port-forward or use ingress URL).
 

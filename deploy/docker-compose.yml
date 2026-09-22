@@ -7,13 +7,8 @@
 #   cp .env.private-cpu.example .env   # or .env.private-gpu.example
 #   docker compose --profile private up -d
 #
-# Then run migrations:
-#   docker exec -i cems-postgres psql -U cems cems < init.sql is auto-loaded
-#   # Download and apply migrations:
-#   for f in migrate_docs_schema.sql migrate_soft_delete_feedback.sql migrate_conflicts.sql; do
-#     curl -fsSL "https://raw.githubusercontent.com/chocksy/cems/main/scripts/$f" | \
-#       docker exec -i cems-postgres psql -U cems cems
-#   done
+# Schema migrations run automatically when cems-server starts.
+# scripts/init.sql is a legacy reference file. It is NOT mounted or applied.
 
 services:
   postgres:

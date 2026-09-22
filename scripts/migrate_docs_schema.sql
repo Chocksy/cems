@@ -1,3 +1,13 @@
+-- LEGACY. Do not run this by hand.
+--
+-- CEMS applies its schema at server start through run_migrations() in
+-- src/cems/db/database.py (migration "core_memory_tables_v1"), which sizes the
+-- embedding column from CEMS_EMBEDDING_DIMENSION. This file hard-codes
+-- vector(1536) and is therefore only valid on 1536-dim installs. Running it on
+-- a private-mode box (768-dim local embeddings) creates a mismatched table.
+--
+-- Kept for reference only.
+--
 -- CEMS Document + Chunks Schema Migration
 -- This migration creates the new document-centric storage model:
 -- - memory_documents: Holds the full document metadata (deduplicated by content_hash)
@@ -8,7 +18,7 @@
 -- - Better recall: Search returns relevant chunks, not entire documents
 -- - Deduplication: Same content won't be stored twice
 --
--- Run: psql -d cems -f scripts/migrate_docs_schema.sql
+-- Applied automatically by run_migrations(); no manual psql step is needed.
 
 -- =============================================================================
 -- MEMORY DOCUMENTS TABLE
