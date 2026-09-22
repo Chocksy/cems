@@ -23,7 +23,7 @@ Deploy CEMS for your team. The server runs in Docker, developers install the CLI
 ## Prerequisites
 
 - Docker and Docker Compose
-- [OpenRouter API key](https://openrouter.ai/keys)
+- [OpenRouter API key](https://openrouter.ai/keys), or local models instead (see [Private mode](#private-mode))
 
 ---
 
@@ -36,7 +36,7 @@ No git clone needed. Just create two files:
 **`.env`**
 ```bash
 POSTGRES_PASSWORD=your_secure_password
-OPENROUTER_API_KEY=sk-or-your-key
+OPENROUTER_API_KEY=sk-or-your-key   # or run local models, see Private mode
 CEMS_ADMIN_KEY=cems_admin_random_string_here
 ```
 
@@ -188,6 +188,95 @@ cems update
 ```
 
 This runs `uv tool install cems --force` and re-deploys hooks.
+
+---
+
+## Private mode
+
+Private mode runs the whole memory pipeline on models you control. Memories always live in your PostgreSQL. Private mode moves the model calls too.
+
+### What leaves your network
+
+| | Default (OpenRouter) | Private cloud (Bedrock, Azure, Vertex via a gateway) | Private mode (Ollama) |
+|---|---|---|---|
+| Memories, embeddings at rest | Your Postgres | Your Postgres | Your Postgres |
+| Extraction, consolidation, lint | OpenRouter, then the model vendor | Your cloud account | This box |
+| Embedding calls | OpenRouter (OpenAI model) | Your cloud account | This box |
+| Recall-time query synthesis, agentic search | OpenRouter | Your cloud account | This box (GPU preset) or off (CPU preset) |
+| Your coding agent (Claude Code, Cursor, Codex) | Its vendor | Its vendor, or your cloud if the agent supports it | Its vendor, or a local model if the agent supports it |
+
+CEMS does not change what your coding agent sends to its vendor. See [Running your agent privately](CLIENT.md#running-your-agent-privately).
+
+### Three commands
+
+```bash
+curl -fsSL https://getcems.com/install-server.sh -o install-server.sh
+bash install-server.sh --private --yes        # or --private-gpu
+cems admin --admin-key <printed key> users create alice
+```
+
+The first boot pulls `gemma4:e4b` and `embeddinggemma` (about 6 GB). The health wait covers that.
+
+Installer flags:
+
+| Flag | Effect |
+|------|--------|
+| `--private` | CPU preset (`deploy/.env.private-cpu.example`) |
+| `--private-gpu` | GPU preset plus the NVIDIA compose override |
+| `--openrouter-key <key>` | Key for default mode. Also read from `OPENROUTER_API_KEY` |
+| `--dir <path>` | Install directory, default `/opt/cems` |
+| `--yes` | Skip the confirmation prompt |
+| `--dry-run` | Print the commands, change nothing |
+
+The installer generates `POSTGRES_PASSWORD` and `CEMS_ADMIN_KEY`, writes them to `<dir>/deploy/.env` with mode 600, and prints the admin key once. An existing `.env` is kept as is.
+
+Without the installer, the same thing by hand:
+
+```bash
+cp deploy/.env.private-cpu.example .env
+docker compose --profile private up -d
+# GPU preset:
+cp deploy/.env.private-gpu.example .env
+docker compose --profile private -f docker-compose.yml -f docker-compose.gpu.yml up -d
+```
+
+The GPU override needs the NVIDIA Container Toolkit on the host.
+
+### Cloud-init (boot a ready server)
+
+Paste one of these into the user-data field when creating the VM. The box installs Docker, starts CEMS in private mode, and is ready on port 8765.
+
+- [AWS EC2](../deploy/cloud-init/aws.yaml)
+- [Hetzner Cloud](../deploy/cloud-init/hetzner.yaml)
+- [DigitalOcean](../deploy/cloud-init/digitalocean.yaml)
+
+Read the admin key afterwards from `/opt/cems/deploy/.env`.
+
+### Network exposure
+
+The cloud-init snippets open port 8765: Hetzner and DigitalOcean run `ufw allow 8765/tcp`, AWS expects you to open it in the instance security group. CEMS authenticates every request with the admin key or a user API key, but it serves plain HTTP. Put a TLS reverse proxy (Caddy, or your load balancer) in front of it for anything beyond a private network or Tailscale.
+
+### Hardware and cost
+
+| Tier | Example box | What runs | Approx. monthly |
+|---|---|---|---|
+| CPU | Hetzner CX33 (4 vCPU, 8 GB) or CX43 (8 vCPU, 16 GB) | Extraction, consolidation, embeddings. Plain hybrid recall | EUR 8.49 or EUR 15.99 [^prices] |
+| GPU, single card | AWS g6.xlarge (1 NVIDIA L4, 24 GB VRAM) | Everything on, `qwen3.8:27b`, 256K context | USD 0.8048 per hour, about USD 588 [^prices] |
+| GPU, large | Hetzner GEX131 (RTX PRO 6000, 96 GB) or AWS p4d.24xlarge | Everything on, 1M-context model | EUR 1,199 plus EUR 599 setup, or USD 21.96 per hour [^prices] |
+
+A 20 GB card (Hetzner GEX44, RTX 4000 SFF Ada) also runs the GPU preset if you cap the context: set `OLLAMA_CONTEXT_LENGTH=32768` on the `ollama` service, or pick a smaller model. `qwen3.8:27b` is about 18 GB of weights, so its full 256K context wants about 24 GB.
+
+[^prices]: List prices checked 2026-09-22: [Hetzner Cloud](https://www.hetzner.com/cloud/), [Hetzner GEX131](https://www.hetzner.com/dedicated-rootserver/gex131/), [AWS EC2 on-demand](https://aws.amazon.com/ec2/pricing/on-demand/) (g6.xlarge and p4d.24xlarge, us-east-1). Hetzner raised cloud prices on 15 June 2026, so check before you budget.
+
+### Limits
+
+- The embedding dimension is fixed when the database is first created. Switching from OpenRouter (1536) to Ollama (768) needs a fresh database; the server refuses to start otherwise with `Embedding dimension mismatch`.
+- Ollama downloads models from the internet on first boot. After that the box needs no outbound access for CEMS to work.
+- The CPU preset turns off query synthesis, preference synthesis, query decomposition and agentic search. Set the `CEMS_ENABLE_*` variables to `true` to turn them back on if the box can take it.
+
+### Bring your own endpoint
+
+Any OpenAI-compatible server works without the Ollama profile. Set `CEMS_LLM_BASE_URL`, `CEMS_LLM_API_KEY`, `CEMS_LLM_MODEL`, `CEMS_EMBEDDING_MODEL` and `CEMS_EMBEDDING_DIMENSION` in `.env` and run `docker compose up -d`. For Bedrock or Azure OpenAI put a [LiteLLM proxy](https://docs.litellm.ai/docs/simple_proxy) in front and point CEMS at it.
 
 ---
 
@@ -390,7 +479,6 @@ Then create users the same way as Docker Compose (port-forward or use ingress UR
 | Variable | Description |
 |----------|-------------|
 | `POSTGRES_PASSWORD` | PostgreSQL password |
-| `OPENROUTER_API_KEY` | OpenRouter API key |
 | `CEMS_ADMIN_KEY` | Admin key for `/admin/*` endpoints |
 
 ### Optional
@@ -401,8 +489,14 @@ Then create users the same way as Docker Compose (port-forward or use ingress UR
 | `CEMS_SERVER_PORT` | `8765` | Server port |
 | `CEMS_LLM_MODEL` | `qwen/qwen3-32b` | LLM for maintenance jobs (lint, consolidation, compilation). Any [OpenRouter model](https://openrouter.ai/models) |
 | `CEMS_AGENTIC_MODEL` | `google/gemini-2.5-flash-lite` | LLM for agentic search agents. Needs 1M+ context — agents receive the full memory dump |
-| `CEMS_EMBEDDING_BACKEND` | `openrouter` | Embedding provider |
-| `CEMS_EMBEDDING_DIMENSION` | `1536` | Vector dimension |
+| `OPENROUTER_API_KEY` | none | Required only when using OpenRouter (the default). Fallback for `CEMS_LLM_API_KEY` |
+| `CEMS_LLM_BASE_URL` | `https://openrouter.ai/api/v1` | Any OpenAI-compatible chat endpoint (Ollama, vLLM, LiteLLM, Azure OpenAI) |
+| `CEMS_LLM_API_KEY` | `OPENROUTER_API_KEY` | Key for the LLM endpoint. Ollama ignores it but needs a value |
+| `CEMS_EMBEDDING_BASE_URL` | same as LLM | Separate embeddings endpoint if needed |
+| `CEMS_EMBEDDING_API_KEY` | same as LLM | Key for the embeddings endpoint |
+| `CEMS_EMBEDDING_MODEL` | `openai/text-embedding-3-small` | Embedding model |
+| `CEMS_EMBEDDING_DIMENSION` | `1536` | Must match the model. Fixed at first boot, see [Private mode](#private-mode) |
+| `CEMS_ENABLE_AGENTIC_SEARCH` | `true` | Allow `mode=agentic` search. Needs a long-context model |
 | `CEMS_RERANKER_BACKEND` | `disabled` | Reranker (keep disabled) |
 | `CEMS_NIGHTLY_HOUR` | `3` | Consolidation hour (UTC) |
 | `CEMS_WEEKLY_DAY` | `sun` | Summarization day |

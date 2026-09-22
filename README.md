@@ -54,7 +54,7 @@ curl -fsSLO https://raw.githubusercontent.com/chocksy/cems/main/deploy/docker-co
 # Create .env
 cat > .env << 'EOF'
 POSTGRES_PASSWORD=your_secure_password
-OPENROUTER_API_KEY=sk-or-your-key
+OPENROUTER_API_KEY=sk-or-your-key   # or use --private, see docs
 CEMS_ADMIN_KEY=cems_admin_random_string
 EOF
 
@@ -67,6 +67,8 @@ for f in migrate_docs_schema.sql migrate_soft_delete_feedback.sql migrate_confli
     docker exec -i cems-postgres psql -U cems cems
 done
 ```
+
+> Want nothing to leave your network? `bash install-server.sh --private --yes` runs the whole pipeline on local models. See [Private mode](docs/DEPLOYMENT.md#private-mode).
 
 ### 2. Create users
 
@@ -92,6 +94,7 @@ Prompts for server URL and API key, then configures your IDE. Done.
 | Doc | What's inside |
 |-----|---------------|
 | **[Deployment Guide](docs/DEPLOYMENT.md)** | Docker Compose, Kubernetes, env vars, backups, production checklist |
+| **[Private mode](docs/DEPLOYMENT.md#private-mode)** | Run the whole pipeline on local models: installer, cloud-init, hardware, cost |
 | **[Client Setup](docs/CLIENT.md)** | Install options, CLI commands, skills, hooks, updating, troubleshooting |
 | **[Architecture](docs/ARCHITECTURE.md)** | Storage, search pipeline, maintenance, observer daemon, MCP |
 | **[API Reference](docs/API.md)** | All REST endpoints with examples |

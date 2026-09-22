@@ -204,3 +204,22 @@ No manual steps needed. Memories build up and improve over time.
 ```bash
 cems setup    # Re-runs the full setup
 ```
+
+---
+
+## Running your agent privately
+
+CEMS keeps memories on your server. Whether your coding agent sends code to its vendor depends on the agent. Verified from each vendor's docs on 2026-09-22:
+
+| Agent | CEMS integration | Open-weight / local model | Bedrock, Azure, Vertex |
+|---|---|---|---|
+| Claude Code | Tested (hooks + MCP) | No | Yes |
+| Cursor | Tested (MCP) | No | Bedrock and Azure keys only |
+| Codex CLI | Tested (MCP) | Yes (`--oss`, Ollama) | Bedrock, Azure |
+| Goose | Tested (MCP) | Yes | Yes |
+| OpenCode | MCP, untested | Yes | Yes |
+| Aider, Cline, Continue, Roo Code, Kilo Code | MCP, untested | Yes | Yes |
+
+Links: [Claude Code](https://code.claude.com/docs/en/third-party-integrations), [Codex](https://learn.chatgpt.com/docs/config-file/config-advanced), [Cursor](https://cursor.com/help/models-and-usage/api-keys), [Goose](https://goose-docs.ai/docs/getting-started/providers/), [OpenCode](https://opencode.ai/docs/providers/), [Aider](https://aider.chat/docs/llms.html), [Cline](https://docs.cline.bot/provider-config/openai-compatible), [Continue](https://docs.continue.dev/customize/model-providers/overview), [Roo Code](https://docs.roocode.com/providers), [Kilo Code](https://kilo.ai/docs/ai-providers).
+
+To run the CEMS side privately too, see [Private mode](DEPLOYMENT.md#private-mode).
