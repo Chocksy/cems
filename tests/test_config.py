@@ -3,10 +3,9 @@
 import os
 import tempfile
 from pathlib import Path
+from unittest.mock import patch
 
-import pytest
-
-from cems.config import CEMSConfig
+from cems.config import CEMSConfig, is_openrouter_host
 
 
 class TestCEMSConfig:
@@ -91,3 +90,63 @@ class TestCEMSConfig:
         # Test custom value
         config = CEMSConfig(relevance_threshold=0.7)
         assert config.relevance_threshold == 0.7
+
+
+class TestProviderConfig:
+    """Tests for the generic OpenAI-compatible provider settings."""
+
+    @patch.dict(os.environ, {"OPENROUTER_API_KEY": "sk-or-x"}, clear=False)
+    def test_defaults_point_at_openrouter(self):
+        cfg = CEMSConfig()
+        assert cfg.llm_base_url == "https://openrouter.ai/api/v1"
+        assert cfg.resolved_llm_api_key() == "sk-or-x"
+        assert cfg.resolved_embedding_base_url() == "https://openrouter.ai/api/v1"
+        assert cfg.resolved_embedding_api_key() == "sk-or-x"
+        assert cfg.embedding_dimension == 1536
+        assert cfg.enable_agentic_search is True
+
+    @patch.dict(
+        os.environ,
+        {
+            "CEMS_LLM_BASE_URL": "http://ollama:11434/v1",
+            "CEMS_LLM_API_KEY": "ollama",
+            "CEMS_EMBEDDING_DIMENSION": "768",
+        },
+        clear=False,
+    )
+    def test_custom_endpoint_falls_through_to_embeddings(self):
+        cfg = CEMSConfig()
+        assert cfg.llm_base_url == "http://ollama:11434/v1"
+        assert cfg.resolved_llm_api_key() == "ollama"
+        assert cfg.resolved_embedding_base_url() == "http://ollama:11434/v1"
+        assert cfg.resolved_embedding_api_key() == "ollama"
+        assert cfg.embedding_dimension == 768
+
+    @patch.dict(
+        os.environ,
+        {
+            "CEMS_LLM_BASE_URL": "http://ollama:11434/v1",
+            "CEMS_LLM_API_KEY": "ollama",
+            "CEMS_EMBEDDING_BASE_URL": "https://api.openai.com/v1",
+            "CEMS_EMBEDDING_API_KEY": "sk-openai",
+        },
+        clear=False,
+    )
+    def test_embedding_endpoint_overrides_independently(self):
+        cfg = CEMSConfig()
+        assert cfg.resolved_embedding_base_url() == "https://api.openai.com/v1"
+        assert cfg.resolved_embedding_api_key() == "sk-openai"
+
+    @patch.dict(os.environ, {"CEMS_LLM_API_KEY": "", "OPENROUTER_API_KEY": "sk-or-x"}, clear=False)
+    def test_empty_llm_api_key_falls_back_to_openrouter_key(self):
+        cfg = CEMSConfig()
+        assert cfg.resolved_llm_api_key() == "sk-or-x"
+
+    def test_llamacpp_fields_are_gone(self):
+        assert not hasattr(CEMSConfig(), "embedding_backend")
+        assert not hasattr(CEMSConfig(), "llamacpp_base_url")
+
+    def test_is_openrouter_host(self):
+        assert is_openrouter_host("https://openrouter.ai/api/v1")
+        assert not is_openrouter_host("http://ollama:11434/v1")
+        assert not is_openrouter_host("https://api.openai.com/v1")

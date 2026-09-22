@@ -6,20 +6,23 @@ Environment Variables for CLI (client mode):
     - CEMS_ADMIN_KEY: Admin key for user management (optional)
 
 Environment Variables for Server:
-    - OPENROUTER_API_KEY: Required for all LLM and embedding operations
+    - OPENROUTER_API_KEY: Fallback API key when CEMS_LLM_API_KEY is unset
     - CEMS_DATABASE_URL: PostgreSQL connection URL for user management
 
-    Optional model configuration:
+    Optional model provider configuration (any OpenAI-compatible endpoint):
+    - CEMS_LLM_BASE_URL: Chat completions base URL (default: https://openrouter.ai/api/v1)
+    - CEMS_LLM_API_KEY: API key for the LLM endpoint
+    - CEMS_LLM_MODEL: Model for maintenance (default: qwen/qwen3-32b)
+    - CEMS_EMBEDDING_BASE_URL: Embeddings base URL (defaults to CEMS_LLM_BASE_URL)
+    - CEMS_EMBEDDING_API_KEY: API key for embeddings (defaults to the LLM key)
     - CEMS_EMBEDDING_MODEL: Embedding model (default: openai/text-embedding-3-small)
-    - CEMS_LLM_MODEL: Model for maintenance (default: x-ai/grok-4.1-fast)
-
-    OpenRouter provides both LLM and embedding APIs:
-    - LLM: https://openrouter.ai/api/v1/chat/completions
-    - Embeddings: https://openrouter.ai/api/v1/embeddings
+    - CEMS_EMBEDDING_DIMENSION: Vector dimension (default: 1536)
+    - CEMS_ENABLE_AGENTIC_SEARCH: Allow mode=agentic search (default: true)
 """
 
+import os
 from pathlib import Path
-from typing import Literal
+from urllib.parse import urlparse
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -70,63 +73,54 @@ class CEMSConfig(BaseSettings):
     )
 
     # =========================================================================
-    # LLM Settings - Single API Key via OpenRouter
+    # Model Provider Settings
     # =========================================================================
-    # All LLM and embedding operations use OPENROUTER_API_KEY.
-    # OpenRouter provides both chat completions AND embeddings APIs.
-    #
-    # Required env vars:
-    #   - OPENROUTER_API_KEY: For all operations (LLM + embeddings)
-    #
-    # Model names use OpenRouter format: provider/model
-    embedding_model: str = Field(
-        default="openai/text-embedding-3-small",
-        description="Embedding model (via OpenRouter)",
+    # Any OpenAI-compatible endpoint works: OpenRouter (default), Ollama,
+    # vLLM, LiteLLM, Azure OpenAI. Embeddings default to the LLM endpoint.
+    llm_base_url: str = Field(
+        default="https://openrouter.ai/api/v1",
+        description="OpenAI-compatible base URL for chat completions",
+    )
+    llm_api_key: str | None = Field(
+        default=None,
+        description="API key for the LLM endpoint. Falls back to OPENROUTER_API_KEY",
     )
     llm_model: str = Field(
-        default="openai/gpt-4o-mini",
-        description="Model for maintenance ops (OpenRouter format: provider/model)",
+        default="qwen/qwen3-32b",
+        description="Model for maintenance ops (provider/model on OpenRouter, plain name elsewhere)",
     )
-
-    # =========================================================================
-    # Embedding Backend Settings
-    # =========================================================================
-    # Choose between llama.cpp server (768-dim) or OpenRouter API (1536-dim)
-    # Strategy A: Single embedding column at configured dimension
-    embedding_backend: Literal["openrouter", "llamacpp_server"] = Field(
-        default="openrouter",
-        description="Embedding backend: openrouter (1536-dim API) or llamacpp_server (768-dim)",
+    embedding_base_url: str | None = Field(
+        default=None,
+        description="OpenAI-compatible base URL for embeddings. Defaults to llm_base_url",
+    )
+    embedding_api_key: str | None = Field(
+        default=None,
+        description="API key for the embeddings endpoint. Defaults to the LLM key",
+    )
+    embedding_model: str = Field(
+        default="openai/text-embedding-3-small",
+        description="Embedding model name",
     )
     embedding_dimension: int = Field(
         default=1536,
-        description="Embedding dimension (1536 for OpenRouter, 768 for llama.cpp server)",
+        description="Vector dimension. Must match the embedding model and the database column",
+    )
+    enable_agentic_search: bool = Field(
+        default=True,
+        description="Allow mode=agentic search (needs a long-context model)",
     )
 
-    # =========================================================================
-    # llama.cpp Server Settings
-    # =========================================================================
-    # These settings are used when embedding_backend="llamacpp_server"
-    # Run separate llama.cpp servers for embeddings and reranking
-    llamacpp_base_url: str = Field(
-        default="http://localhost:8081",
-        description="Base URL for llama.cpp embedding server",
-    )
-    llamacpp_embed_model: str = Field(
-        default="embeddinggemma-300M-Q8_0.gguf",
-        description="Model name for embeddings (passed to server)",
-    )
-    llamacpp_embed_path: str = Field(
-        default="/v1/embeddings",
-        description="Endpoint path for embeddings (OpenAI-compatible)",
-    )
-    llamacpp_api_key: str | None = Field(
-        default=None,
-        description="API key for llama.cpp server (if required)",
-    )
-    llamacpp_timeout_seconds: int = Field(
-        default=60,
-        description="Timeout for llama.cpp server requests (increased for batch operations)",
-    )
+    def resolved_llm_api_key(self) -> str | None:
+        """API key for the LLM endpoint, falling back to OPENROUTER_API_KEY."""
+        return self.llm_api_key or os.getenv("OPENROUTER_API_KEY")
+
+    def resolved_embedding_base_url(self) -> str:
+        """Embeddings base URL, defaulting to the LLM endpoint."""
+        return self.embedding_base_url or self.llm_base_url
+
+    def resolved_embedding_api_key(self) -> str | None:
+        """API key for embeddings, defaulting to the LLM key."""
+        return self.embedding_api_key or self.resolved_llm_api_key()
 
     # =========================================================================
     # Vector Store Settings (pgvector - unified with PostgreSQL)
@@ -302,3 +296,7 @@ class CEMSConfig(BaseSettings):
         description="Admin API key for user management. Required for /admin/* endpoints.",
     )
 
+
+def is_openrouter_host(url: str) -> bool:
+    """True when the endpoint is OpenRouter (enables OpenRouter-only extras)."""
+    return urlparse(url).hostname == "openrouter.ai"
