@@ -48,7 +48,9 @@ say() { printf "${GREEN}==>${NC} %s\n" "$*"; }
 err() { printf "${RED}%s${NC}\n" "$*" >&2; }
 run() {
   if [ "$DRY" = 1 ]; then
-    echo "[dry-run] $*"
+    printf '[dry-run]'
+    printf ' %q' "$@"
+    echo
   else
     "$@"
   fi
@@ -60,12 +62,22 @@ if [ "$MODE" = "default" ] && [ -z "$KEY" ]; then
 fi
 
 case "$MODE" in
-  cpu) PRESET=".env.private-cpu.example"; PROFILE="--profile private"; FILES="-f docker-compose.yml" ;;
-  gpu) PRESET=".env.private-gpu.example"; PROFILE="--profile private"; FILES="-f docker-compose.yml -f docker-compose.gpu.yml" ;;
-  *)   PRESET=".env.example";             PROFILE="";                  FILES="-f docker-compose.yml" ;;
+  cpu) PRESET=".env.private-cpu.example" ;;
+  gpu) PRESET=".env.private-gpu.example" ;;
+  *)   PRESET=".env.example" ;;
 esac
 
-say "Mode: $MODE — preset $PRESET, install dir $DIR"
+# Built as an array so every path stays a single quoted argument.
+COMPOSE=(docker compose)
+if [ "$MODE" != default ]; then
+  COMPOSE+=(--profile private)
+fi
+COMPOSE+=(-f "$DIR/deploy/docker-compose.yml")
+if [ "$MODE" = gpu ]; then
+  COMPOSE+=(-f "$DIR/deploy/docker-compose.gpu.yml")
+fi
+
+say "Mode: $MODE, preset $PRESET, install dir $DIR"
 
 if [ "$YES" = 0 ] && [ "$DRY" = 0 ]; then
   printf 'Install CEMS into %s? [y/N] ' "$DIR"
@@ -87,16 +99,18 @@ fi
 
 say "Preparing $DIR"
 run mkdir -p "$DIR/deploy"
-run sh -c "curl -fsSL $RAW/deploy/docker-compose.yml -o $DIR/deploy/docker-compose.yml"
+run curl -fsSL "$RAW/deploy/docker-compose.yml" -o "$DIR/deploy/docker-compose.yml"
 if [ "$MODE" = gpu ]; then
-  run sh -c "curl -fsSL $RAW/deploy/docker-compose.gpu.yml -o $DIR/deploy/docker-compose.gpu.yml"
+  run curl -fsSL "$RAW/deploy/docker-compose.gpu.yml" -o "$DIR/deploy/docker-compose.gpu.yml"
 fi
 
 if [ -f "$DIR/deploy/.env" ]; then
   say "Keeping existing $DIR/deploy/.env"
 else
   say "Writing .env from $PRESET"
-  run sh -c "curl -fsSL $RAW/deploy/$PRESET -o $DIR/deploy/.env"
+  run curl -fsSL "$RAW/deploy/$PRESET" -o "$DIR/deploy/.env"
+  # The .env holds the DB password and the admin key: owner-only before anything is written into it.
+  run chmod 600 "$DIR/deploy/.env"
   if [ "$DRY" = 1 ]; then
     PG="<generated>"; ADMIN="cems_admin_<generated>"
   else
@@ -110,7 +124,7 @@ else
 fi
 
 say "Starting CEMS"
-run sh -c "cd $DIR/deploy && docker compose $PROFILE $FILES up -d"
+run "${COMPOSE[@]}" up -d
 
 if [ "$DRY" = 0 ]; then
   say "Waiting for /health (first boot pulls models, this can take several minutes)"
