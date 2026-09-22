@@ -1,0 +1,9 @@
+#cloud-config
+# Hetzner Cloud: paste into "Cloud config" when creating a server (Ubuntu 24.04).
+# Or: hcloud server create --user-data-from-file hetzner.yaml ...
+package_update: true
+packages: [curl, openssl]
+runcmd:
+  - ufw allow 8765/tcp
+  - curl -fsSL https://getcems.com/install-server.sh -o /root/install-server.sh
+  - bash /root/install-server.sh --private --yes

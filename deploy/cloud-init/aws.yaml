@@ -1,0 +1,9 @@
+#cloud-config
+# AWS EC2: paste into "User data" under Advanced details (Ubuntu 24.04 AMI).
+# Or: aws ec2 run-instances --user-data file://aws.yaml ...
+# Port 8765 is opened by the instance security group, not by ufw.
+package_update: true
+packages: [curl, openssl]
+runcmd:
+  - curl -fsSL https://getcems.com/install-server.sh -o /root/install-server.sh
+  - bash /root/install-server.sh --private --yes

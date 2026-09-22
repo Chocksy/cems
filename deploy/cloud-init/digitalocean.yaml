@@ -1,0 +1,9 @@
+#cloud-config
+# DigitalOcean: paste into "User data" under Advanced Options (Ubuntu 24.04).
+# Or: doctl compute droplet create --user-data-file digitalocean.yaml ...
+package_update: true
+packages: [curl, openssl]
+runcmd:
+  - ufw allow 8765/tcp
+  - curl -fsSL https://getcems.com/install-server.sh -o /root/install-server.sh
+  - bash /root/install-server.sh --private --yes
