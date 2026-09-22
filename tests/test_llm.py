@@ -107,8 +107,20 @@ class TestOpenRouterClient:
         assert client.is_openrouter is True
         assert mock_openai_class.call_args[1]["default_headers"]["X-Title"] == "CEMS Memory Server"
 
-        client.complete("hi")
+        client.complete("hi", fast_route=True)
         assert "extra_body" in mock_client.chat.completions.create.call_args[1]
+
+    @patch.dict(os.environ, {"OPENROUTER_API_KEY": "k", "CEMS_LLM_MODEL": "gpt-4o"})
+    @patch("cems.llm.client.OpenAI")
+    def test_env_model_is_picked_up_via_config(self, mock_openai_class):
+        """Test CEMS_LLM_MODEL reaches the client through CEMSConfig."""
+        from cems.llm import OpenRouterClient
+
+        mock_openai_class.return_value = MagicMock()
+
+        client = OpenRouterClient()
+
+        assert client.model == "openai/gpt-4o"
 
     @patch.dict(os.environ, {"CEMS_LLM_BASE_URL": "http://ollama:11434/v1"}, clear=True)
     def test_custom_base_url_still_requires_key(self):
