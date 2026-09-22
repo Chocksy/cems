@@ -145,6 +145,7 @@ class TestProviderConfig:
     @patch.dict(
         os.environ,
         {"CEMS_EMBEDDING_BASE_URL": "", "CEMS_LLM_API_KEY": "", "OPENROUTER_API_KEY": "k"},
+        clear=False,
     )
     def test_empty_env_values_mean_unset(self):
         cfg = CEMSConfig()
