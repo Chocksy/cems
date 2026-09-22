@@ -34,7 +34,22 @@ while [ $# -gt 0 ]; do
     --dir) need_value "$@"; DIR="$2"; shift ;;
     --yes|-y) YES=1 ;;
     --dry-run) DRY=1 ;;
-    -h|--help) sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help)
+      cat <<'USAGE'
+CEMS server installer.
+
+  curl -fsSL https://getcems.com/install-server.sh | bash -s -- --private --yes
+
+Flags:
+  --private          Private mode, CPU preset (Ollama on this box)
+  --private-gpu      Private mode, GPU preset (needs NVIDIA container toolkit)
+  --openrouter-key K Default mode key (or set OPENROUTER_API_KEY)
+  --dir PATH         Install directory (default /opt/cems)
+  --yes              No prompts
+  --dry-run          Print what would run, change nothing
+USAGE
+      exit 0
+      ;;
     *) echo "Unknown flag: $1" >&2; exit 2 ;;
   esac
   shift

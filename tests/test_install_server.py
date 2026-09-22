@@ -34,3 +34,16 @@ def test_private_gpu_adds_override_file():
     assert r.returncode == 0, r.stderr
     assert ".env.private-gpu.example" in r.stdout
     assert "docker-compose.gpu.yml" in r.stdout
+
+
+def test_help_works_when_piped_from_stdin():
+    """`curl ... | bash -s -- --help` has no $0 to read, so help must be inline."""
+    r = subprocess.run(
+        ["bash", "-s", "--", "--help"],
+        input=SCRIPT.read_text(),
+        capture_output=True,
+        text=True,
+    )
+    assert r.returncode == 0, r.stderr
+    assert "--private-gpu" in r.stdout
+    assert "--dry-run" in r.stdout
