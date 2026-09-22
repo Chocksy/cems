@@ -335,50 +335,45 @@ async def debug_config(request: Request) -> JSONResponse:
 
 
 async def debug_llm_test(request: Request) -> JSONResponse:
-    """Test LLM connectivity (admin only)."""
+    """Test LLM and embedding connectivity (admin only)."""
     if err := require_admin_auth(request):
         return err
 
-    import os
-    from openai import OpenAI
+    from cems.config import CEMSConfig
+    from cems.embedding import EmbeddingClient
+    from cems.llm.client import OpenRouterClient
 
+    cfg = CEMSConfig()
     results = {}
 
-    # Test OpenRouter LLM
-    openrouter_key = os.environ.get("OPENROUTER_API_KEY")
-    if openrouter_key:
-        client = OpenAI(
-            base_url="https://openrouter.ai/api/v1",
-            api_key=openrouter_key,
-        )
-        try:
-            response = client.chat.completions.create(
-                model="openai/gpt-4o-mini",
-                messages=[{"role": "user", "content": "Say 'OpenRouter OK' in 3 words"}],
-                max_tokens=20,
-            )
-            results["openrouter_llm"] = {
-                "status": "ok",
-                "response": response.choices[0].message.content,
-            }
-        except Exception as e:
-            results["openrouter_llm"] = {"status": "error", "error": str(e)}
+    try:
+        llm = OpenRouterClient()
+        text_out = llm.complete("Reply with the single word OK", max_tokens=5, fast_route=False)
+        results["llm"] = {
+            "ok": True,
+            "endpoint": llm.base_url,
+            "model": llm.model,
+            "response": text_out,
+        }
+    except Exception as e:
+        results["llm"] = {"ok": False, "endpoint": cfg.llm_base_url, "error": str(e)}
 
-        # Test OpenRouter Embeddings
-        try:
-            response = client.embeddings.create(
-                model="openai/text-embedding-3-small",
-                input="test embedding via openrouter",
-            )
-            results["openrouter_embeddings"] = {
-                "status": "ok",
-                "dimensions": len(response.data[0].embedding),
-            }
-        except Exception as e:
-            results["openrouter_embeddings"] = {"status": "error", "error": str(e)}
-    else:
-        results["openrouter_llm"] = {"status": "NOT CONFIGURED (required)"}
-        results["openrouter_embeddings"] = {"status": "NOT CONFIGURED (required)"}
+    try:
+        emb = EmbeddingClient()
+        vec = emb.embed("health check")
+        results["embeddings"] = {
+            "ok": len(vec) == cfg.embedding_dimension,
+            "endpoint": emb.embeddings_url,
+            "model": emb.model,
+            "dimension": len(vec),
+            "expected_dimension": cfg.embedding_dimension,
+        }
+    except Exception as e:
+        results["embeddings"] = {
+            "ok": False,
+            "endpoint": cfg.resolved_embedding_base_url(),
+            "error": str(e),
+        }
 
     return JSONResponse({"llm_tests": results})
 

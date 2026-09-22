@@ -422,6 +422,14 @@ async def api_memory_search(request: Request):
 
         # Agentic mode: LLM agents replace embeddings for retrieval
         if mode == "agentic":
+            if not memory.config.enable_agentic_search:
+                return JSONResponse(
+                    {
+                        "error": "agentic search disabled on this server "
+                        "(CEMS_ENABLE_AGENTIC_SEARCH=false)"
+                    },
+                    status_code=400,
+                )
             from cems.agentic.search import agentic_search_async
 
             doc_store = await memory._ensure_document_store()

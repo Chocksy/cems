@@ -29,6 +29,7 @@ def mock_memory():
     mock.config.relevance_threshold = 0.01
     mock.config.default_max_tokens = 2000
     mock.config.llm_model = "anthropic/claude-3-haiku"
+    mock.config.enable_agentic_search = True
     mock.graph_store = None
 
     # Set up async methods
@@ -204,6 +205,36 @@ class TestMemoryAPI:
             data = response.json()
             assert data["success"] is True
             assert len(data["results"]) == 1
+
+    @patch("cems.db.database.is_database_initialized", return_value=True)
+    @patch("cems.db.database.get_database")
+    @patch.object(memory_handlers, "get_memory")
+    def test_agentic_search_disabled_returns_400(
+        self, mock_get_memory, mock_db, mock_is_db, mock_memory, mock_user
+    ):
+        """Agentic search returns 400 when CEMS_ENABLE_AGENTIC_SEARCH is off."""
+        mock_memory.config.enable_agentic_search = False
+        mock_get_memory.return_value = mock_memory
+
+        mock_session = MagicMock()
+        mock_user_service = MagicMock()
+        mock_user_service.get_user_by_api_key.return_value = mock_user
+        mock_db.return_value.session.return_value.__enter__ = MagicMock(return_value=mock_session)
+        mock_db.return_value.session.return_value.__exit__ = MagicMock(return_value=False)
+
+        with patch("cems.admin.services.UserService", return_value=mock_user_service):
+            from cems.server import create_http_app
+            app = create_http_app()
+            client = TestClient(app)
+
+            response = client.post(
+                "/api/memory/search",
+                json={"query": "anything", "mode": "agentic"},
+                headers={"Authorization": "Bearer test-api-key"}
+            )
+
+            assert response.status_code == 400
+            assert "agentic search disabled" in response.json()["error"]
 
     @patch("cems.db.database.is_database_initialized", return_value=True)
     @patch("cems.db.database.get_database")
