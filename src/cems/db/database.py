@@ -18,6 +18,44 @@ logger = logging.getLogger(__name__)
 _database: "Database | None" = None
 
 
+def check_embedding_dimension(actual: int | None, expected: int) -> None:
+    """Abort startup when the pgvector column does not match config.
+
+    Args:
+        actual: Dimension of memory_chunks.embedding, or None on a fresh database.
+        expected: Dimension from CEMSConfig.embedding_dimension.
+
+    Raises:
+        RuntimeError: If the database column and the config disagree.
+    """
+    if actual is None or actual == expected:
+        return
+    raise RuntimeError(
+        f"Embedding dimension mismatch: database has {actual}, config has {expected}. "
+        "Private mode needs a fresh database. See docs/DEPLOYMENT.md#private-mode."
+    )
+
+
+def get_embedding_column_dimension(db: "Database") -> int | None:
+    """Read vector(N) from memory_chunks.embedding, or None if the table is missing.
+
+    pgvector stores the declared dimension in pg_attribute.atttypmod; -1 means
+    the column is unconstrained.
+    """
+    with db.sync_engine.connect() as conn:
+        row = conn.execute(
+            text(
+                """
+                SELECT a.atttypmod
+                FROM pg_attribute a
+                JOIN pg_class c ON c.oid = a.attrelid
+                WHERE c.relname = 'memory_chunks' AND a.attname = 'embedding'
+                """
+            )
+        ).fetchone()
+    return int(row[0]) if row and row[0] is not None and row[0] > 0 else None
+
+
 class Database:
     """Database connection manager supporting both sync and async operations."""
 
@@ -168,7 +206,15 @@ def run_migrations() -> None:
 
     This is called on server startup to ensure schema is up to date.
     """
+    from cems.config import CEMSConfig
+
     db = get_database()
+
+    # Refuse to boot against a database whose vector column has a different
+    # dimension than the configured embedder (e.g. private mode's 768-dim model
+    # against a 1536-dim cloud database).
+    dim = CEMSConfig().embedding_dimension
+    check_embedding_dimension(get_embedding_column_dimension(db), dim)
 
     migrations = [
         # =====================================================================
@@ -185,7 +231,7 @@ def run_migrations() -> None:
         # =====================================================================
         (
             "core_memory_tables_v1",
-            """
+            f"""
             -- Enable pgvector extension (required for embedding columns)
             CREATE EXTENSION IF NOT EXISTS vector;
 
@@ -198,7 +244,7 @@ def run_migrations() -> None:
                 title TEXT,
                 source TEXT,
                 source_ref TEXT,
-                tags TEXT[] DEFAULT '{}',
+                tags TEXT[] DEFAULT '{{}}',
                 content TEXT NOT NULL,
                 content_hash TEXT NOT NULL,
                 content_bytes INT NOT NULL,
@@ -224,7 +270,7 @@ def run_migrations() -> None:
                 seq INT NOT NULL,
                 pos INT NOT NULL,
                 content TEXT NOT NULL,
-                embedding vector(1536) NOT NULL,
+                embedding vector({dim}) NOT NULL,
                 tokens INT,
                 bytes INT,
                 created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
@@ -245,7 +291,7 @@ def run_migrations() -> None:
                 target_id UUID NOT NULL,
                 relation_type TEXT NOT NULL DEFAULT 'related',
                 weight FLOAT NOT NULL DEFAULT 1.0,
-                metadata JSONB DEFAULT '{}',
+                metadata JSONB DEFAULT '{{}}',
                 created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
                 CONSTRAINT no_self_relation CHECK (source_id != target_id)
             );
