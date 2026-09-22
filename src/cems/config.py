@@ -114,6 +114,10 @@ class CEMSConfig(BaseSettings):
         """API key for the LLM endpoint, falling back to OPENROUTER_API_KEY."""
         return self.llm_api_key or os.getenv("OPENROUTER_API_KEY")
 
+    def model_for(self, openrouter_default: str) -> str:
+        """Return the OpenRouter-specific model on OpenRouter hosts, else the configured llm_model."""
+        return openrouter_default if is_openrouter_host(self.llm_base_url) else self.llm_model
+
     def resolved_embedding_base_url(self) -> str:
         """Embeddings base URL, defaulting to the LLM endpoint."""
         return self.embedding_base_url or self.llm_base_url

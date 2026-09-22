@@ -160,3 +160,20 @@ class TestProviderConfig:
         assert is_openrouter_host("https://openrouter.ai/api/v1")
         assert not is_openrouter_host("http://ollama:11434/v1")
         assert not is_openrouter_host("https://api.openai.com/v1")
+
+
+class TestModelFor:
+    """model_for() keeps OpenRouter installs on their tuned models."""
+
+    def test_openrouter_host_returns_the_openrouter_default(self):
+        cfg = CEMSConfig(llm_base_url="https://openrouter.ai/api/v1", llm_model="qwen/qwen3-32b")
+        assert cfg.model_for("google/gemini-2.5-flash") == "google/gemini-2.5-flash"
+        assert cfg.model_for("google/gemini-2.5-flash-lite") == "google/gemini-2.5-flash-lite"
+
+    def test_local_host_returns_the_configured_llm_model(self):
+        cfg = CEMSConfig(llm_base_url="http://ollama:11434/v1", llm_model="qwen3:8b")
+        assert cfg.model_for("google/gemini-2.5-flash") == "qwen3:8b"
+        assert cfg.model_for("google/gemini-2.5-flash-lite") == "qwen3:8b"
+
+    def test_default_config_is_openrouter(self):
+        assert CEMSConfig().model_for("google/gemini-2.5-flash") == "google/gemini-2.5-flash"

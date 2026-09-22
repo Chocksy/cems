@@ -8,6 +8,7 @@ Uses Gemini 2.5 Flash via OpenRouter (same as observer).
 
 import logging
 
+from cems.config import CEMSConfig
 from cems.lib.json_parsing import parse_json_list
 from cems.llm.client import get_client
 
@@ -92,7 +93,7 @@ def reflect_observations(
     observations_text = "\n".join(lines)
 
     client = get_client()
-    use_model = model or REFLECTOR_MODEL
+    use_model = model or CEMSConfig().model_for(REFLECTOR_MODEL)
 
     system = REFLECTOR_SYSTEM_PROMPT.format(
         project_context=project_context or "various projects"

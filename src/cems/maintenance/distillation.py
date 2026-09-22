@@ -10,6 +10,7 @@ Uses DocumentStore (memory_documents) exclusively via async pattern.
 import logging
 from typing import TYPE_CHECKING
 
+from cems.config import CEMSConfig
 from cems.llm.client import get_client
 
 if TYPE_CHECKING:
@@ -183,7 +184,7 @@ class DistillationJob:
             response = client.complete(
                 prompt=prompt,
                 system="You are a memory condensation agent. Output only the condensed text.",
-                model=DISTILLATION_MODEL,
+                model=CEMSConfig().model_for(DISTILLATION_MODEL),
                 temperature=0.1,
                 max_tokens=1000,
                 fast_route=False,
@@ -207,7 +208,7 @@ class DistillationJob:
             response = client.complete(
                 prompt=prompt,
                 system="You are a memory condensation agent. Output only the condensed text.",
-                model=DISTILLATION_MODEL,
+                model=CEMSConfig().model_for(DISTILLATION_MODEL),
                 temperature=0.1,
                 max_tokens=4000,
                 fast_route=False,

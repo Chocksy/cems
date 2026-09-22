@@ -13,6 +13,7 @@ Uses Gemini 2.5 Flash via OpenRouter for fast, cheap extraction.
 
 import logging
 
+from cems.config import CEMSConfig
 from cems.lib.json_parsing import parse_json_dict
 from cems.llm.client import get_client
 
@@ -134,7 +135,7 @@ def extract_session_summary(
         content = content[:half] + "\n\n[...truncated...]\n\n" + content[-half:]
 
     client = get_client()
-    use_model = model or SUMMARY_MODEL
+    use_model = model or CEMSConfig().model_for(SUMMARY_MODEL)
 
     project_label = f" for: {project_context}" if project_context else ""
 

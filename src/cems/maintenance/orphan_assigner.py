@@ -158,6 +158,7 @@ class OrphanAssignerJob:
 
         Returns entity page ID if assigned, None if no match.
         """
+        from cems.config import CEMSConfig
         from cems.llm.client import get_client
 
         client = get_client()
@@ -189,7 +190,7 @@ class OrphanAssignerJob:
             response = client.complete(
                 prompt=prompt,
                 system="You are a memory classification agent. Output only an ID or 'none'.",
-                model="google/gemini-2.5-flash-lite",
+                model=CEMSConfig().model_for("google/gemini-2.5-flash-lite"),
                 temperature=0.0,
                 max_tokens=50,
                 fast_route=False,
