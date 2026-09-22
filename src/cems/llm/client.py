@@ -1,7 +1,9 @@
-"""OpenRouter LLM client for CEMS.
+"""OpenAI-compatible LLM client for CEMS.
 
-This module provides the core LLM client that uses OpenRouter as a unified
-gateway to access any LLM provider (OpenAI, Anthropic, Google, etc.).
+Defaults to OpenRouter as a unified gateway to any LLM provider (OpenAI,
+Anthropic, Google, etc.), but any OpenAI-compatible endpoint works (Ollama,
+vLLM, LiteLLM). OpenRouter-only extras (attribution headers, fast-provider
+routing) are sent only when the endpoint is openrouter.ai.
 """
 
 import logging
@@ -9,9 +11,11 @@ import os
 
 from openai import OpenAI
 
+from cems.config import CEMSConfig, is_openrouter_host
+
 logger = logging.getLogger(__name__)
 
-# OpenRouter configuration
+# Kept for backwards-compatible imports; the live value comes from CEMSConfig.
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
 # Model mapping for OpenRouter (provider/model format)
@@ -56,34 +60,39 @@ class OpenRouterClient:
         model: str | None = None,
         site_url: str | None = None,
         site_name: str | None = None,
+        base_url: str | None = None,
     ):
-        """Initialize the OpenRouter client.
+        """Initialize the LLM client.
 
         Args:
-            api_key: OpenRouter API key. Defaults to OPENROUTER_API_KEY env var.
-            model: Model in OpenRouter format. Defaults to CEMS_LLM_MODEL or qwen/qwen3-32b.
-            site_url: Attribution URL for OpenRouter dashboard.
-            site_name: Attribution name for OpenRouter dashboard.
+            api_key: API key. Defaults to CEMS_LLM_API_KEY, then OPENROUTER_API_KEY.
+            model: Model name. Defaults to CEMS_LLM_MODEL or qwen/qwen3-32b.
+            site_url: Attribution URL for the OpenRouter dashboard (OpenRouter only).
+            site_name: Attribution name for the OpenRouter dashboard (OpenRouter only).
+            base_url: OpenAI-compatible base URL. Defaults to CEMS_LLM_BASE_URL.
         """
-        self.api_key = api_key or os.getenv("OPENROUTER_API_KEY")
+        cfg = CEMSConfig()
+        self.base_url = base_url or cfg.llm_base_url
+        self.is_openrouter = is_openrouter_host(self.base_url)
+
+        self.api_key = api_key or cfg.resolved_llm_api_key()
         if not self.api_key:
             raise ValueError(
-                "OpenRouter API key required. Set OPENROUTER_API_KEY environment variable "
-                "or pass api_key parameter."
+                "LLM API key required. Set CEMS_LLM_API_KEY (or OPENROUTER_API_KEY "
+                "when using OpenRouter), or pass api_key."
             )
 
-        self.model = self._resolve_model(model or os.getenv("CEMS_LLM_MODEL"))
+        self.model = self._resolve_model(model or cfg.llm_model)
         self.site_url = site_url or os.getenv("CEMS_OPENROUTER_SITE_URL", "https://github.com/cems")
         self.site_name = site_name or os.getenv("CEMS_OPENROUTER_SITE_NAME", "CEMS Memory Server")
 
-        self._client = OpenAI(
-            base_url=OPENROUTER_BASE_URL,
-            api_key=self.api_key,
-            default_headers={
+        client_kwargs: dict = {"base_url": self.base_url, "api_key": self.api_key}
+        if self.is_openrouter:
+            client_kwargs["default_headers"] = {
                 "HTTP-Referer": self.site_url,
                 "X-Title": self.site_name,
-            },
-        )
+            }
+        self._client = OpenAI(**client_kwargs)
 
     def _resolve_model(self, model: str | None) -> str:
         """Resolve a model name to OpenRouter format.
@@ -147,7 +156,7 @@ class OpenRouterClient:
             "temperature": temperature,
         }
 
-        if fast_route:
+        if fast_route and self.is_openrouter:
             # Route through fast providers (Cerebras ~3000 t/s, Groq ~900 t/s)
             kwargs["extra_body"] = {
                 "provider": {

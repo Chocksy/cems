@@ -32,7 +32,7 @@ class TestOpenRouterClient:
 
         os.environ.pop("OPENROUTER_API_KEY", None)
 
-        with pytest.raises(ValueError, match="OpenRouter API key required"):
+        with pytest.raises(ValueError, match="API key required"):
             OpenRouterClient()
 
     @patch.dict(os.environ, {"OPENROUTER_API_KEY": "test-key"})
@@ -65,6 +65,58 @@ class TestOpenRouterClient:
         call_kwargs = mock_openai_class.call_args[1]
         assert call_kwargs["default_headers"]["HTTP-Referer"] == "https://test.com"
         assert call_kwargs["default_headers"]["X-Title"] == "Test App"
+
+    @patch.dict(os.environ, {"CEMS_LLM_BASE_URL": "http://ollama:11434/v1", "CEMS_LLM_API_KEY": "ollama"})
+    @patch("cems.llm.client.OpenAI")
+    def test_custom_base_url_no_openrouter_extras(self, mock_openai_class):
+        """Test non-OpenRouter endpoints skip attribution headers and provider routing."""
+        from cems.llm import OpenRouterClient
+
+        mock_client = MagicMock()
+        mock_openai_class.return_value = mock_client
+        mock_client.chat.completions.create.return_value = MagicMock(
+            choices=[MagicMock(message=MagicMock(content="ok"), finish_reason="stop")]
+        )
+
+        client = OpenRouterClient(model="gemma4:e4b")
+
+        init_kwargs = mock_openai_class.call_args[1]
+        assert init_kwargs["base_url"] == "http://ollama:11434/v1"
+        assert init_kwargs["api_key"] == "ollama"
+        assert "default_headers" not in init_kwargs
+        assert client.is_openrouter is False
+
+        client.complete("hi")
+        call_kwargs = mock_client.chat.completions.create.call_args[1]
+        assert "extra_body" not in call_kwargs
+        assert call_kwargs["model"] == "gemma4:e4b"
+
+    @patch.dict(os.environ, {"OPENROUTER_API_KEY": "test-key"})
+    @patch("cems.llm.client.OpenAI")
+    def test_openrouter_keeps_extras(self, mock_openai_class):
+        """Test the OpenRouter default keeps attribution headers and fast routing."""
+        from cems.llm import OpenRouterClient
+
+        mock_client = MagicMock()
+        mock_openai_class.return_value = mock_client
+        mock_client.chat.completions.create.return_value = MagicMock(
+            choices=[MagicMock(message=MagicMock(content="ok"), finish_reason="stop")]
+        )
+
+        client = OpenRouterClient()
+        assert client.is_openrouter is True
+        assert mock_openai_class.call_args[1]["default_headers"]["X-Title"] == "CEMS Memory Server"
+
+        client.complete("hi")
+        assert "extra_body" in mock_client.chat.completions.create.call_args[1]
+
+    @patch.dict(os.environ, {"CEMS_LLM_BASE_URL": "http://ollama:11434/v1"}, clear=True)
+    def test_custom_base_url_still_requires_key(self):
+        """Test a custom endpoint still needs an API key."""
+        from cems.llm import OpenRouterClient
+
+        with pytest.raises(ValueError, match="API key required"):
+            OpenRouterClient()
 
 
 class TestModelResolution:
