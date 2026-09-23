@@ -275,7 +275,7 @@ Tested on 2026-09-23 on a Hetzner CX33 (4 vCPU, 8 GB RAM, Ubuntu 24.04) with the
 
 - The embedding dimension is fixed when the database is first created. Switching from OpenRouter (1536) to Ollama (768) needs a fresh database; the server refuses to start otherwise with `Embedding dimension mismatch`.
 - Ollama downloads models from the internet on first boot. After that the box needs no outbound access for CEMS to work.
-- The CPU preset turns off query synthesis, preference synthesis, query decomposition and agentic search. Set the `CEMS_ENABLE_*` variables to `true` to turn them back on if the box can take it.
+- The CPU preset turns off query synthesis, preference synthesis, forced synthesis (`CEMS_ENABLE_FORCED_SYNTHESIS`, the LLM expansion that temporal, preference and aggregation queries otherwise always get), query decomposition and agentic search. Set the `CEMS_ENABLE_*` variables to `true` to turn them back on if the box can take it.
 - A CPU box serves CEMS fine but is too slow to also run your coding agent's model. On the CX33 an OpenCode turn with a 27K-token prompt took over 20 minutes. Use a GPU box or a hosted model for the agent.
 
 ### Bring your own endpoint

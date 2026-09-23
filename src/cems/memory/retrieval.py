@@ -189,14 +189,15 @@ class RetrievalMixin:
             queries_to_search = [query] + sub_queries
             logger.info(f"[RETRIEVAL] Using decomposed queries: {len(queries_to_search)} total")
         else:
-            # Temporal/preference/aggregation queries override the per-request flag,
-            # but config.enable_query_synthesis=False is a hard off switch.
+            # Temporal/preference/aggregation queries force synthesis unless
+            # config.enable_forced_synthesis is off (CPU-only local LLMs).
             enable_preference = getattr(self.config, 'enable_preference_synthesis', True)
-            force_synthesis = is_temporal or (is_preference and enable_preference) or is_aggregation
+            force_synthesis = self.config.enable_forced_synthesis and (
+                is_temporal or (is_preference and enable_preference) or is_aggregation
+            )
             should_synthesize = bool(
                 client
-                and self.config.enable_query_synthesis
-                and (enable_query_synthesis or force_synthesis)
+                and (force_synthesis or (enable_query_synthesis and self.config.enable_query_synthesis))
             )
             if force_synthesis and should_synthesize:
                 query_type = 'temporal' if is_temporal else ('aggregation' if is_aggregation else 'preference')
@@ -225,7 +226,7 @@ class RetrievalMixin:
 
         # For preference queries, ALWAYS enable HyDE to bridge semantic gap
         should_hyde = enable_hyde and selected_mode == "hybrid" and client
-        if is_preference and client:
+        if is_preference and client and self.config.enable_forced_synthesis:
             # Force HyDE for preference queries - critical for bridging semantic gap
             should_hyde = True
             logger.info(f"[RETRIEVAL] Forcing HyDE for preference query")

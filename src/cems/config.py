@@ -167,7 +167,11 @@ class CEMSConfig(BaseSettings):
     )
     enable_preference_synthesis: bool = Field(
         default=True,  # Always expand preference queries to bridge semantic gap
-        description="Force query synthesis for preference/recommendation queries even when the request disables it. Has no effect when enable_query_synthesis=False",
+        description="Force query synthesis for preference/recommendation queries even when enable_query_synthesis=False",
+    )
+    enable_forced_synthesis: bool = Field(
+        default=True,
+        description="Forced LLM query expansion (synthesis and preference HyDE) for temporal, preference and aggregation queries. Set false on CPU-only local LLMs where each call takes tens of seconds",
     )
     relevance_threshold: float = Field(
         default=0.45,  # Raised from 0.4 to reduce noise (post-RRF scores max ~0.52)

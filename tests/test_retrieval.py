@@ -1189,20 +1189,18 @@ class TestQueryDecomposition:
         assert len(result) == 2
 
 
-class TestSynthesisConfigKillSwitch:
-    """config.enable_query_synthesis=False must stop forced synthesis."""
 
-    def _make_memory(self, enable_query_synthesis: bool):
+class TestForcedSynthesisConfig:
+    """config.enable_forced_synthesis gates forced LLM expansion."""
+
+    def _make_memory(self, **config_overrides):
         from unittest.mock import AsyncMock
 
         from cems.config import CEMSConfig
         from cems.memory.retrieval import RetrievalMixin
 
         memory = RetrievalMixin()
-        memory.config = CEMSConfig(
-            enable_query_synthesis=enable_query_synthesis,
-            enable_lexical_in_inference=False,
-        )
+        memory.config = CEMSConfig(enable_lexical_in_inference=False, **config_overrides)
         memory._ensure_initialized_async = AsyncMock()
         memory._async_embedder = MagicMock()
         memory._async_embedder.embed_batch = AsyncMock(side_effect=lambda qs: [[0.0] for _ in qs])
@@ -1210,25 +1208,35 @@ class TestSynthesisConfigKillSwitch:
         memory._search_lexical_raw_async = AsyncMock(return_value=[])
         return memory
 
-    async def _run(self, memory, enable_query_synthesis: bool):
+    async def _run(self, memory, query: str):
         with (
             patch("cems.llm.get_client", return_value=MagicMock()),
             patch("cems.retrieval.synthesize_query", return_value=["expanded"]) as mock_synth,
+            patch("cems.retrieval.generate_hypothetical_memory", return_value="hypo") as mock_hyde,
         ):
             await memory.retrieve_for_inference_async(
-                "When do staging deploys run?",
+                query,
                 mode="vector",
                 enable_graph=False,
-                enable_query_synthesis=enable_query_synthesis,
+                enable_query_synthesis=False,
             )
-        return mock_synth
+        return mock_synth, mock_hyde
 
-    async def test_config_off_skips_forced_temporal_synthesis(self):
-        memory = self._make_memory(enable_query_synthesis=False)
-        mock_synth = await self._run(memory, enable_query_synthesis=True)
+    async def test_forced_off_skips_temporal_synthesis(self):
+        memory = self._make_memory(enable_forced_synthesis=False)
+        mock_synth, _ = await self._run(memory, "When do staging deploys run?")
         mock_synth.assert_not_called()
 
-    async def test_config_on_forces_temporal_synthesis_over_request_arg(self):
-        memory = self._make_memory(enable_query_synthesis=True)
-        mock_synth = await self._run(memory, enable_query_synthesis=False)
+    async def test_default_config_forces_temporal_synthesis(self):
+        memory = self._make_memory(enable_query_synthesis=False)
+        assert memory.config.enable_forced_synthesis is True
+        mock_synth, _ = await self._run(memory, "When do staging deploys run?")
         mock_synth.assert_called_once()
+
+    async def test_forced_off_skips_preference_hyde(self):
+        query = "Can you recommend some resources for learning Rust?"
+        assert _is_preference_query(query)
+        memory = self._make_memory(enable_forced_synthesis=False)
+        mock_synth, mock_hyde = await self._run(memory, query)
+        mock_hyde.assert_not_called()
+        mock_synth.assert_not_called()
