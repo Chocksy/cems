@@ -1187,3 +1187,48 @@ class TestQueryDecomposition:
         result = decompose_query("many topics", mock_client, max_queries=2)
 
         assert len(result) == 2
+
+
+class TestSynthesisConfigKillSwitch:
+    """config.enable_query_synthesis=False must stop forced synthesis."""
+
+    def _make_memory(self, enable_query_synthesis: bool):
+        from unittest.mock import AsyncMock
+
+        from cems.config import CEMSConfig
+        from cems.memory.retrieval import RetrievalMixin
+
+        memory = RetrievalMixin()
+        memory.config = CEMSConfig(
+            enable_query_synthesis=enable_query_synthesis,
+            enable_lexical_in_inference=False,
+        )
+        memory._ensure_initialized_async = AsyncMock()
+        memory._async_embedder = MagicMock()
+        memory._async_embedder.embed_batch = AsyncMock(side_effect=lambda qs: [[0.0] for _ in qs])
+        memory._search_raw_async = AsyncMock(return_value=[])
+        memory._search_lexical_raw_async = AsyncMock(return_value=[])
+        return memory
+
+    async def _run(self, memory, enable_query_synthesis: bool):
+        with (
+            patch("cems.llm.get_client", return_value=MagicMock()),
+            patch("cems.retrieval.synthesize_query", return_value=["expanded"]) as mock_synth,
+        ):
+            await memory.retrieve_for_inference_async(
+                "When do staging deploys run?",
+                mode="vector",
+                enable_graph=False,
+                enable_query_synthesis=enable_query_synthesis,
+            )
+        return mock_synth
+
+    async def test_config_off_skips_forced_temporal_synthesis(self):
+        memory = self._make_memory(enable_query_synthesis=False)
+        mock_synth = await self._run(memory, enable_query_synthesis=True)
+        mock_synth.assert_not_called()
+
+    async def test_config_on_forces_temporal_synthesis_over_request_arg(self):
+        memory = self._make_memory(enable_query_synthesis=True)
+        mock_synth = await self._run(memory, enable_query_synthesis=False)
+        mock_synth.assert_called_once()

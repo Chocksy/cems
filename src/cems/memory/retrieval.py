@@ -189,13 +189,16 @@ class RetrievalMixin:
             queries_to_search = [query] + sub_queries
             logger.info(f"[RETRIEVAL] Using decomposed queries: {len(queries_to_search)} total")
         else:
-            # ALWAYS run synthesis for temporal/preference/aggregation queries (they need expansion)
+            # Temporal/preference/aggregation queries override the per-request flag,
+            # but config.enable_query_synthesis=False is a hard off switch.
             enable_preference = getattr(self.config, 'enable_preference_synthesis', True)
             force_synthesis = is_temporal or (is_preference and enable_preference) or is_aggregation
-            should_synthesize = client and (enable_query_synthesis or force_synthesis) and (
-                self.config.enable_query_synthesis or force_synthesis
+            should_synthesize = bool(
+                client
+                and self.config.enable_query_synthesis
+                and (enable_query_synthesis or force_synthesis)
             )
-            if force_synthesis:
+            if force_synthesis and should_synthesize:
                 query_type = 'temporal' if is_temporal else ('aggregation' if is_aggregation else 'preference')
                 logger.info(f"[RETRIEVAL] Forcing synthesis for {query_type} query")
             if should_synthesize:
