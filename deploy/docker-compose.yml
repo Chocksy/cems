@@ -69,6 +69,8 @@ services:
     image: ollama/ollama:latest
     container_name: cems-ollama
     profiles: ["private"]
+    environment:
+      OLLAMA_CONTEXT_LENGTH: ${OLLAMA_CONTEXT_LENGTH:-8192}
     volumes:
       - ollama_data:/root/.ollama
     expose:
