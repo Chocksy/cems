@@ -217,9 +217,60 @@ CEMS keeps memories on your server. Whether your coding agent sends code to its 
 | Cursor | Tested (MCP) | No | Bedrock and Azure keys only |
 | Codex CLI | Tested (MCP) | Yes (`--oss`, Ollama) | Bedrock, Azure |
 | Goose | Tested (MCP) | Yes | Yes |
-| OpenCode | MCP, untested | Yes | Yes |
+| OpenCode | Tested (MCP) | Yes | Yes |
 | Aider, Cline, Continue, Roo Code, Kilo Code | MCP, untested | Yes | Yes |
 
 Links: [Claude Code](https://code.claude.com/docs/en/third-party-integrations), [Codex](https://learn.chatgpt.com/docs/config-file/config-advanced), [Cursor](https://cursor.com/help/models-and-usage/api-keys), [Goose](https://goose-docs.ai/docs/getting-started/providers/), [OpenCode](https://opencode.ai/docs/providers/), [Aider](https://aider.chat/docs/llms.html), [Cline](https://docs.cline.bot/provider-config/openai-compatible), [Continue](https://docs.continue.dev/customize/model-providers/overview), [Roo Code](https://docs.roocode.com/providers), [Kilo Code](https://kilo.ai/docs/ai-providers).
 
 To run the CEMS side privately too, see [Private mode](DEPLOYMENT.md#private-mode).
+
+### OpenCode
+
+Tested with OpenCode 1.18 against a private mode server: the agent stored and recalled a memory through the CEMS MCP server. Add this to `opencode.json`:
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "cems": {
+      "type": "local",
+      "command": ["cems-mcp"],
+      "enabled": true
+    }
+  }
+}
+```
+
+`cems-mcp` reads credentials from files, not environment variables. It looks for `.cems/credentials` in the project (walking up from the working directory), then `~/.cems/credentials`. Setting `CEMS_API_URL` or `CEMS_API_KEY` in the MCP `environment` block does nothing. Create the project file with:
+
+```bash
+cems setup --project --api-url https://cems.example.com --api-key <your key>
+```
+
+Or write it by hand:
+
+```
+CEMS_API_URL=https://cems.example.com
+CEMS_API_KEY=<your key>
+```
+
+To point OpenCode's own model at an Ollama server, add a provider block:
+
+```json
+{
+  "provider": {
+    "ollama": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Ollama",
+      "options": {
+        "baseURL": "http://your-gpu-box:11434/v1"
+      },
+      "models": {
+        "qwen3.8:27b": {}
+      }
+    }
+  }
+}
+```
+
+The agent's model needs a GPU to be usable. On a 4 vCPU CPU box a single OpenCode turn (27K-token prompt) took over 20 minutes. The CEMS private mode compose file does not publish Ollama's port, so run the agent's Ollama separately or use a hosted model.
