@@ -98,6 +98,8 @@ Stored in `~/.cems/credentials` (chmod 600). Checked in order:
 2. Environment: `CEMS_API_URL`, `CEMS_API_KEY`
 3. Credentials file: `~/.cems/credentials`
 
+The MCP server (`cems-mcp`) skips step 2. It reads a project `.cems/credentials` (found by walking up from the working directory), then `~/.cems/credentials`. Setting `CEMS_API_URL` in an MCP client's `env` block has no effect.
+
 ## How Hooks Work
 
 After `cems setup`, your IDE automatically:
