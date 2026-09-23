@@ -202,7 +202,7 @@ bash install-server.sh --private --yes        # or --private-gpu
 cems admin --admin-key <printed key> users create alice
 ```
 
-The first boot pulls `gemma4:e4b` and `embeddinggemma` (about 6 GB). The health wait covers that.
+The first boot pulls `gemma4:e4b` (9.6 GB on disk) and `embeddinggemma` (621 MB), about 10 GB in total. The health wait covers that.
 
 Installer flags:
 
@@ -248,10 +248,26 @@ The cloud-init snippets open port 8765: Hetzner and DigitalOcean run `ufw allow 
 | Tier | Example box | What runs | Approx. monthly |
 |---|---|---|---|
 | CPU | Hetzner CX33 (4 vCPU, 8 GB) or CX43 (8 vCPU, 16 GB) | Extraction, consolidation, embeddings. Plain hybrid recall | EUR 8.49 or EUR 15.99 [^prices] |
-| GPU, single card | AWS g6.xlarge (1 NVIDIA L4, 24 GB VRAM) | Everything on, `qwen3.8:27b`, 256K context | USD 0.8048 per hour, about USD 588 [^prices] |
-| GPU, large | Hetzner GEX131 (RTX PRO 6000, 96 GB) or AWS p4d.24xlarge | Everything on, 1M-context model | EUR 1,199 plus EUR 599 setup, or USD 21.96 per hour [^prices] |
+| GPU, single card | AWS g6.xlarge (1 NVIDIA L4, 24 GB VRAM) | Everything on, `qwen3.8:27b`, 32K context by default. Not yet verified on hardware | USD 0.8048 per hour, about USD 588 [^prices] |
+| GPU, large | Hetzner GEX131 (RTX PRO 6000, 96 GB) or AWS p4d.24xlarge | Everything on, 1M-context model. Not yet verified on hardware | EUR 1,199 plus EUR 599 setup, or USD 21.96 per hour [^prices] |
 
-A 20 GB card (Hetzner GEX44, RTX 4000 SFF Ada) also runs the GPU preset if you cap the context: set `OLLAMA_CONTEXT_LENGTH=32768` on the `ollama` service, or pick a smaller model. `qwen3.8:27b` is about 18 GB of weights, so its full 256K context wants about 24 GB.
+The GPU preset caps the context at 32K (`OLLAMA_CONTEXT_LENGTH=32768`). `qwen3.8:27b` is about 18 GB of weights, so a 24 GB card has room for that and not much more. Raise the cap (up to 262144) only on a larger card. A 20 GB card (Hetzner GEX44, RTX 4000 SFF Ada) may run the preset at 32K or with a smaller model. Only the CPU tier has been tested on real hardware so far.
+
+### Context length
+
+Ollama's default context is 4096 tokens. It silently truncates longer prompts and logs `truncating input prompt limit=... prompt=...`. CEMS extraction prompts run past 4096, so a truncated prompt means lost memories with no error.
+
+The compose file passes `OLLAMA_CONTEXT_LENGTH` to the `ollama` service. The default is 8192; both presets set 32768. A bigger context uses more RAM (or VRAM), so size it to the box. If you see the truncation line in `docker compose logs ollama`, raise the value and run `docker compose --profile private up -d` again.
+
+### Verified
+
+Tested on 2026-09-23 on a Hetzner CX33 (4 vCPU, 8 GB RAM, Ubuntu 24.04) with the CPU preset:
+
+- Installer start to healthy: about 3 minutes with Docker already installed, model pulls included.
+- RAM in use with everything running at a 32K context: about 6.2 GB of 7.7 GB.
+- Add and search round trip passed. Admin health reported LLM ok, embeddings ok, dimension 768.
+- With outbound ports 80 and 443 blocked after the first boot, add and search still worked.
+- `gemma4:e4b` processes prompts at about 20 tokens per second on this CPU. That is fine for CEMS background jobs.
 
 [^prices]: List prices checked 2026-09-22: [Hetzner Cloud](https://www.hetzner.com/cloud/), [Hetzner GEX131](https://www.hetzner.com/dedicated-rootserver/gex131/), [AWS EC2 on-demand](https://aws.amazon.com/ec2/pricing/on-demand/) (g6.xlarge and p4d.24xlarge, us-east-1). Hetzner raised cloud prices on 15 June 2026, so check before you budget.
 
@@ -260,6 +276,7 @@ A 20 GB card (Hetzner GEX44, RTX 4000 SFF Ada) also runs the GPU preset if you c
 - The embedding dimension is fixed when the database is first created. Switching from OpenRouter (1536) to Ollama (768) needs a fresh database; the server refuses to start otherwise with `Embedding dimension mismatch`.
 - Ollama downloads models from the internet on first boot. After that the box needs no outbound access for CEMS to work.
 - The CPU preset turns off query synthesis, preference synthesis, query decomposition and agentic search. Set the `CEMS_ENABLE_*` variables to `true` to turn them back on if the box can take it.
+- A CPU box serves CEMS fine but is too slow to also run your coding agent's model. On the CX33 an OpenCode turn with a 27K-token prompt took over 20 minutes. Use a GPU box or a hosted model for the agent.
 
 ### Bring your own endpoint
 
