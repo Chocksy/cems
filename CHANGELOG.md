@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.14.3
+
+Fixes a server crash loop on fresh images. SQLAlchemy 2.1 maps a bare `postgresql://` URL to the psycopg (v3) driver, which CEMS doesn't ship, so the server died on boot with `ModuleNotFoundError: No module named 'psycopg'`. The sync engine now asks for `postgresql+psycopg2://` explicitly.
+
 ## 0.14.2
 
 Reliability release for `/api/memory/search`. A slow LLM provider used to stall searches for 20 to 36 seconds and block other requests on the same worker. Now the optional LLM steps have a time limit, and search falls back to the original query when they run out of time.

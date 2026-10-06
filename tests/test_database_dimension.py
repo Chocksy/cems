@@ -19,3 +19,11 @@ def test_mismatch_raises_with_guidance():
     msg = str(exc.value)
     assert "database has 1536, config has 768" in msg
     assert "docs/DEPLOYMENT.md#private-mode" in msg
+
+
+def test_sync_engine_uses_psycopg2():
+    # SQLAlchemy 2.1 maps bare postgresql:// to psycopg (v3), which the image does not ship.
+    from cems.db.database import Database
+
+    db = Database("postgresql+asyncpg://u:p@localhost:5432/cems")
+    assert db.sync_engine.dialect.driver == "psycopg2"

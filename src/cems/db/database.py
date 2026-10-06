@@ -83,7 +83,8 @@ class Database:
         self.database_url = database_url
 
         # Create sync engine (for CLI operations)
-        sync_url = database_url.replace("+asyncpg", "")
+        # Pin psycopg2: SQLAlchemy 2.1 defaults postgresql:// to psycopg (v3), which we do not ship.
+        sync_url = database_url.replace("+asyncpg", "").replace("postgresql://", "postgresql+psycopg2://", 1)
         self.sync_engine = create_engine(sync_url, echo=False)
         self.sync_session_factory = sessionmaker(
             bind=self.sync_engine, expire_on_commit=False
