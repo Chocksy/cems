@@ -104,8 +104,10 @@ def _is_aggregation_query(query: str) -> bool:
         "throughout", "across all", "over the past",
         "in the past", "in the last",
     ]
-    query_lower = query.lower()
-    return any(pattern in query_lower for pattern in aggregation_patterns)
+    # Whole-phrase matching: substrings caused false positives such as
+    # "call the CEMS system" matching "all the" (or "totally" matching "total").
+    pattern = r"\b(?:" + "|".join(re.escape(p) for p in aggregation_patterns) + r")\b"
+    return re.search(pattern, query.lower()) is not None
 
 
 def _is_preference_query(query: str) -> bool:

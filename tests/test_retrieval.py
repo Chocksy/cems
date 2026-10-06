@@ -1191,7 +1191,10 @@ class TestQueryDecomposition:
 
 
 class TestForcedSynthesisConfig:
-    """config.enable_forced_synthesis gates forced LLM expansion."""
+    """config.enable_forced_synthesis gates forced LLM expansion; request flags are hard opt-outs."""
+
+    TEMPORAL_Q = "When do staging deploys run?"
+    PREFERENCE_Q = "Can you recommend some resources for learning Rust?"
 
     def _make_memory(self, **config_overrides):
         from unittest.mock import AsyncMock
@@ -1199,6 +1202,7 @@ class TestForcedSynthesisConfig:
         from cems.config import CEMSConfig
         from cems.memory.retrieval import RetrievalMixin
 
+        config_overrides.setdefault("enable_query_synthesis", False)
         memory = RetrievalMixin()
         memory.config = CEMSConfig(enable_lexical_in_inference=False, **config_overrides)
         memory._ensure_initialized_async = AsyncMock()
@@ -1208,9 +1212,9 @@ class TestForcedSynthesisConfig:
         memory._search_lexical_raw_async = AsyncMock(return_value=[])
         return memory
 
-    async def _run(self, memory, query: str):
+    async def _run(self, memory, query: str, enable_query_synthesis: bool = True, enable_hyde: bool = True):
         with (
-            patch("cems.llm.get_client", return_value=MagicMock()),
+            patch("cems.llm.get_retrieval_client", return_value=MagicMock()),
             patch("cems.retrieval.synthesize_query", return_value=["expanded"]) as mock_synth,
             patch("cems.retrieval.generate_hypothetical_memory", return_value="hypo") as mock_hyde,
         ):
@@ -1218,25 +1222,52 @@ class TestForcedSynthesisConfig:
                 query,
                 mode="vector",
                 enable_graph=False,
-                enable_query_synthesis=False,
+                enable_query_synthesis=enable_query_synthesis,
+                enable_hyde=enable_hyde,
             )
         return mock_synth, mock_hyde
 
-    async def test_forced_off_skips_temporal_synthesis(self):
-        memory = self._make_memory(enable_forced_synthesis=False)
-        mock_synth, _ = await self._run(memory, "When do staging deploys run?")
-        mock_synth.assert_not_called()
+    @pytest.mark.parametrize(
+        "forced,server_synthesis,request_synthesis,expected",
+        [
+            # Forced synthesis overrides the server-level default...
+            (True, False, True, True),
+            # ...unless forced synthesis is switched off (CPU preset)...
+            (False, False, True, False),
+            # ...in which case the server-level default still applies...
+            (False, True, True, True),
+            # ...and a per-request opt-out always wins.
+            (True, False, False, False),
+            (True, True, False, False),
+        ],
+    )
+    async def test_temporal_synthesis_matrix(self, forced, server_synthesis, request_synthesis, expected):
+        memory = self._make_memory(
+            enable_forced_synthesis=forced, enable_query_synthesis=server_synthesis
+        )
+        mock_synth, _ = await self._run(
+            memory, self.TEMPORAL_Q, enable_query_synthesis=request_synthesis, enable_hyde=False
+        )
+        assert mock_synth.called is expected
 
     async def test_default_config_forces_temporal_synthesis(self):
-        memory = self._make_memory(enable_query_synthesis=False)
+        memory = self._make_memory()
         assert memory.config.enable_forced_synthesis is True
-        mock_synth, _ = await self._run(memory, "When do staging deploys run?")
+        mock_synth, _ = await self._run(memory, self.TEMPORAL_Q)
         mock_synth.assert_called_once()
 
     async def test_forced_off_skips_preference_hyde(self):
-        query = "Can you recommend some resources for learning Rust?"
-        assert _is_preference_query(query)
+        assert _is_preference_query(self.PREFERENCE_Q)
         memory = self._make_memory(enable_forced_synthesis=False)
-        mock_synth, mock_hyde = await self._run(memory, query)
+        mock_synth, mock_hyde = await self._run(memory, self.PREFERENCE_Q)
         mock_hyde.assert_not_called()
         mock_synth.assert_not_called()
+
+    async def test_forced_on_preference_hyde_needs_request_opt_in(self):
+        memory = self._make_memory()
+        _, mock_hyde = await self._run(memory, self.PREFERENCE_Q, enable_query_synthesis=False)
+        mock_hyde.assert_called_once()
+        _, mock_hyde = await self._run(
+            memory, self.PREFERENCE_Q, enable_query_synthesis=False, enable_hyde=False
+        )
+        mock_hyde.assert_not_called()

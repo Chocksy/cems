@@ -6,9 +6,11 @@ vLLM, LiteLLM). OpenRouter-only extras (attribution headers, fast-provider
 routing) are sent only when the endpoint is openrouter.ai.
 """
 
+import copy
 import logging
 import os
 
+import httpx
 from openai import OpenAI
 
 from cems.config import CEMSConfig, is_openrouter_host
@@ -53,6 +55,10 @@ class OpenRouterClient:
         client = OpenRouterClient()
         response = client.complete("Summarize these items: ...")
     """
+
+    # Upper bound applied to every complete() call; None = caller decides.
+    # Only set on copies made by with_request_limits().
+    _max_tokens_cap: int | None = None
 
     def __init__(
         self,
@@ -117,6 +123,26 @@ class OpenRouterClient:
         # Assume it's already valid
         return model
 
+    def with_request_limits(
+        self,
+        timeout: float,
+        max_retries: int = 0,
+        max_tokens_cap: int | None = None,
+    ) -> "OpenRouterClient":
+        """Return a copy with bounded per-request I/O; this client is unchanged.
+
+        The copy shares the underlying HTTP connection pool but carries its own
+        timeout/retry options, so latency-sensitive callers (retrieval) can be
+        bounded without altering maintenance jobs that use the shared client.
+        """
+        bounded = copy.copy(self)
+        bounded._client = self._client.with_options(
+            timeout=httpx.Timeout(timeout, connect=min(timeout, 1.0)),
+            max_retries=max_retries,
+        )
+        bounded._max_tokens_cap = max_tokens_cap
+        return bounded
+
     def complete(
         self,
         prompt: str,
@@ -148,6 +174,9 @@ class OpenRouterClient:
         if system:
             messages.append({"role": "system", "content": system})
         messages.append({"role": "user", "content": prompt})
+
+        if self._max_tokens_cap is not None:
+            max_tokens = min(max_tokens, self._max_tokens_cap)
 
         kwargs: dict = {
             "model": model or self.model,
@@ -199,3 +228,29 @@ def get_client() -> OpenRouterClient:
     if _client is None:
         _client = OpenRouterClient()
     return _client
+
+
+# Bounded copies of the shared client for the retrieval path, keyed by limits.
+# Values are (base, bounded) so a replaced shared client invalidates the copy.
+_retrieval_clients: dict[tuple[float, int | None], tuple[OpenRouterClient, OpenRouterClient]] = {}
+
+
+def get_retrieval_client(timeout: float, max_tokens_cap: int | None) -> OpenRouterClient:
+    """Get a retrieval-path client: bounded timeout, zero retries, capped tokens.
+
+    Retrieval enrichment is optional and must fail fast; maintenance and
+    background jobs keep using get_client() with the SDK defaults.
+
+    Raises:
+        ValueError: If no LLM API key is configured
+    """
+    base = get_client()
+    key = (timeout, max_tokens_cap)
+    cached = _retrieval_clients.get(key)
+    if cached is None or cached[0] is not base:
+        bounded = base.with_request_limits(
+            timeout=timeout, max_retries=0, max_tokens_cap=max_tokens_cap
+        )
+        cached = (base, bounded)
+        _retrieval_clients[key] = cached
+    return cached[1]

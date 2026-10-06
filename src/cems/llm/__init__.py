@@ -28,6 +28,7 @@ from cems.llm.client import (
     OPENROUTER_MODELS,
     OpenRouterClient,
     get_client,
+    get_retrieval_client,
 )
 
 # Summarization exports
@@ -56,6 +57,7 @@ __all__ = [
     # Client
     "OpenRouterClient",
     "get_client",
+    "get_retrieval_client",
     "OPENROUTER_BASE_URL",
     "OPENROUTER_MODELS",
     "FAST_PROVIDERS",

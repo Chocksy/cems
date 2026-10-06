@@ -167,11 +167,40 @@ class CEMSConfig(BaseSettings):
     )
     enable_preference_synthesis: bool = Field(
         default=True,  # Always expand preference queries to bridge semantic gap
-        description="Force query synthesis for preference/recommendation queries even when enable_query_synthesis=False",
+        description=(
+            "Force query synthesis for preference/recommendation queries even when the "
+            "server-level enable_query_synthesis is False. A per-request "
+            "enable_query_synthesis=False opt-out still wins."
+        ),
     )
     enable_forced_synthesis: bool = Field(
         default=True,
-        description="Forced LLM query expansion (synthesis and preference HyDE) for temporal, preference and aggregation queries. Set false on CPU-only local LLMs where each call takes tens of seconds",
+        description="Forced LLM query expansion (synthesis and preference HyDE) for temporal, preference and aggregation queries. Set false on CPU-only local LLMs where each call takes tens of seconds. A per-request enable_query_synthesis/enable_hyde=False opt-out still wins",
+    )
+    # Optional LLM enrichment (intent, decomposition, synthesis, HyDE) in the
+    # retrieval path. Bounded so a slow provider degrades to the original query
+    # well inside client deadlines (e.g. Gooseherd's 5s) instead of timing out.
+    retrieval_llm_budget_seconds: float = Field(
+        default=2.0,
+        gt=0,
+        allow_inf_nan=False,
+        description="Total wall-clock budget for optional LLM enrichment per retrieval request",
+    )
+    retrieval_llm_timeout_seconds: float = Field(
+        default=2.0,
+        gt=0,
+        allow_inf_nan=False,
+        description="Per-request provider timeout for retrieval LLM calls (no retries)",
+    )
+    retrieval_llm_max_tokens: int = Field(
+        default=512,
+        gt=0,
+        description="Max response tokens for retrieval rewrites (maintenance calls are unaffected)",
+    )
+    retrieval_llm_max_concurrency: int = Field(
+        default=4,
+        gt=0,
+        description="Max in-flight retrieval LLM calls per process; extra requests skip enrichment",
     )
     relevance_threshold: float = Field(
         default=0.45,  # Raised from 0.4 to reduce noise (post-RRF scores max ~0.52)

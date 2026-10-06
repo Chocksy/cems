@@ -17,10 +17,11 @@ import asyncio
 import logging
 import os
 import re
-from concurrent.futures import ThreadPoolExecutor
+from functools import partial
 
 from cems.lib.json_parsing import parse_json_list
-from cems.llm.client import get_client
+from cems.llm.client import OpenRouterClient, get_retrieval_client
+from cems.memory.enrichment import get_enrichment_runner
 from cems.memory.retrieval import _make_snippet
 
 logger = logging.getLogger(__name__)
@@ -30,6 +31,28 @@ from cems.agentic.rrf import RRF_K, reciprocal_rank_fusion
 DEFAULT_MODEL = os.environ.get(
     "CEMS_AGENTIC_MODEL", "google/gemini-2.5-flash-lite"
 )  # 1M context recommended — agents receive full memory dump
+
+# Deep search keeps its own, longer budget than inference retrieval.
+AGENT_TIMEOUT_SECONDS = 10.0
+# Process-wide cap on in-flight agent calls (4 agents per request). Calls that
+# outlive their request keep their slot until they actually finish.
+AGENT_MAX_IN_FLIGHT = 8
+
+
+class AgenticSearchError(RuntimeError):
+    """No search agent completed, so absence of results would be fabricated."""
+
+
+class AgentEmptyResponseError(RuntimeError):
+    """Provider returned an empty completion: not an explicit "[]" no-match."""
+
+
+def get_client() -> OpenRouterClient:
+    """Agent LLM client: provider timeout matches the agent budget, no retries.
+
+    Built from the shared client, which maintenance jobs keep using unchanged.
+    """
+    return get_retrieval_client(timeout=AGENT_TIMEOUT_SECONDS, max_tokens_cap=None)
 
 # ---------------------------------------------------------------------------
 # Search Agent Prompts
@@ -233,7 +256,11 @@ def _run_entity_picker(
     model: str,
     project: str | None = None,
 ) -> tuple[str, str | list[str]]:
-    """Run entity picker agent. Thread-safe. Returns (role, raw_response)."""
+    """Run entity picker agent. Thread-safe. Returns (role, raw_response).
+
+    Raises on provider errors and empty completions; an explicit "[]" is a
+    valid no-match.
+    """
     project_context = f"\nCURRENT PROJECT: {project}\n" if project else ""
     user_prompt = ENTITY_PICKER_USER_PROMPT.format(
         question=question,
@@ -242,22 +269,18 @@ def _run_entity_picker(
         project_context=project_context,
     )
 
-    client = get_client()
-    try:
-        response = client.complete(
-            prompt=user_prompt,
-            system=ENTITY_PICKER_SYSTEM,
-            model=model,
-            temperature=0.1,
-            max_tokens=500,
-            fast_route=False,
-        )
-    except Exception as e:
-        logger.warning(f"Entity picker agent failed: {e}")
-        return "entity_picker", []
+    # Provider errors propagate so the caller can tell failure from "no match"
+    response = get_client().complete(
+        prompt=user_prompt,
+        system=ENTITY_PICKER_SYSTEM,
+        model=model,
+        temperature=0.1,
+        max_tokens=500,
+        fast_route=False,
+    )
 
-    if not response:
-        return "entity_picker", []
+    if not response or not response.strip():
+        raise AgentEmptyResponseError("entity_picker returned an empty completion")
 
     return "entity_picker", response
 
@@ -293,7 +316,11 @@ def _run_single_agent(
     model: str,
     project: str | None = None,
 ) -> tuple[str, str | list[str]]:
-    """Run a single search agent. Thread-safe."""
+    """Run a single search agent. Thread-safe.
+
+    Raises on provider errors and empty completions; an explicit "[]" is a
+    valid no-match.
+    """
     system = AGENT_SYSTEM_PROMPTS[role]
     project_context = f"\nCURRENT PROJECT: {project}\n" if project else ""
     user_prompt = SEARCH_USER_PROMPT.format(
@@ -303,23 +330,17 @@ def _run_single_agent(
         project_context=project_context,
     )
 
-    client = get_client()
+    response = get_client().complete(
+        prompt=user_prompt,
+        system=system,
+        model=model,
+        temperature=0.1,
+        max_tokens=1000,
+        fast_route=False,
+    )
 
-    try:
-        response = client.complete(
-            prompt=user_prompt,
-            system=system,
-            model=model,
-            temperature=0.1,
-            max_tokens=1000,
-            fast_route=False,
-        )
-    except Exception as e:
-        logger.warning(f"Agentic search agent {role} failed: {e}")
-        return role, []
-
-    if not response:
-        return role, []
+    if not response or not response.strip():
+        raise AgentEmptyResponseError(f"{role} returned an empty completion")
 
     return role, response
 
@@ -494,7 +515,12 @@ async def agentic_search_async(
         project: Project ID for project-scoped filtering
 
     Returns:
-        Dict with entities, memories, and results (backward compat) arrays
+        Dict with entities, memories, and results (backward compat) arrays.
+        ``partial``/``degraded_agents`` report agents that timed out, failed
+        or found no free capacity while others still produced rankings.
+
+    Raises:
+        AgenticSearchError: If agents degraded and none produced a ranking.
     """
     # Load entity summaries and raw memories in parallel
     entity_summaries, memories = await asyncio.gather(
@@ -536,67 +562,68 @@ async def agentic_search_async(
         ent_id_to_full[short_id] = ent
     valid_ent_ids = set(ent_id_to_full.keys())
 
-    # Run 4 agents in parallel
-    loop = asyncio.get_running_loop()
+    # Run up to 4 agents in parallel, off the event loop, through the bounded
+    # process-wide agent pool (no per-request executor to shut down).
     memory_rankings: list[list[str]] = []
     entity_ranking: list[str] = []
 
-    with ThreadPoolExecutor(max_workers=4) as pool:
-        futures = []
+    agents: list[tuple[str, partial]] = []
+    if entity_summaries:
+        entities_text = _format_entities_for_picker(entity_summaries)
+        agents.append((
+            "entity_picker",
+            partial(_run_entity_picker, query, entities_text, len(entity_summaries), model, project),
+        ))
+    if memories:
+        for role in AGENT_SYSTEM_PROMPTS:
+            agents.append((
+                role,
+                partial(_run_single_agent, role, query, memories_text, n_memories, model, project),
+            ))
 
-        # Entity picker agent (if entity pages exist)
-        if entity_summaries:
-            entities_text = _format_entities_for_picker(entity_summaries)
-            futures.append(
-                loop.run_in_executor(
-                    pool, _run_entity_picker,
-                    query, entities_text, len(entity_summaries), model, project,
-                )
+    if not agents:
+        return empty_response
+
+    runner = get_enrichment_runner(AGENT_MAX_IN_FLIGHT, name="agentic")
+    # Caller cancellation cancels every run() and propagates out of gather
+    outcomes = await asyncio.gather(
+        *(runner.run(fn, timeout=AGENT_TIMEOUT_SECONDS) for _, fn in agents)
+    )
+
+    degraded_agents: list[dict] = []
+    for (role, _), outcome in zip(agents, outcomes):
+        if outcome.status != "ok":
+            degraded_agents.append(
+                {"agent": role, "reason": outcome.status, "elapsed_ms": round(outcome.elapsed_ms)}
             )
-
-        # 3 memory search agents (if memories exist)
-        if memories:
-            for role in AGENT_SYSTEM_PROMPTS:
-                futures.append(
-                    loop.run_in_executor(
-                        pool, _run_single_agent,
-                        role, query, memories_text, n_memories, model, project,
-                    )
-                )
-
-        if not futures:
-            return empty_response
-
-        # Server-side timeout
-        try:
-            results = await asyncio.wait_for(
-                asyncio.gather(*futures, return_exceptions=True),
-                timeout=10.0,
+            detail = f" error={outcome.error}" if outcome.error else ""
+            logger.warning(
+                f"[AGENTIC] Agent degraded: agent={role} reason={outcome.status} "
+                f"elapsed_ms={outcome.elapsed_ms:.0f}{detail}"
             )
-        except asyncio.TimeoutError:
-            logger.warning("Agentic search timed out after 10s")
-            results = []
+            continue
 
-        for result in results:
-            if isinstance(result, Exception):
-                logger.warning(f"Agentic search agent failed: {result}")
-                continue
-            role, raw_response = result
-
-            if role == "entity_picker":
-                # Parse entity picker response against entity IDs
-                if isinstance(raw_response, str):
-                    entity_ranking = _parse_agent_response(raw_response, valid_ent_ids)
-                elif isinstance(raw_response, list):
-                    entity_ranking = raw_response
+        _, raw_response = outcome.value
+        if role == "entity_picker":
+            # Parse entity picker response against entity IDs
+            if isinstance(raw_response, str):
+                entity_ranking = _parse_agent_response(raw_response, valid_ent_ids)
+            elif isinstance(raw_response, list):
+                entity_ranking = raw_response
+        else:
+            # Parse memory agent response
+            if isinstance(raw_response, str):
+                parsed = _parse_agent_response(raw_response, valid_mem_ids)
             else:
-                # Parse memory agent response
-                if isinstance(raw_response, str):
-                    parsed = _parse_agent_response(raw_response, valid_mem_ids)
-                else:
-                    parsed = raw_response
-                if parsed:
-                    memory_rankings.append(parsed)
+                parsed = raw_response
+            if parsed:
+                memory_rankings.append(parsed)
+
+    if degraded_agents and not (memory_rankings or entity_ranking):
+        # Every agent either failed or (alongside failures) found nothing: we
+        # cannot claim the memories are absent.
+        reasons = ",".join(f"{d['agent']}={d['reason']}" for d in degraded_agents)
+        raise AgenticSearchError(f"Agentic search failed: no usable agent results ({reasons})")
 
     # Build entity results (top 3)
     top_entities = []
@@ -643,7 +670,7 @@ async def agentic_search_async(
     logger.info(
         f"Agentic search complete: {len(top_entities)} entities, "
         f"{len(top_memories)} memories from {n_memories} candidates "
-        f"+ {len(entity_summaries)} entity pages"
+        f"+ {len(entity_summaries)} entity pages, degraded_agents={len(degraded_agents)}"
     )
 
     return {
@@ -657,4 +684,7 @@ async def agentic_search_async(
         "total_candidates": n_memories,
         "entity_candidates": len(entity_summaries),
         "filtered_count": len(top_memories) + len(top_entities),
+        # Partial results: some agents timed out/failed/were saturated
+        "partial": bool(degraded_agents),
+        "degraded_agents": degraded_agents,
     }
