@@ -63,6 +63,7 @@ from cems.api.handlers import (
     health_check,
     ping,
 )
+from cems.api.handlers.memory import api_memory_facets
 from cems.api.handlers.wiki import (
     api_wiki_conflicts,
     api_wiki_entities,
@@ -196,6 +197,7 @@ def create_http_app():
         Route("/api/memory/conflicts", api_memory_conflicts, methods=["GET"]),
         Route("/api/memory/get", api_memory_get, methods=["GET"]),
         Route("/api/memory/list", api_memory_list, methods=["GET"]),
+        Route("/api/memory/facets", api_memory_facets, methods=["GET"]),
         Route("/api/memory/status", api_memory_status, methods=["GET"]),
         Route("/api/memory/foundation", api_memory_foundation, methods=["GET"]),
         Route("/api/memory/gate-rules", api_memory_gate_rules, methods=["GET"]),

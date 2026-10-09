@@ -1548,20 +1548,92 @@ async def api_memory_log_relevance(request: Request):
         return JSONResponse({"error": "Internal server error"}, status_code=500)
 
 
+_VALID_LIST_SCOPES = {"personal", "shared"}
+_FACET_FIELDS = {"tag", "source_ref", "category"}
+_MAX_TAG_FILTERS = 20
+_SEARCH_OVERFETCH_CAP = 200
+
+
+def _list_filter_params(request: Request) -> dict[str, Any]:
+    """Parse the narrowing filters shared by /api/memory/list and /api/memory/facets.
+
+    Unknown scope values fall back to None (own + shared), so a bad value can
+    never drop the ownership filter.
+    """
+    params = request.query_params
+    scope = (params.get("scope") or "").strip().lower() or None
+    if scope not in _VALID_LIST_SCOPES:
+        scope = None
+
+    tags: list[str] = []
+    for raw in params.getlist("tag"):
+        tag = raw.strip()
+        if tag and tag not in tags:
+            tags.append(tag)
+
+    return {
+        "scope": scope,
+        "category": (params.get("category") or "").strip() or None,
+        "tag_prefix": params.get("tag_prefix") or None,
+        "source_ref_prefix": params.get("source_ref_prefix") or None,
+        "tags": tags[:_MAX_TAG_FILTERS] or None,
+    }
+
+
+def _passes_list_filters(item: dict[str, Any], filters: dict[str, Any]) -> bool:
+    """Python-side twin of the SQL list filters, for search-mode post-filtering."""
+    if filters["category"] and item.get("category") != filters["category"]:
+        return False
+    if filters["scope"] and item.get("scope") != filters["scope"]:
+        return False
+    item_tags = item.get("tags") or []
+    if filters["tags"] and not set(filters["tags"]).issubset(item_tags):
+        return False
+    if filters["tag_prefix"] and not any(
+        t.startswith(filters["tag_prefix"]) for t in item_tags
+    ):
+        return False
+    if filters["source_ref_prefix"] and not (
+        item.get("source_ref") or ""
+    ).startswith(filters["source_ref_prefix"]):
+        return False
+    return True
+
+
+def _serialize_search_result(r: Any) -> dict[str, Any]:
+    """Flatten a SearchResult into the list-endpoint item shape."""
+    meta = r.metadata
+    created_at = meta.created_at.isoformat() if meta and meta.created_at else None
+    scope = r.scope.value if hasattr(r.scope, "value") else r.scope
+    return {
+        "id": r.memory_id,
+        "content": r.content,
+        "category": meta.category if meta else "",
+        "tags": list(meta.tags) if meta else [],
+        "scope": scope,
+        "source_ref": meta.source_ref if meta else None,
+        "created_at": created_at,
+        "shown_count": r.shown_count,
+        "score": r.score,
+    }
+
+
 async def api_memory_list(request: Request):
     """REST API endpoint to list memories with pagination and filtering.
 
-    GET /api/memory/list?limit=50&offset=0&category=testing&scope=personal&q=search&tag_prefix=session:abc
+    GET /api/memory/list?limit=50&offset=0&category=testing&scope=personal&q=search
+        &tag_prefix=session:abc&tag=slack-user:U1&tag=closeout&source_ref_prefix=project:org/repo
 
     Returns paginated results for browsing. If `q` is provided, uses semantic search
-    instead of listing. `tag_prefix` filters for docs with any tag starting with the prefix.
+    instead of listing; the other filters still apply (over-fetch + post-filter).
+    `tag_prefix` matches docs with any tag starting with the prefix.
+    `tag` is repeatable and exact-match with AND semantics.
+    `source_ref_prefix` matches docs whose source_ref starts with the prefix.
     """
     try:
         limit = _safe_int(request.query_params.get("limit"), 50, max_val=200)
         offset = _safe_int(request.query_params.get("offset"), 0, max_val=100000)
-        category = request.query_params.get("category")
-        scope = request.query_params.get("scope")
-        tag_prefix = request.query_params.get("tag_prefix")
+        filters = _list_filter_params(request)
         q = request.query_params.get("q", "").strip()
 
         memory = get_memory()
@@ -1570,22 +1642,23 @@ async def api_memory_list(request: Request):
         user_id = memory.config.user_id
 
         if q:
-            # Semantic search mode
-            results = await memory.search_async(q, scope=scope or "both", limit=limit)
-            serialized = []
-            for r in results:
-                d = r.model_dump(mode="json")
-                serialized.append({
-                    "id": d.get("document_id") or d.get("id", ""),
-                    "content": d.get("content", ""),
-                    "category": d.get("category", ""),
-                    "tags": d.get("tags", []),
-                    "scope": d.get("scope", ""),
-                    "source_ref": d.get("source_ref"),
-                    "created_at": d.get("created_at"),
-                    "shown_count": d.get("shown_count", 0),
-                    "score": d.get("score"),
-                })
+            # Semantic search mode. Over-fetch when filters are active, then
+            # post-filter in Python so category/scope/tags/source_ref still apply.
+            has_post_filters = any(
+                filters[k] for k in ("category", "tag_prefix", "source_ref_prefix", "tags")
+            )
+            fetch_limit = min(limit * 4, _SEARCH_OVERFETCH_CAP) if has_post_filters else limit
+            results = await memory.search_async(
+                q,
+                scope=filters["scope"] or "both",
+                category=filters["category"],
+                limit=fetch_limit,
+            )
+            serialized = [
+                item
+                for item in (_serialize_search_result(r) for r in results)
+                if _passes_list_filters(item, filters)
+            ][:limit]
 
             return JSONResponse({
                 "success": True,
@@ -1599,17 +1672,13 @@ async def api_memory_list(request: Request):
         # Browse mode — paginated list
         docs = await doc_store.get_all_documents(
             user_id=user_id,
-            scope=scope,
             limit=limit,
             offset=offset,
-            category=category,
-            tag_prefix=tag_prefix,
+            **filters,
         )
         total = await doc_store.count_documents(
             user_id=user_id,
-            scope=scope,
-            category=category,
-            tag_prefix=tag_prefix,
+            **filters,
         )
 
         results = []
@@ -1636,6 +1705,48 @@ async def api_memory_list(request: Request):
     except Exception as e:
         logger.error(f"API memory_list error: {e}", exc_info=True)
         return JSONResponse({"error": "Internal server error"}, status_code=500)
+
+
+async def api_memory_facets(request: Request):
+    """REST API endpoint for value counts used by the dashboard filters.
+
+    GET /api/memory/facets?field=tag&prefix=slack-user:&limit=50
+        [&tag=...&scope=...&category=...&source_ref_prefix=...]
+
+    field: "tag" (default) | "source_ref" | "category"
+    Visibility is the same as /api/memory/list: own memories + shared,
+    soft-deleted excluded. Returns {"success", "field", "facets": [{"value", "count"}]}.
+    """
+    try:
+        field = (request.query_params.get("field") or "tag").strip().lower()
+        if field not in _FACET_FIELDS:
+            return JSONResponse(
+                {"success": False, "error": f"field must be one of {sorted(_FACET_FIELDS)}"},
+                status_code=400,
+            )
+        limit = _safe_int(request.query_params.get("limit"), 50, max_val=500)
+        prefix = request.query_params.get("prefix") or None
+        filters = _list_filter_params(request)
+
+        memory = get_memory()
+        doc_store = await memory._ensure_document_store()
+
+        facets = await doc_store.get_facets(
+            user_id=memory.config.user_id,
+            field=field,
+            prefix=prefix,
+            limit=limit,
+            **filters,
+        )
+
+        return JSONResponse({
+            "success": True,
+            "field": field,
+            "facets": facets,
+        })
+    except Exception as e:
+        logger.error(f"API memory_facets error: {e}", exc_info=True)
+        return JSONResponse({"success": False, "error": "Internal server error"}, status_code=500)
 
 
 async def api_memory_summary_shared(request: Request):

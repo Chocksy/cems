@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.15.0
+
+New dashboard and memory filters. The `/wiki` dashboard has a new dark look, a sidebar that stays put, a list plus reader for memories, and a filter bar for person, channel, project, tag and category. Filters live in the URL, so you can share a filtered view.
+
+- `GET /api/memory/list` takes a repeatable `tag` (all must match) and `source_ref_prefix`. Filters now also apply when `q` is set.
+- New `GET /api/memory/facets?field=tag|source_ref|category&prefix=` returns value counts with the same visibility as the list.
+- Search results in the list endpoint now carry their `id` and metadata. Before, `id` came back empty.
+- An unknown `scope` value on the list endpoint now means "own plus shared". Before, it skipped the ownership filter.
+
 ## 0.14.3
 
 Fixes a server crash loop on fresh images. SQLAlchemy 2.1 maps a bare `postgresql://` URL to the psycopg (v3) driver, which CEMS doesn't ship, so the server died on boot with `ModuleNotFoundError: No module named 'psycopg'`. The sync engine now asks for `postgresql+psycopg2://` explicitly.

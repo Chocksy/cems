@@ -78,6 +78,31 @@ def chunk_row_to_result(row: asyncpg.Record, include_score: bool = False) -> dic
     return result
 
 
+def _add_document_filters(
+    fb: FilterBuilder,
+    *,
+    category: str | None = None,
+    tag_prefix: str | None = None,
+    source_ref_prefix: str | None = None,
+    tags: list[str] | None = None,
+) -> None:
+    """Add the shared list/count/facet narrowing filters to a FilterBuilder.
+
+    `tags` uses `tags @> $n::text[]` (AND semantics, served by the GIN index).
+    """
+    if category:
+        fb.add_param("category = ${}", category)
+    if tag_prefix:
+        fb.add_param(
+            "EXISTS (SELECT 1 FROM unnest(tags) t WHERE t LIKE ${} || '%')",
+            tag_prefix,
+        )
+    if source_ref_prefix:
+        fb.add_param("source_ref LIKE ${} || '%'", source_ref_prefix)
+    if tags:
+        fb.add_param("tags @> ${}::text[]", list(tags))
+
+
 class DocumentStore:
     """PostgreSQL store for documents and chunks.
 
@@ -1060,6 +1085,7 @@ class DocumentStore:
         tag_prefix: str | None = None,
         source_ref_prefix: str | None = None,
         created_after: "datetime | None" = None,
+        tags: list[str] | None = None,
     ) -> list[dict[str, Any]]:
         """Get all documents for a user with pagination and filtering.
 
@@ -1073,6 +1099,7 @@ class DocumentStore:
             tag_prefix: Optional tag prefix filter (matches docs with any tag starting with this)
             source_ref_prefix: Optional source_ref prefix filter (e.g., "project:chocksy/cems")
             created_after: Optional datetime filter — only return docs created after this time
+            tags: Optional exact tags; a doc must carry ALL of them (AND)
 
         Returns:
             List of document dicts
@@ -1084,15 +1111,13 @@ class DocumentStore:
         fb.add_ownership_filter(
             user_id, scope or "both",
         )
-        if category:
-            fb.add_param("category = ${}", category)
-        if tag_prefix:
-            fb.add_param(
-                "EXISTS (SELECT 1 FROM unnest(tags) t WHERE t LIKE ${} || '%')",
-                tag_prefix,
-            )
-        if source_ref_prefix:
-            fb.add_param("source_ref LIKE ${} || '%'", source_ref_prefix)
+        _add_document_filters(
+            fb,
+            category=category,
+            tag_prefix=tag_prefix,
+            source_ref_prefix=source_ref_prefix,
+            tags=tags,
+        )
         if created_after:
             fb.add_param("created_at >= ${}", created_after)
 
@@ -1117,6 +1142,8 @@ class DocumentStore:
         scope: str | None = None,
         category: str | None = None,
         tag_prefix: str | None = None,
+        source_ref_prefix: str | None = None,
+        tags: list[str] | None = None,
     ) -> int:
         """Count documents for a user with optional filters.
 
@@ -1125,6 +1152,8 @@ class DocumentStore:
             scope: Optional scope filter
             category: Optional category filter
             tag_prefix: Optional tag prefix filter (matches any tag starting with prefix)
+            source_ref_prefix: Optional source_ref prefix filter
+            tags: Optional exact tags; a doc must carry ALL of them (AND)
 
         Returns:
             Document count matching the filters
@@ -1136,10 +1165,13 @@ class DocumentStore:
         fb.add_ownership_filter(
             user_id, scope or "both",
         )
-        if category:
-            fb.add_param("category = ${}", category)
-        if tag_prefix:
-            fb.add_param("EXISTS (SELECT 1 FROM unnest(tags) t WHERE t LIKE ${} || '%')", tag_prefix)
+        _add_document_filters(
+            fb,
+            category=category,
+            tag_prefix=tag_prefix,
+            source_ref_prefix=source_ref_prefix,
+            tags=tags,
+        )
 
         query = f"SELECT COUNT(*) FROM memory_documents WHERE {fb.build()}"
 
@@ -1147,6 +1179,81 @@ class DocumentStore:
             result = await conn.fetchval(query, *fb.values)
 
         return result or 0
+
+    async def get_facets(
+        self,
+        user_id: str,
+        field: Literal["tag", "source_ref", "category"] = "tag",
+        prefix: str | None = None,
+        limit: int = 50,
+        scope: str | None = None,
+        category: str | None = None,
+        tag_prefix: str | None = None,
+        source_ref_prefix: str | None = None,
+        tags: list[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        """Count visible documents grouped by tag, source_ref, or category.
+
+        Visibility matches get_all_documents: own docs + shared docs,
+        soft-deleted docs excluded. The narrowing filters are the same
+        ones the list endpoint accepts.
+
+        Args:
+            user_id: User ID
+            field: Which value to group by ("tag", "source_ref", "category")
+            prefix: Only return values starting with this prefix
+            limit: Maximum number of facet values
+            scope, category, tag_prefix, source_ref_prefix, tags: Narrowing filters
+
+        Returns:
+            List of {"value": str, "count": int}, highest count first
+        """
+        pool = await self._get_pool()
+
+        fb = FilterBuilder(start_idx=1)
+        fb.add("deleted_at IS NULL")
+        fb.add_ownership_filter(
+            user_id, scope or "both",
+        )
+        _add_document_filters(
+            fb,
+            category=category,
+            tag_prefix=tag_prefix,
+            source_ref_prefix=source_ref_prefix,
+            tags=tags,
+        )
+
+        if field == "tag":
+            value_expr = "t"
+            from_clause = "memory_documents, unnest(tags) AS t"
+        elif field == "source_ref":
+            value_expr = "source_ref"
+            from_clause = "memory_documents"
+            fb.add("source_ref IS NOT NULL")
+        elif field == "category":
+            value_expr = "category"
+            from_clause = "memory_documents"
+        else:
+            raise ValueError(f"Unsupported facet field: {field}")
+
+        if prefix:
+            fb.add_param(f"{value_expr} LIKE ${{}} || '%'", prefix)
+
+        (limit_idx,) = fb.add_raw_values(limit)
+
+        query = f"""
+            SELECT {value_expr} AS value, COUNT(*) AS count
+            FROM {from_clause}
+            WHERE {fb.build()}
+            GROUP BY {value_expr}
+            ORDER BY count DESC, value ASC
+            LIMIT ${limit_idx}
+        """
+
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(query, *fb.values)
+
+        return [{"value": row["value"], "count": row["count"]} for row in rows]
 
     async def get_document_category_counts(
         self,
