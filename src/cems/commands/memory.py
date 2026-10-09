@@ -11,7 +11,13 @@ from cems.client import CEMSClientError
 
 @click.command()
 @click.argument("content")
-@click.option("--scope", "-s", default="personal", type=click.Choice(["personal", "shared"]))
+@click.option(
+    "--scope",
+    "-s",
+    default=None,
+    type=click.Choice(["personal", "shared"]),
+    help="Memory scope. Omit to use server's CEMS_DEFAULT_SCOPE.",
+)
 @click.option("--category", "-c", default="general", help="Memory category")
 @click.option("--tags", "-t", multiple=True, help="Tags for the memory")
 @click.option("--source-ref", help="Project reference (e.g., project:org/repo)")
@@ -19,7 +25,7 @@ from cems.client import CEMSClientError
 def add(
     ctx: click.Context,
     content: str,
-    scope: str,
+    scope: str | None,
     category: str,
     tags: tuple,
     source_ref: str | None,

@@ -63,10 +63,10 @@ function createMcpServer(authHeaders: { authorization?: string }) {
     "memory_add",
       {
         title: "Add Memory",
-        description: "Store a memory in personal or shared namespace. Set infer=false for bulk imports (much faster).",
+        description: "Store a memory. Omit scope to use server's CEMS_DEFAULT_SCOPE (per-instance default). Set infer=false for bulk imports (much faster).",
         inputSchema: {
           content: z.string().describe("What to remember"),
-          scope: z.enum(["personal", "shared"]).default("personal").describe("Namespace"),
+          scope: z.enum(["personal", "shared"]).optional().describe("Namespace — omit to use server's CEMS_DEFAULT_SCOPE"),
           category: z.string().default("general").describe("Category for organization"),
           tags: z.array(z.string()).default([]).describe("Optional tags"),
           infer: z.boolean().default(true).describe("Use LLM for fact extraction (true) or store raw (false). Use false for bulk imports."),
@@ -75,13 +75,16 @@ function createMcpServer(authHeaders: { authorization?: string }) {
       },
     async (args) => {
       const auth = getAuthHeaders();
+      // Strip undefined scope so server can apply CEMS_DEFAULT_SCOPE
+      const payload: Record<string, unknown> = { ...args };
+      if (payload.scope === undefined) delete payload.scope;
       const response = await fetch(`${PYTHON_API_URL}/api/memory/add`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           ...(auth.authorization && { Authorization: auth.authorization }),
         },
-        body: JSON.stringify(args),
+        body: JSON.stringify(payload),
       });
 
       if (!response.ok) {

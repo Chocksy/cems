@@ -112,10 +112,17 @@ async def api_memory_add(request: Request):
         category = raw_category if raw_category in functional else normalize_category(raw_category)
 
         # Normalize scope — LLMs sometimes send invalid values like "project"
+        # When client omits scope, honor per-instance CEMS_DEFAULT_SCOPE.
         valid_scopes = {"personal", "shared"}
         scope_aliases = {"project": "personal", "private": "personal", "global": "shared", "org": "shared", "team": "shared", "company": "shared"}
-        raw_scope = body.get("scope", "personal").lower().strip()
-        scope = raw_scope if raw_scope in valid_scopes else scope_aliases.get(raw_scope, "personal")
+        memory = get_memory()
+        default_scope = memory.config.default_scope if memory.config.default_scope in valid_scopes else "personal"
+        raw_scope = body.get("scope")
+        if raw_scope is None:
+            scope = default_scope
+        else:
+            raw_scope = str(raw_scope).lower().strip()
+            scope = raw_scope if raw_scope in valid_scopes else scope_aliases.get(raw_scope, default_scope)
 
         # Normalize tags — handle comma-separated strings from LLMs
         raw_tags = body.get("tags", [])
@@ -141,7 +148,6 @@ async def api_memory_add(request: Request):
             except ValueError:
                 return JSONResponse({"error": "Invalid timestamp format. Use ISO format."}, status_code=400)
 
-        memory = get_memory()
         result = await memory.add_async(
             content,
             scope=scope,
@@ -279,8 +285,15 @@ async def api_memory_add_batch(request: Request):
             }
             documents.append(doc)
 
-        # Determine scope (use first memory's scope, default to personal)
-        scope = memories[0].get("scope", "personal") if memories else "personal"
+        # Determine scope — first memory's scope wins; fall back to per-instance default.
+        valid_scopes = {"personal", "shared"}
+        default_scope = memory.config.default_scope if memory.config.default_scope in valid_scopes else "personal"
+        raw_scope = memories[0].get("scope") if memories else None
+        if raw_scope is None:
+            scope = default_scope
+        else:
+            raw_scope = str(raw_scope).lower().strip()
+            scope = raw_scope if raw_scope in valid_scopes else default_scope
 
         # Step 5: Batch insert into database
         user_id = memory.config.user_id

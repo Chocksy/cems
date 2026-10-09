@@ -53,6 +53,8 @@ services:
       CEMS_ENABLE_AGENTIC_SEARCH: ${CEMS_ENABLE_AGENTIC_SEARCH:-true}
       CEMS_RETRIEVAL_LLM_BUDGET_SECONDS: ${CEMS_RETRIEVAL_LLM_BUDGET_SECONDS:-2.0}
       CEMS_RETRIEVAL_LLM_TIMEOUT_SECONDS: ${CEMS_RETRIEVAL_LLM_TIMEOUT_SECONDS:-2.0}
+      # Scope for new memories when the client omits `scope`: personal or shared.
+      CEMS_DEFAULT_SCOPE: ${CEMS_DEFAULT_SCOPE:-personal}
     ports:
       - "8765:8765"
     depends_on:

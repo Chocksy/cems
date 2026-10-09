@@ -145,7 +145,7 @@ class CEMSClient:
         self,
         content: str,
         category: str = "general",
-        scope: Literal["personal", "shared"] = "personal",
+        scope: Literal["personal", "shared"] | None = None,
         tags: list[str] | None = None,
         source_ref: str | None = None,
     ) -> dict[str, Any]:
@@ -154,7 +154,8 @@ class CEMSClient:
         Args:
             content: Content to remember
             category: Category for organization
-            scope: "personal" or "shared"
+            scope: "personal" or "shared". Omit to use the server's
+                CEMS_DEFAULT_SCOPE (per-instance default).
             tags: Optional tags
             source_ref: Project reference (e.g., "project:org/repo")
 
@@ -164,9 +165,10 @@ class CEMSClient:
         payload: dict[str, Any] = {
             "content": content,
             "category": category,
-            "scope": scope,
             "tags": tags or [],
         }
+        if scope is not None:
+            payload["scope"] = scope
         if source_ref:
             payload["source_ref"] = source_ref
 

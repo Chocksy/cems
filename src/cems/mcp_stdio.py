@@ -275,22 +275,23 @@ def _normalize_tags(tags) -> list[str]:
 @mcp.tool()
 def memory_add(
     content: str,
-    scope: str = "personal",
+    scope: str | None = None,
     category: str = "general",
     tags: list[str] | None = None,
     infer: bool = True,
     source_ref: str | None = None,
 ) -> str:
-    """Store a memory. Scope must be personal or shared. Set infer=false for bulk imports (faster)."""
+    """Store a memory. Scope is 'personal' or 'shared'; omit to use server's CEMS_DEFAULT_SCOPE. Set infer=false for bulk imports (faster)."""
     if not API_URL:
         return _NOT_CONFIGURED_MSG
     payload: dict = {
         "content": content,
-        "scope": _normalize_scope(scope),
         "category": category,
         "tags": _normalize_tags(tags),
         "infer": infer,
     }
+    if scope is not None:
+        payload["scope"] = _normalize_scope(scope)
     if source_ref:
         payload["source_ref"] = source_ref
     return json.dumps(_request("POST", "/api/memory/add", payload))

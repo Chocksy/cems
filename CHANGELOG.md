@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.15.1
+
+New memories without a `scope` now use the server's `CEMS_DEFAULT_SCOPE` (default `personal`, so nothing changes unless you set it). Set it to `shared` on a single-team server. The MCP tools, the CLI and the Python client now leave `scope` out unless you pass one. The old unused `static/dashboard/` files are gone.
+
 ## 0.15.0
 
 New dashboard and memory filters. The `/wiki` dashboard has a new dark look, a sidebar that stays put, a list plus reader for memories, and a filter bar for person, channel, project, tag and category. Filters live in the URL, so you can share a filtered view.

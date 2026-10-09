@@ -141,6 +141,101 @@ class TestMemoryAPI:
     @patch("cems.db.database.is_database_initialized", return_value=True)
     @patch("cems.db.database.get_database")
     @patch.object(memory_handlers, "get_memory")
+    def test_memory_add_uses_config_default_scope_when_omitted(
+        self, mock_get_memory, mock_db, mock_is_db, mock_memory, mock_user
+    ):
+        """When request body omits scope, handler must use config.default_scope."""
+        mock_memory.config.default_scope = "personal"
+        mock_get_memory.return_value = mock_memory
+
+        mock_session = MagicMock()
+        mock_user_service = MagicMock()
+        mock_user_service.get_user_by_api_key.return_value = mock_user
+        mock_db.return_value.session.return_value.__enter__ = MagicMock(return_value=mock_session)
+        mock_db.return_value.session.return_value.__exit__ = MagicMock(return_value=False)
+
+        with patch("cems.admin.services.UserService", return_value=mock_user_service):
+            from cems.server import create_http_app
+            app = create_http_app()
+            client = TestClient(app)
+
+            response = client.post(
+                "/api/memory/add",
+                json={"content": "Scope-less write", "category": "test"},
+                headers={"Authorization": "Bearer test-api-key"}
+            )
+
+            assert response.status_code == 200
+            mock_memory.add_async.assert_awaited_once()
+            kwargs = mock_memory.add_async.call_args.kwargs
+            assert kwargs["scope"] == "personal"
+
+    @patch("cems.db.database.is_database_initialized", return_value=True)
+    @patch("cems.db.database.get_database")
+    @patch.object(memory_handlers, "get_memory")
+    def test_memory_add_honors_explicit_scope(
+        self, mock_get_memory, mock_db, mock_is_db, mock_memory, mock_user
+    ):
+        """When request body provides scope, handler must honor it (not default_scope)."""
+        mock_memory.config.default_scope = "personal"  # instance default
+        mock_get_memory.return_value = mock_memory
+
+        mock_session = MagicMock()
+        mock_user_service = MagicMock()
+        mock_user_service.get_user_by_api_key.return_value = mock_user
+        mock_db.return_value.session.return_value.__enter__ = MagicMock(return_value=mock_session)
+        mock_db.return_value.session.return_value.__exit__ = MagicMock(return_value=False)
+
+        with patch("cems.admin.services.UserService", return_value=mock_user_service):
+            from cems.server import create_http_app
+            app = create_http_app()
+            client = TestClient(app)
+
+            response = client.post(
+                "/api/memory/add",
+                json={"content": "Explicit shared", "category": "test", "scope": "shared"},
+                headers={"Authorization": "Bearer test-api-key"}
+            )
+
+            assert response.status_code == 200
+            mock_memory.add_async.assert_awaited_once()
+            kwargs = mock_memory.add_async.call_args.kwargs
+            assert kwargs["scope"] == "shared"
+
+    @patch("cems.db.database.is_database_initialized", return_value=True)
+    @patch("cems.db.database.get_database")
+    @patch.object(memory_handlers, "get_memory")
+    def test_memory_add_invalid_scope_alias_falls_back_to_default(
+        self, mock_get_memory, mock_db, mock_is_db, mock_memory, mock_user
+    ):
+        """Garbage scope values with no alias must fall back to config.default_scope."""
+        mock_memory.config.default_scope = "personal"
+        mock_get_memory.return_value = mock_memory
+
+        mock_session = MagicMock()
+        mock_user_service = MagicMock()
+        mock_user_service.get_user_by_api_key.return_value = mock_user
+        mock_db.return_value.session.return_value.__enter__ = MagicMock(return_value=mock_session)
+        mock_db.return_value.session.return_value.__exit__ = MagicMock(return_value=False)
+
+        with patch("cems.admin.services.UserService", return_value=mock_user_service):
+            from cems.server import create_http_app
+            app = create_http_app()
+            client = TestClient(app)
+
+            response = client.post(
+                "/api/memory/add",
+                json={"content": "Bad scope", "scope": "nonsense-xyz"},
+                headers={"Authorization": "Bearer test-api-key"}
+            )
+
+            assert response.status_code == 200
+            kwargs = mock_memory.add_async.call_args.kwargs
+            assert kwargs["scope"] == "personal"
+
+    @patch("cems.db.database.is_database_initialized", return_value=True)
+    @patch("cems.db.database.get_database")
+    @patch.object(memory_handlers, "get_memory")
     def test_memory_add_requires_content(self, mock_get_memory, mock_db, mock_is_db, mock_memory, mock_user):
         """Test POST /api/memory/add requires content field."""
         mock_get_memory.return_value = mock_memory
