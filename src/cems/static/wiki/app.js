@@ -263,6 +263,9 @@
   // --- Stats ---
   async function loadStats() {
     try {
+      fetch(baseUrl + "/health").then((r) => r.json()).then((h) => {
+        if (h.version) document.getElementById("server-version").textContent = "CEMS v" + h.version;
+      }).catch(() => {});
       const data = await apiFetch("/api/wiki/stats");
       if (!data.success) return;
       const s = data.stats;

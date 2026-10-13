@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.15.2
+
+The dashboard sidebar now shows the server version (for example `CEMS v0.15.2`) under the Logout button, so you can tell which release a server runs.
+
 ## 0.15.1
 
 New memories without a `scope` now use the server's `CEMS_DEFAULT_SCOPE` (default `personal`, so nothing changes unless you set it). Set it to `shared` on a single-team server. The MCP tools, the CLI and the Python client now leave `scope` out unless you pass one. The old unused `static/dashboard/` files are gone.
