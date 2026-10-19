@@ -536,3 +536,28 @@ class TestAgenticSearchAsync:
             )
 
         assert result["count"] == len(result["entities"]) + len(result["memories"])
+
+
+class TestPromptCacheLayout:
+    """The memory dump must be a shared prefix so providers can cache it."""
+
+    def test_all_agents_share_the_same_system_prompt(self, monkeypatch):
+        from cems.agentic import search
+
+        calls = []
+
+        class FakeClient:
+            def complete(self, prompt, system=None, **kwargs):
+                calls.append((system, prompt))
+                return "[]"
+
+        monkeypatch.setattr(search, "get_client", lambda: FakeClient())
+        for role in search.AGENT_SYSTEM_PROMPTS:
+            search._run_single_agent(role, "where do I deploy?", "MEMORY DUMP", 1, "m", "org/repo")
+
+        systems = {system for system, _ in calls}
+        assert len(systems) == 1
+        assert "MEMORY DUMP" in systems.pop()
+        for (_, prompt), role_text in zip(calls, search.AGENT_SYSTEM_PROMPTS.values()):
+            assert prompt.startswith(role_text)
+            assert "where do I deploy?" in prompt and "MEMORY DUMP" not in prompt

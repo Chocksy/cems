@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.15.3
+
+Agentic search costs about 5x less. The three search agents now share one cached prompt prefix: the memory dump goes first, oldest memory first, with an explicit cache marker on OpenRouter. The role and the question go after it. In a test with a 130K-token dump, a search fell from $0.034 to $0.006, and median agent latency fell from 2.7s to 1.0s. Recall is unchanged because the model is unchanged.
+
+- New `cache_system` option on `OpenRouterClient.complete()`. It applies only on OpenRouter, so other OpenAI-compatible endpoints get the plain system prompt.
+- The agentic eval has a new `--stride N` option. The dataset is grouped by question type, so `--stride 10` samples every type.
+
 ## 0.15.2
 
 The dashboard sidebar now shows the server version (for example `CEMS v0.15.2`) under the Logout button, so you can tell which release a server runs.

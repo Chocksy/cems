@@ -556,6 +556,10 @@ def main():
         help="Number of questions to evaluate (default: 10)"
     )
     parser.add_argument(
+        "--stride", type=int, default=1,
+        help="Take every Nth question (dataset is grouped by type; 10 covers all types)"
+    )
+    parser.add_argument(
         "--dataset", choices=["oracle", "s"], default="s",
         help="Dataset variant (default: s)"
     )
@@ -616,7 +620,9 @@ def main():
     # Download/load data
     try:
         data_file = download_dataset(variant=args.dataset, force=args.download)
-        questions = load_longmemeval(data_file, limit=args.questions, variant=args.dataset)
+        questions = load_longmemeval(data_file, variant=args.dataset)
+        # The dataset is grouped by question type; a stride spreads the sample across types
+        questions = questions[:: args.stride][: args.questions]
     except Exception as e:
         print(f"Error loading data: {e}", file=sys.stderr)
         sys.exit(1)

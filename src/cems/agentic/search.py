@@ -119,14 +119,19 @@ Return at most 5 IDs.
 Example output: ["abc12345", "def67890"]"""
 
 
-SEARCH_USER_PROMPT = """I need to find which stored memories are relevant to answering this question:
+# The memory dump goes first and is identical for every agent and for every
+# search until memories change, so providers can serve it from the prompt
+# cache (~10x cheaper input). Anything per-agent or per-query goes after it.
+MEMORIES_SYSTEM_PROMPT = """You are a memory retrieval specialist. Below are stored memories, oldest first. Each is labeled with its ID (a short hash).
+
+{formatted_memories}"""
+
+SEARCH_USER_PROMPT = """{role_instructions}
+
+I need to find which stored memories are relevant to answering this question:
 
 QUESTION: {question}
 {project_context}
-Below are {n} stored memories. Each is labeled with its ID (a short hash).
-
-{formatted_memories}
-
 Return a JSON array of memory IDs ranked by relevance to the question, most relevant first.
 Return ONLY IDs that are relevant. If none seem relevant, return an empty array.
 Return at most 10 IDs.
@@ -321,12 +326,11 @@ def _run_single_agent(
     Raises on provider errors and empty completions; an explicit "[]" is a
     valid no-match.
     """
-    system = AGENT_SYSTEM_PROMPTS[role]
+    system = MEMORIES_SYSTEM_PROMPT.format(formatted_memories=memories_text)
     project_context = f"\nCURRENT PROJECT: {project}\n" if project else ""
     user_prompt = SEARCH_USER_PROMPT.format(
+        role_instructions=AGENT_SYSTEM_PROMPTS[role],
         question=question,
-        n=n_memories,
-        formatted_memories=memories_text,
         project_context=project_context,
     )
 
@@ -337,6 +341,7 @@ def _run_single_agent(
         temperature=0.1,
         max_tokens=1000,
         fast_route=False,
+        cache_system=True,
     )
 
     if not response or not response.strip():
@@ -544,7 +549,9 @@ async def agentic_search_async(
     if not memories and not entity_summaries:
         return empty_response
 
-    # Format memories for memory agents
+    # Relevance decided which memories fit the budget; render them oldest
+    # first so new memories append at the end and the cached prefix survives.
+    memories = sorted(memories, key=lambda m: (str(m.get("created_at") or ""), str(m.get("id", ""))))
     memories_text = _format_memories_for_agents(memories) if memories else ""
     n_memories = len(memories)
 

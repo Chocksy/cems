@@ -151,6 +151,7 @@ class OpenRouterClient:
         temperature: float = 0.3,
         model: str | None = None,
         fast_route: bool = True,
+        cache_system: bool = False,
     ) -> str:
         """Generate a completion from the LLM.
 
@@ -166,12 +167,21 @@ class OpenRouterClient:
             model: Override model for this call
             fast_route: Route through fast providers (default True). Disable for
                 models only available from specific providers (e.g., Gemini).
+            cache_system: Mark the system prompt for provider prompt caching
+                (OpenRouter only). Use for large prefixes reused across calls.
 
         Returns:
             Generated text response
         """
         messages = []
-        if system:
+        if system and cache_system and self.is_openrouter:
+            # Gemini's implicit cache hit 2 of 15 calls on a 130K-token prefix;
+            # the explicit breakpoint hit 15 of 15 (cached input is ~10x cheaper).
+            messages.append({
+                "role": "system",
+                "content": [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
+            })
+        elif system:
             messages.append({"role": "system", "content": system})
         messages.append({"role": "user", "content": prompt})
 

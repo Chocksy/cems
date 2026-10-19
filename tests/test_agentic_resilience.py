@@ -39,7 +39,7 @@ class StubAgentLLM:
             self.stall.wait(timeout=10)
         if self.error:
             raise self.error
-        if self.fail_temporal and system and system.startswith(TEMPORAL_ROLE_PREFIX):
+        if self.fail_temporal and prompt.startswith(TEMPORAL_ROLE_PREFIX):
             raise RuntimeError("provider said: sk-or-SECRET")
         return self.response
 

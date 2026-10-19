@@ -110,6 +110,28 @@ class TestOpenRouterClient:
         client.complete("hi", fast_route=True)
         assert "extra_body" in mock_client.chat.completions.create.call_args[1]
 
+    @patch.dict(os.environ, {"OPENROUTER_API_KEY": "test-key"})
+    @patch("cems.llm.client.OpenAI")
+    def test_cache_system_marks_system_prompt_on_openrouter_only(self, mock_openai_class):
+        """cache_system adds a cache_control breakpoint on OpenRouter, plain text elsewhere."""
+        from cems.llm import OpenRouterClient
+
+        mock_client = MagicMock()
+        mock_openai_class.return_value = mock_client
+        mock_client.chat.completions.create.return_value = MagicMock(
+            choices=[MagicMock(message=MagicMock(content="ok"), finish_reason="stop")]
+        )
+
+        OpenRouterClient().complete("q", system="DUMP", cache_system=True)
+        system_msg = mock_client.chat.completions.create.call_args[1]["messages"][0]
+        assert system_msg["content"] == [
+            {"type": "text", "text": "DUMP", "cache_control": {"type": "ephemeral"}}
+        ]
+
+        with patch.dict(os.environ, {"CEMS_LLM_BASE_URL": "http://ollama:11434/v1", "CEMS_LLM_API_KEY": "x"}):
+            OpenRouterClient(model="m").complete("q", system="DUMP", cache_system=True)
+        assert mock_client.chat.completions.create.call_args[1]["messages"][0]["content"] == "DUMP"
+
     @patch.dict(os.environ, {"OPENROUTER_API_KEY": "k", "CEMS_LLM_MODEL": "gpt-4o"})
     @patch("cems.llm.client.OpenAI")
     def test_env_model_is_picked_up_via_config(self, mock_openai_class):
