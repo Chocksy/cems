@@ -23,6 +23,7 @@ services:
       - "8765"
     labels:
       - "traefik.enable=true"
+      - "traefik.docker.network=coolify"
       - "traefik.http.routers.cems-server.rule=Host(`cems.chocksy.com`)"
       - "traefik.http.routers.cems-server.entryPoints=https"
       - "traefik.http.routers.cems-server.tls=true"
@@ -49,6 +50,7 @@ services:
       - "8766"
     labels:
       - "traefik.enable=true"
+      - "traefik.docker.network=coolify"
       - "traefik.http.routers.cems-mcp.rule=Host(`mcp-cems.chocksy.com`)"
       - "traefik.http.routers.cems-mcp.entryPoints=https"
       - "traefik.http.routers.cems-mcp.tls=true"
