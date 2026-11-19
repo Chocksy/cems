@@ -17,18 +17,18 @@ import cems.memory.enrichment as enrichment_mod
 from cems.agentic.search import AgenticSearchError, agentic_search_async
 
 MEMORY_ID = "abc12345-0000-0000-0000-000000000000"
-TEMPORAL_ROLE_PREFIX = "You are a Temporal Navigator"
+ENTITY = {"id": "ent12345-0000", "title": "Payroll", "summary": "approvals", "sources": "3"}
 
 
 class StubAgentLLM:
-    """Agent LLM stub; can stall, fail, or fail only the temporal agent."""
+    """Agent LLM stub; can stall, fail, or fail only the memory agent."""
 
     def __init__(self, response: str = '["abc12345"]'):
         self.response = response
         self.stalling = False
         self.stall = threading.Event()
         self.error: Exception | None = None
-        self.fail_temporal = False
+        self.fail_memory = False
         self.started = 0
         self._lock = threading.Lock()
 
@@ -39,7 +39,7 @@ class StubAgentLLM:
             self.stall.wait(timeout=10)
         if self.error:
             raise self.error
-        if self.fail_temporal and prompt.startswith(TEMPORAL_ROLE_PREFIX):
+        if self.fail_memory and prompt.startswith(agentic.MERGED_ROLE_INSTRUCTIONS):
             raise RuntimeError("provider said: sk-or-SECRET")
         return self.response
 
@@ -115,7 +115,7 @@ class TestStalledAgents:
 
         hb = asyncio.create_task(heartbeat())
         start = time.perf_counter()
-        with pytest.raises(AgenticSearchError, match="direct_seeker=timeout"):
+        with pytest.raises(AgenticSearchError, match="memory_seeker=timeout"):
             await _search()
         elapsed = time.perf_counter() - start
 
@@ -128,14 +128,14 @@ class TestStalledAgents:
         assert ordinary == "ok"
         assert max(gaps) < 0.2, f"event loop stalled for {max(gaps):.3f}s"
         runner = _agent_runner()
-        assert runner.in_flight == 3  # still running after the request gave up
+        assert runner.in_flight == 1  # still running after the request gave up
         await _wait_until(lambda: runner.in_flight == 0)
 
     async def test_total_provider_failure_is_an_error_not_empty_success(self, llm):
         llm.error = httpx.ConnectTimeout("connect")
         with pytest.raises(AgenticSearchError) as exc:
             await _search()
-        assert "inference_engine=failure" in str(exc.value)
+        assert "memory_seeker=failure" in str(exc.value)
 
     async def test_all_agents_complete_with_nothing_is_genuine_empty(self, llm):
         llm.response = "[]"
@@ -146,15 +146,17 @@ class TestStalledAgents:
 
 
 class TestPartialResults:
-    async def test_partial_success_returns_rankings_with_degradation(self, llm, caplog):
-        llm.fail_temporal = True
+    async def test_partial_success_returns_rankings_with_degradation(self, llm, monkeypatch, caplog):
+        monkeypatch.setattr(agentic, "_load_entity_summaries", AsyncMock(return_value=[ENTITY]))
+        llm.response = '["ent12345"]'
+        llm.fail_memory = True
         result = await _search()
         assert result["partial"] is True
-        assert [d["agent"] for d in result["degraded_agents"]] == ["temporal_navigator"]
+        assert [d["agent"] for d in result["degraded_agents"]] == ["memory_seeker"]
         assert result["degraded_agents"][0]["reason"] == "failure"
-        assert [m["memory_id"] for m in result["memories"]] == [MEMORY_ID]
-        assert result["memories"][0]["source_ref"] == "project:alpha"
-        assert "agent=temporal_navigator reason=failure" in caplog.text
+        assert result["memories"] == []
+        assert [e["title"] for e in result["entities"]] == ["Payroll"]
+        assert "agent=memory_seeker reason=failure" in caplog.text
         assert "error=RuntimeError" in caplog.text
         assert "sk-or-SECRET" not in caplog.text
 
@@ -164,13 +166,13 @@ class TestCancellationAndCapacity:
         llm.stalling = True
         monkeypatch.setattr(agentic, "AGENT_TIMEOUT_SECONDS", 5.0)
         task = asyncio.create_task(_search())
-        await _wait_until(lambda: llm.started == 3)
+        await _wait_until(lambda: llm.started == 1)
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await task
 
         runner = _agent_runner()
-        assert runner.in_flight == 3
+        assert runner.in_flight == 1
         llm.stall.set()
         await _wait_until(lambda: runner.in_flight == 0)
         llm.stalling = False
@@ -178,7 +180,7 @@ class TestCancellationAndCapacity:
         assert result["count"] == 1
 
     async def test_repeated_requests_cannot_grow_pools_or_work(self, llm, monkeypatch):
-        monkeypatch.setattr(agentic, "AGENT_MAX_IN_FLIGHT", 3)
+        monkeypatch.setattr(agentic, "AGENT_MAX_IN_FLIGHT", 1)
         llm.stalling = True
         threads_before = threading.active_count()
 
@@ -187,11 +189,11 @@ class TestCancellationAndCapacity:
         assert sum("capacity" in str(o) for o in outcomes) >= 5
 
         runner = _agent_runner()
-        assert llm.started == 3
-        assert runner.in_flight == 3
+        assert llm.started == 1
+        assert runner.in_flight == 1
         assert runner._executor._work_queue.qsize() == 0
-        assert len(runner._executor._threads) <= 3
-        assert threading.active_count() - threads_before <= 3
+        assert len(runner._executor._threads) <= 1
+        assert threading.active_count() - threads_before <= 1
 
         # Saturated requests fail fast instead of waiting out the budget
         start = time.perf_counter()
@@ -225,40 +227,37 @@ class TestEmptyCompletions:
     def test_helpers_raise_on_empty_completion(self, llm, empty):
         llm.response = empty
         with pytest.raises(agentic.AgentEmptyResponseError) as exc:
-            agentic._run_single_agent("direct_seeker", "q", "mem text", 1, "m")
-        assert str(exc.value) == "direct_seeker returned an empty completion"
+            agentic._run_single_agent("q", "mem text", 1, "m")
+        assert str(exc.value) == "memory_seeker returned an empty completion"
         with pytest.raises(agentic.AgentEmptyResponseError):
             agentic._run_entity_picker("q", "entity text", 1, "m")
 
     def test_helpers_keep_explicit_empty_selection(self, llm):
         llm.response = "[]"
-        assert agentic._run_single_agent("direct_seeker", "q", "mem text", 1, "m") == ("direct_seeker", "[]")
+        assert agentic._run_single_agent("q", "mem text", 1, "m") == ("memory_seeker", "[]")
         assert agentic._run_entity_picker("q", "entity text", 1, "m") == ("entity_picker", "[]")
 
     @pytest.mark.parametrize("empty", ["", "  \n "])
     async def test_all_empty_completions_fail_instead_of_count_zero(self, llm, monkeypatch, caplog, empty):
-        monkeypatch.setattr(agentic, "_load_entity_summaries", AsyncMock(return_value=[
-            {"id": "ent12345-0000", "title": "Payroll", "summary": "approvals", "sources": "3"},
-        ]))
+        monkeypatch.setattr(agentic, "_load_entity_summaries", AsyncMock(return_value=[ENTITY]))
         llm.response = empty
         with pytest.raises(AgenticSearchError) as exc:
             await _search()
         message = str(exc.value)
-        for role in ("entity_picker", "direct_seeker", "inference_engine", "temporal_navigator"):
+        for role in ("entity_picker", "memory_seeker"):
             assert f"{role}=failure" in message
-        assert llm.started == 4
+        assert llm.started == 2
         assert "error=AgentEmptyResponseError" in caplog.text
 
     async def test_empty_completion_alongside_ranking_is_partial(self, llm, monkeypatch):
-        responses = iter(['["abc12345"]', "", "[]"])
-        lock = threading.Lock()
+        monkeypatch.setattr(agentic, "_load_entity_summaries", AsyncMock(return_value=[ENTITY]))
 
         def complete(prompt, system=None, **kwargs):
-            with lock:
-                return next(responses)
+            return "" if system == agentic.ENTITY_PICKER_SYSTEM else '["abc12345"]'
 
         monkeypatch.setattr(llm, "complete", complete)
         result = await _search()
         assert result["partial"] is True
+        assert [d["agent"] for d in result["degraded_agents"]] == ["entity_picker"]
         assert [d["reason"] for d in result["degraded_agents"]] == ["failure"]
         assert [m["memory_id"] for m in result["memories"]] == [MEMORY_ID]

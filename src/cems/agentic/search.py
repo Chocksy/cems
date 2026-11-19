@@ -1,9 +1,10 @@
 """Agentic search: LLM agents replace embeddings for memory retrieval.
 
 Inspired by Supermemory's ASMR (Agentic Search and Memory Retrieval).
-Four parallel search agents:
+Two parallel LLM calls per search:
   - Entity Picker: searches entity page summaries (~100 docs, ~50K chars)
-  - Direct Seeker, Inference Engine, Temporal Navigator: search raw memories
+  - Memory Seeker: searches raw memories with one merged strategy (exact
+    matches, implicit connections, time and sequence) and returns one ranking
 
 Returns structured response: {entities: [...], memories: [...], results: [...]}
 
@@ -26,15 +27,13 @@ from cems.memory.retrieval import _make_snippet
 
 logger = logging.getLogger(__name__)
 
-from cems.agentic.rrf import RRF_K, reciprocal_rank_fusion
-
 DEFAULT_MODEL = os.environ.get(
     "CEMS_AGENTIC_MODEL", "google/gemini-2.5-flash-lite"
 )  # 1M context recommended — agents receive full memory dump
 
 # Deep search keeps its own, longer budget than inference retrieval.
 AGENT_TIMEOUT_SECONDS = 10.0
-# Process-wide cap on in-flight agent calls (4 agents per request). Calls that
+# Process-wide cap on in-flight agent calls (2 calls per request). Calls that
 # outlive their request keep their slot until they actually finish.
 AGENT_MAX_IN_FLIGHT = 8
 
@@ -58,41 +57,24 @@ def get_client() -> OpenRouterClient:
 # Search Agent Prompts
 # ---------------------------------------------------------------------------
 
-AGENT_SYSTEM_PROMPTS = {
-    "direct_seeker": (
-        "You are a Direct Seeker — a memory retrieval specialist focused on EXACT MATCHES.\n\n"
-        "Your strategy:\n"
-        "- Look for memories that EXPLICITLY mention the specific entities, names, values, "
-        "or facts asked about in the question.\n"
-        "- Match concrete details: names, numbers, dates, places, products, tools, versions.\n"
-        "- Prefer memories with LITERAL matches over memories with vague topical overlap.\n"
-        "- Ignore memories that are merely in the same topic area but lack the specific answer.\n\n"
-        "You are precision-focused. Return fewer highly-relevant memories rather than many "
-        "loosely-related ones."
-    ),
-    "inference_engine": (
-        "You are an Inference Engine — a memory retrieval specialist focused on IMPLICIT CONNECTIONS.\n\n"
-        "Your strategy:\n"
-        "- Look for memories where the answer can be INFERRED even if not explicitly stated.\n"
-        "- Connect dots across related memories.\n"
-        "- Consider social and contextual cues: relationships, roles, preferences expressed indirectly.\n"
-        "- Look for memories that provide CONTEXT needed to answer the question.\n"
-        "- For preference questions, find memories where the user demonstrated a preference "
-        "through actions or choices, not just explicit statements.\n\n"
-        "You are recall-focused. Cast a wider net to catch memories that a literal matcher would miss."
-    ),
-    "temporal_navigator": (
-        "You are a Temporal Navigator — a memory retrieval specialist focused on TIME and SEQUENCE.\n\n"
-        "Your strategy:\n"
-        "- Pay close attention to dates and chronological ordering.\n"
-        "- For \"most recent\" or \"latest\" questions, find the LAST memory that mentions the topic.\n"
-        "- For knowledge-update questions (where info changed), find BOTH old and new, "
-        "ranking the most recent first.\n"
-        "- Track state changes: if the user switched from X to Y, the memory mentioning Y "
-        "is more relevant.\n\n"
-        "You are temporally-focused. Your unique value is understanding WHEN things happened."
-    ),
-}
+# One memory call combines what used to be three role agents (direct seeker,
+# inference engine, temporal navigator) merged with RRF: same quality on real
+# queries at about a third of the cost (scripts/experiments/agentic_cost_eval.py).
+MEMORY_AGENT_ROLE = "memory_seeker"
+MERGED_ROLE_INSTRUCTIONS = (
+    "You are a memory retrieval specialist who combines three search strategies "
+    "into ONE ranked list.\n\n"
+    "1. EXACT MATCHES: memories that explicitly mention the specific entities, names, "
+    "values, tools, versions or facts in the question. Literal matches beat vague "
+    "topical overlap.\n"
+    "2. IMPLICIT CONNECTIONS: memories where the answer can be inferred even if not "
+    "stated, or that give context needed to answer (roles, preferences shown through "
+    "actions, related decisions).\n"
+    "3. TIME AND SEQUENCE: for \"latest\" or \"most recent\" questions, the LAST memory "
+    "on the topic; when information changed, rank the newest state first.\n\n"
+    "Rank memories that satisfy several strategies highest. Put the single most useful "
+    "memory first. Precision matters most for the first three positions."
+)
 
 ENTITY_PICKER_SYSTEM = (
     "You are a Topic Matcher — a knowledge retrieval specialist.\n\n"
@@ -116,7 +98,8 @@ Return a JSON array of topic IDs ranked by relevance, most relevant first.
 Return ONLY IDs that are relevant. If none seem relevant, return an empty array.
 Return at most 5 IDs.
 
-Example output: ["abc12345", "def67890"]"""
+Example output: ["abc12345", "def67890"]
+Output ONLY the JSON array. No prose, no markdown, no explanation."""
 
 
 # The memory dump goes first and is identical for every agent and for every
@@ -137,7 +120,8 @@ Return ONLY IDs that are relevant. If none seem relevant, return an empty array.
 Return at most 10 IDs.
 IMPORTANT: Strongly prefer memories from the current project over memories from other projects.
 
-Example output: ["abc12345", "def67890"]"""
+Example output: ["abc12345", "def67890"]
+Output ONLY the JSON array. No prose, no markdown, no explanation."""
 
 
 # ---------------------------------------------------------------------------
@@ -314,22 +298,22 @@ def _parse_agent_response(response: str, valid_ids: set[str]) -> list[str]:
 
 
 def _run_single_agent(
-    role: str,
     question: str,
     memories_text: str,
     n_memories: int,
     model: str,
     project: str | None = None,
 ) -> tuple[str, str | list[str]]:
-    """Run a single search agent. Thread-safe.
+    """Run the memory search agent. Thread-safe.
 
     Raises on provider errors and empty completions; an explicit "[]" is a
     valid no-match.
     """
+    role = MEMORY_AGENT_ROLE
     system = MEMORIES_SYSTEM_PROMPT.format(formatted_memories=memories_text)
     project_context = f"\nCURRENT PROJECT: {project}\n" if project else ""
     user_prompt = SEARCH_USER_PROMPT.format(
-        role_instructions=AGENT_SYSTEM_PROMPTS[role],
+        role_instructions=MERGED_ROLE_INSTRUCTIONS,
         question=question,
         project_context=project_context,
     )
@@ -501,11 +485,10 @@ async def agentic_search_async(
 ) -> dict:
     """Run agentic search with entity-first architecture.
 
-    Runs 4 parallel agents:
+    Runs 2 LLM calls in parallel:
       1. Entity Picker: searches entity page summaries (~100 docs, ~50K chars)
-      2. Direct Seeker: searches raw memories for exact matches
-      3. Inference Engine: searches raw memories for implicit connections
-      4. Temporal Navigator: searches raw memories for temporal relevance
+      2. Memory Seeker: searches raw memories (exact matches, implicit
+         connections, time and sequence) and returns one ranking
 
     Returns structured response with separate entities and memories arrays.
 
@@ -569,9 +552,9 @@ async def agentic_search_async(
         ent_id_to_full[short_id] = ent
     valid_ent_ids = set(ent_id_to_full.keys())
 
-    # Run up to 4 agents in parallel, off the event loop, through the bounded
+    # Run up to 2 agents in parallel, off the event loop, through the bounded
     # process-wide agent pool (no per-request executor to shut down).
-    memory_rankings: list[list[str]] = []
+    memory_ranking: list[str] = []
     entity_ranking: list[str] = []
 
     agents: list[tuple[str, partial]] = []
@@ -582,11 +565,10 @@ async def agentic_search_async(
             partial(_run_entity_picker, query, entities_text, len(entity_summaries), model, project),
         ))
     if memories:
-        for role in AGENT_SYSTEM_PROMPTS:
-            agents.append((
-                role,
-                partial(_run_single_agent, role, query, memories_text, n_memories, model, project),
-            ))
+        agents.append((
+            MEMORY_AGENT_ROLE,
+            partial(_run_single_agent, query, memories_text, n_memories, model, project),
+        ))
 
     if not agents:
         return empty_response
@@ -620,13 +602,11 @@ async def agentic_search_async(
         else:
             # Parse memory agent response
             if isinstance(raw_response, str):
-                parsed = _parse_agent_response(raw_response, valid_mem_ids)
+                memory_ranking = _parse_agent_response(raw_response, valid_mem_ids)
             else:
-                parsed = raw_response
-            if parsed:
-                memory_rankings.append(parsed)
+                memory_ranking = raw_response
 
-    if degraded_agents and not (memory_rankings or entity_ranking):
+    if degraded_agents and not (memory_ranking or entity_ranking):
         # Every agent either failed or (alongside failures) found nothing: we
         # cannot claim the memories are absent.
         reasons = ",".join(f"{d['agent']}={d['reason']}" for d in degraded_agents)
@@ -639,10 +619,10 @@ async def agentic_search_async(
         if ent:
             top_entities.append(ent)
 
-    # RRF merge for memories (top 3)
+    # Top 3 memories, in the agent's ranking order
     top_memories = []
-    if memory_rankings:
-        merged_short_ids = reciprocal_rank_fusion(memory_rankings)[:3]
+    if memory_ranking:
+        merged_short_ids = memory_ranking[:3]
         mem_by_id = {}
         for mem in memories:
             full_id = str(mem.get("id", ""))
@@ -672,7 +652,7 @@ async def agentic_search_async(
                 entry["full_length"] = len(mem["content_detailed"])
             top_memories.append(entry)
 
-    queries_used = (1 if entity_summaries else 0) + (3 if memories else 0)
+    queries_used = (1 if entity_summaries else 0) + (1 if memories else 0)
 
     logger.info(
         f"Agentic search complete: {len(top_entities)} entities, "

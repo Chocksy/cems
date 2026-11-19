@@ -242,5 +242,7 @@ class RelationBuilderJob:
             )
 
         if row is not None and row["embedding"] is not None:
-            return list(row["embedding"])
+            emb = row["embedding"]
+            # pgvector >= 0.5 decodes to a Vector object, older versions to a numpy array
+            return emb.to_list() if hasattr(emb, "to_list") else list(emb)
         return None

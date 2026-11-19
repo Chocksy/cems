@@ -64,16 +64,16 @@ class TestFormatMemoriesForAgents:
 
 
 class TestReciprocalRankFusion:
-    """Tests for reciprocal_rank_fusion in server module."""
+    """Tests for the shared reciprocal_rank_fusion helper (used by the evals)."""
 
     def test_basic_fusion(self):
-        from cems.agentic.search import reciprocal_rank_fusion
+        from cems.agentic.rrf import reciprocal_rank_fusion
 
         result = reciprocal_rank_fusion([["a", "b"], ["a", "c"]])
         assert result[0] == "a"
 
     def test_empty(self):
-        from cems.agentic.search import reciprocal_rank_fusion
+        from cems.agentic.rrf import reciprocal_rank_fusion
 
         assert reciprocal_rank_fusion([]) == []
 
@@ -379,9 +379,7 @@ class TestAgenticSearchAsync:
         # Entity picker returns entity ID, memory agents return memory ID
         mock_client.complete.side_effect = [
             '["ent12345"]',   # entity picker
-            '["mem12345"]',   # direct seeker
-            '["mem12345"]',   # inference engine
-            '["mem12345"]',   # temporal navigator
+            '["mem12345"]',   # memory seeker
         ]
 
         # Mock entity summaries via _load_entity_summaries
@@ -504,8 +502,6 @@ class TestAgenticSearchAsync:
         mock_client.complete.side_effect = [
             '["ent12345"]',
             '["mem12345"]',
-            '["mem12345"]',
-            '["mem12345"]',
         ]
 
         entity_summaries = [
@@ -538,26 +534,74 @@ class TestAgenticSearchAsync:
         assert result["count"] == len(result["entities"]) + len(result["memories"])
 
 
+    @pytest.mark.asyncio
+    async def test_one_memory_call_and_top3_follow_its_ranking(self, monkeypatch):
+        """One memory-agent call per search; top 3 keep that call's order."""
+        from cems.agentic import search
+
+        memory_calls = []
+        entity_calls = []
+
+        class FakeClient:
+            def complete(self, prompt, system=None, **kwargs):
+                if system == search.ENTITY_PICKER_SYSTEM:
+                    entity_calls.append(prompt)
+                    return '["ent12345"]'
+                memory_calls.append(prompt)
+                return '["ccc00000", "aaa00000", "ddd00000", "bbb00000"]'
+
+        monkeypatch.setattr(search, "get_client", lambda: FakeClient())
+        monkeypatch.setattr(search, "_load_entity_summaries", AsyncMock(return_value=[
+            {"id": "ent12345-full-uuid", "title": "Deploys", "summary": "How", "sources": "2"},
+        ]))
+        docs = [
+            {"id": f"{p}00000-full-uuid", "content": f"memory {p}", "category": "general",
+             "source_ref": "project:test", "created_at": "2026-03-22", "scope": "personal", "tags": []}
+            for p in ("aaa", "bbb", "ccc", "ddd")
+        ]
+        mock_store = AsyncMock()
+        mock_store.get_all_documents = AsyncMock(return_value=docs)
+
+        result = await search.agentic_search_async(
+            document_store=mock_store, user_id="user-1", query="how do I deploy?", project="test",
+        )
+
+        assert len(memory_calls) == 1
+        assert memory_calls[0].startswith(search.MERGED_ROLE_INSTRUCTIONS)
+        assert len(entity_calls) == 1
+        assert [m["memory_id"] for m in result["memories"]] == [
+            "ccc00000-full-uuid", "aaa00000-full-uuid", "ddd00000-full-uuid",
+        ]
+        assert [m["score"] for m in result["memories"]] == [1.0, 0.833, 0.667]
+        assert [e["title"] for e in result["entities"]] == ["Deploys"]
+        assert result["queries_used"] == 2
+        assert result["partial"] is False
+        assert result["degraded_agents"] == []
+
+
 class TestPromptCacheLayout:
     """The memory dump must be a shared prefix so providers can cache it."""
 
-    def test_all_agents_share_the_same_system_prompt(self, monkeypatch):
+    def test_memory_agent_keeps_dump_in_system_and_query_in_prompt(self, monkeypatch):
         from cems.agentic import search
 
         calls = []
 
         class FakeClient:
             def complete(self, prompt, system=None, **kwargs):
-                calls.append((system, prompt))
+                calls.append((system, prompt, kwargs))
                 return "[]"
 
         monkeypatch.setattr(search, "get_client", lambda: FakeClient())
-        for role in search.AGENT_SYSTEM_PROMPTS:
-            search._run_single_agent(role, "where do I deploy?", "MEMORY DUMP", 1, "m", "org/repo")
+        assert search._run_single_agent("where do I deploy?", "MEMORY DUMP", 1, "m", "org/repo") == (
+            "memory_seeker", "[]",
+        )
 
-        systems = {system for system, _ in calls}
-        assert len(systems) == 1
-        assert "MEMORY DUMP" in systems.pop()
-        for (_, prompt), role_text in zip(calls, search.AGENT_SYSTEM_PROMPTS.values()):
-            assert prompt.startswith(role_text)
-            assert "where do I deploy?" in prompt and "MEMORY DUMP" not in prompt
+        [(system, prompt, kwargs)] = calls
+        assert system == search.MEMORIES_SYSTEM_PROMPT.format(formatted_memories="MEMORY DUMP")
+        assert prompt.startswith(search.MERGED_ROLE_INSTRUCTIONS)
+        assert "where do I deploy?" in prompt and "MEMORY DUMP" not in prompt
+        assert kwargs["cache_system"] is True
+        assert kwargs["max_tokens"] == 1000
+        assert kwargs["temperature"] == 0.1
+        assert kwargs["fast_route"] is False

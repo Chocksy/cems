@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.15.4
+
+Agentic search costs about 3x less. One memory call now does the work of the three role agents (direct seeker, inference engine, temporal navigator), so a search makes 2 LLM calls instead of 4. On 40 queries graded by Claude Haiku 5.5, the merged call scored 0.97 against 1.01 for the three agents, with 0% unusable answers against 5%, and median latency fell from 1.9s to 1.2s.
+
+- `queries_used` in the agentic response is now at most 2, and `degraded_agents` names the memory call `memory_seeker`.
+- Search agents are told to output only the JSON array. Before, some answers came back as prose and failed to parse.
+- The relation builder job works with pgvector 0.5 and newer, which returns a `Vector` object where older versions returned an array.
+- New `scripts/experiments/agentic_cost_eval.py` replays real queries against a real memory dump and compares search shapes and models on quality, latency and cost.
+
 ## 0.15.3
 
 Agentic search costs about 5x less. The three search agents now share one cached prompt prefix: the memory dump goes first, oldest memory first, with an explicit cache marker on OpenRouter. The role and the question go after it. In a test with a 130K-token dump, a search fell from $0.034 to $0.006, and median agent latency fell from 2.7s to 1.0s. Recall is unchanged because the model is unchanged.

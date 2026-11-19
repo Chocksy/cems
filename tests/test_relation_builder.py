@@ -164,3 +164,19 @@ class TestRelationBuilderJob:
         assert result["docs_processed"] == 0
         assert result["relations_created"] == 0
         assert result["docs_skipped"] == 0
+
+
+def test_first_chunk_embedding_accepts_pgvector_vector(mock_memory):
+    """pgvector >= 0.5 decodes embeddings to a non-iterable Vector object."""
+    from pgvector import Vector
+
+    from cems.maintenance.relation_builder import RelationBuilderJob
+
+    pool = _mock_pool_with_rows([])
+    conn = pool.acquire.return_value.__aenter__.return_value
+    conn.fetchrow = AsyncMock(return_value={"embedding": Vector([0.5, 0.25])})
+    mock, doc_store = mock_memory
+    doc_store._get_pool = AsyncMock(return_value=pool)
+
+    emb = _run(RelationBuilderJob(mock)._get_first_chunk_embedding(doc_store, TEST_UUID))
+    assert emb == [0.5, 0.25]
